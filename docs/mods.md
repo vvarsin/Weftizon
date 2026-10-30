@@ -210,8 +210,14 @@ ignored, so the template's own animation moves it:
 An animation's name is what follows the last dot of its key (`animation.ghost.idle` is `idle`). Keyframes carry
 `rotation` (degrees), `position` (pixels) and `scale`, as `[x, y, z]`, one number, or `pre`/`post` with
 `"lerp_mode": "catmullrom"`; they are added over the template's pose. `idle` plays all the time, `walk` as much as the
-mob walks, `hurt` after a hit and `death` while it dies. `loop` is `true`, `false` (once, then back) or
-`"hold_on_last_frame"`. Molang isn't evaluated: an expression reads as 0, and the log says so.
+mob walks, `attack` once from each swing (a melee hit), `hurt` after a hit and `death` while it dies. `loop` is
+`true`, `false` (once, then back) or `"hold_on_last_frame"`. Molang isn't evaluated: an expression reads as 0, and the
+log says so.
+
+Any other animation is started by a native mod (Weft's `play_animation`): `native_play_animation(id, "bow", false)`
+plays it once, `true` over and over, `""` goes back; while it plays it takes the place of `idle` and `walk`. The server
+tells every player who sees the entity, and one who comes near later, at the point it has reached (the
+`horizon:play_animation` custom payload).
 
 A broken declaration, model or animation file refuses the mod, with the file and the reason. `/summon <id>:<name>`
 summons it, worlds save it under its id, and its name is the translation `entity.<id>.<name>`. Content mods'

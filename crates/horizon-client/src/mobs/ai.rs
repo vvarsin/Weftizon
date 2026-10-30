@@ -77,6 +77,7 @@ impl Mob {
         self.ai.swing_time = -1;
         self.ai.swinging = true;
         self.ai.swing_duration = duration.max(1);
+        self.anim.swing_started = Some(self.age);
         true
     }
     /// LivingEntity.swing

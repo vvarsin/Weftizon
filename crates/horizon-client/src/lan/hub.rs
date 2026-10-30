@@ -1868,6 +1868,7 @@ impl Hub {
             needs_sync: false,
             leash: None,
             spectator: false,
+            animation: None,
         }
     }
 

@@ -70,6 +70,9 @@ pub struct EntityState {
     /// `ServerPlayer.isSpectator`: a player in spectator mode, whom only the
     /// clients of other spectators track (`ServerPlayer.broadcastToPlayer`).
     pub spectator: bool,
+    /// The animation a mod plays on its entity and the ticks since it
+    /// started (`horizon:play_animation`, `mobs::custom::ANIMATION_CHANNEL`).
+    pub animation: Option<(crate::mobs::custom::Playing, u32)>,
 }
 
 impl EntityState {
@@ -94,7 +97,20 @@ impl EntityState {
         self.needs_sync = false;
         self.leash = None;
         self.spectator = false;
+        self.animation = None;
     }
+}
+
+/// The `horizon:play_animation` payload of entity `id`.
+fn animation_packet(
+    id: i32,
+    animation: Option<&(crate::mobs::custom::Playing, u32)>,
+) -> play::Clientbound {
+    use crate::mobs::custom;
+    play::Clientbound::CustomPayload(horizon_protocol::packets::configuration::CustomPayload {
+        channel: custom::ANIMATION_CHANNEL.into(),
+        data: custom::animation_payload(id, animation.map(|a| &a.0), animation.map_or(0, |a| a.1)),
+    })
 }
 
 /// The states a level describes its entities with, kept from tick to tick:
@@ -242,6 +258,8 @@ struct ServerEntity {
     /// Whether it was a spectator last tick: its pairs are checked again when
     /// that changes, as `ServerPlayer.broadcastToPlayer` answers otherwise.
     spectator: bool,
+    /// The animation a mod plays on it that the clients were told of.
+    animation: Option<crate::mobs::custom::Playing>,
 }
 
 /// SectionPos.of(entity).
@@ -283,6 +301,7 @@ impl ServerEntity {
             added: true,
             section: section_of(e.position),
             spectator: e.spectator,
+            animation: e.animation.as_ref().map(|a| a.0.clone()),
         }
     }
 
@@ -338,6 +357,10 @@ impl ServerEntity {
                 dest,
             }));
         }
+        // The animation a mod plays on it, at the point it has reached.
+        if e.animation.is_some() {
+            out.push(animation_packet(e.id, e.animation.as_ref()));
+        }
     }
 
     /// Changes since the last update (ServerEntity.sendChanges): movement and
@@ -358,6 +381,12 @@ impl ServerEntity {
                 dest: e.leash.unwrap_or(0),
             }));
             self.leash = e.leash;
+        }
+        // A mod started, changed or stopped an animation: at once.
+        let animation = e.animation.as_ref().map(|a| &a.0);
+        if animation != self.animation.as_ref() {
+            out.push(animation_packet(e.id, e.animation.as_ref()));
+            self.animation = animation.cloned();
         }
         // SynchedEntityData.isDirty: once for every client.
         let dirty = e.meta != self.meta;
@@ -940,6 +969,7 @@ mod tests {
             needs_sync: false,
             leash: None,
             spectator: false,
+            animation: None,
         }
     }
 
@@ -1022,6 +1052,53 @@ mod tests {
         }
         let jump = changes(&mut s, &state(40.0));
         assert!(matches!(jump[0], play::Clientbound::EntityPositionSync(_)));
+    }
+
+    /// A mod's animation goes out at once when it starts, changes or stops,
+    /// and with the pairing, at the point it has reached, to a client that
+    /// comes near later.
+    #[test]
+    fn played_animations_reach_the_clients() {
+        use crate::mobs::custom::{ANIMATION_CHANNEL, Playing, read_animation_payload};
+        let payloads = |out: &[play::Clientbound]| -> Vec<_> {
+            out.iter()
+                .filter_map(|p| match p {
+                    play::Clientbound::CustomPayload(p) if p.channel == ANIMATION_CHANNEL => {
+                        read_animation_payload(&p.data)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut s = added(&state(0.0));
+        assert!(payloads(&changes(&mut s, &state(0.0))).is_empty());
+        let bow = Playing {
+            name: "bow".into(),
+            repeat: false,
+            started: 3,
+        };
+        let mut playing = state(0.0);
+        playing.animation = Some((bow.clone(), 0));
+        assert_eq!(
+            payloads(&changes(&mut s, &playing)),
+            [(7, Some(("bow".to_owned(), false, 0)))]
+        );
+        // Still the same one: nothing more, due or not.
+        playing.animation = Some((bow, 1));
+        for _ in 0..3 {
+            assert!(payloads(&changes(&mut s, &playing)).is_empty());
+        }
+        // A client that starts tracking it now.
+        playing.animation.as_mut().unwrap().1 = 9;
+        let mut spawn = Vec::new();
+        s.pairing(&playing, 100, &Riding::default(), &mut spawn);
+        assert_eq!(payloads(&spawn), [(7, Some(("bow".to_owned(), false, 9)))]);
+        assert!(matches!(spawn[0], play::Clientbound::AddEntity(_)));
+        // Stopped.
+        assert_eq!(payloads(&changes(&mut s, &state(0.0))), [(7, None)]);
+        let mut fresh = Vec::new();
+        s.pairing(&state(0.0), 100, &Riding::default(), &mut fresh);
+        assert!(payloads(&fresh).is_empty());
     }
 
     #[test]

@@ -2888,6 +2888,7 @@ impl Game<'_> {
             needs_sync: false,
             leash: None,
             spectator: false,
+            animation: None,
         })
     }
 }

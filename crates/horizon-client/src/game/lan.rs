@@ -1584,6 +1584,11 @@ impl Game<'_> {
             mob_equipment(m, hub, &mut e.equipment);
             self.mob_attributes(m, &mut e.attributes);
             e.leash = leash;
+            e.animation = m
+                .extra
+                .animation
+                .as_ref()
+                .map(|p| (p.clone(), m.age.saturating_sub(p.started)));
         }
         for d in &self.dropped {
             let stack = hub.stack(&Some(d.stack.clone()));

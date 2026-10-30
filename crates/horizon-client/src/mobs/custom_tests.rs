@@ -81,6 +81,113 @@ fn bedrock_animations_play_by_their_loop_mode() {
     assert_eq!(c.skin_index(&m), 0);
 }
 
+/// `attack` plays once from each swing; an animation a mod plays takes the
+/// place of idle and walk while it plays, once or over and over.
+#[test]
+fn attack_and_played_animations() {
+    let model = br#"{"minecraft:geometry": [{"description": {}, "bones": [{"name": "head", "pivot": [0, 24, 0]}]}]}"#;
+    let anims = br#"{"animations": {
+        "animation.x.idle": {"loop": true, "animation_length": 1,
+            "bones": {"head": {"rotation": {"0": [0, 0, 0], "1": [90, 0, 0]}}}},
+        "animation.x.attack": {"animation_length": 0.5,
+            "bones": {"head": {"rotation": {"0": [0, 0, 0], "0.5": [0, 0, 30]}}}},
+        "animation.x.bow": {"animation_length": 1,
+            "bones": {"head": {"position": {"0": [0, 0, 0], "1": [0, 8, 0]}}}}}}"#;
+    let g = bedrock::read_geometry(model).unwrap();
+    let (list, _) = bedrock::read_animations(anims, &g.renames).unwrap();
+    let c = Custom {
+        own_model: true,
+        scale: 1.0,
+        animations: list
+            .iter()
+            .map(|a| (a.name.clone(), (animation(a), a.looping)))
+            .collect(),
+        ..Default::default()
+    };
+    let part = part(&g.root);
+    let kind = std::sync::Arc::new(crate::mobs::MobType {
+        custom: Some(std::sync::Arc::new(c.clone())),
+        ..(*crate::mobs::sensor_scan_tests::kind()).clone()
+    });
+    let mut m = Mob::new(1, kind, horizon_core::geometry::Vec3::ZERO, 0.0);
+    let pose = |m: &Mob, age: u32| {
+        let mut m = m.clone();
+        m.age = age;
+        let s = anim::state(&m, 0.0);
+        let mut p = anim::Poses::new(&part);
+        c.animate(&m, &s, &mut p);
+        *p.get("head")
+    };
+    let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    // `bow` once from age 0: idle waits, then comes back.
+    m.play_animation("bow", false);
+    assert_eq!(m.extra.animation.as_ref().unwrap().started, 0);
+    let at = pose(&m, 10);
+    assert!(near(at[1], -4.0) && near(at[3], 0.0), "{at:?}");
+    let after = pose(&m, 25);
+    assert!(
+        near(after[1], 0.0) && near(after[3], 22.5f32.to_radians()),
+        "{after:?}"
+    );
+    // Over and over.
+    m.play_animation("bow", true);
+    assert!(near(pose(&m, 30)[1], -4.0));
+    // An empty name stops it; a name the model has no animation of plays nothing.
+    m.play_animation("", false);
+    assert!(m.extra.animation.is_none());
+    m.play_animation("nope", true);
+    assert!(near(pose(&m, 5)[3], 45f32.to_radians() / 2.0));
+    m.play_animation("", false);
+    // `attack` from the swing, once.
+    m.age = 100;
+    m.swing();
+    assert_eq!(m.anim.swing_started, Some(100));
+    assert!(near(pose(&m, 105)[5], 15f32.to_radians()));
+    assert!(near(pose(&m, 120)[5], 0.0));
+}
+
+/// The payload a server sends its clients reads back as it was written.
+#[test]
+fn animation_payloads_round_trip() {
+    let playing = Playing {
+        name: "bow".into(),
+        repeat: true,
+        started: 40,
+    };
+    let data = animation_payload(77, Some(&playing), 12);
+    assert_eq!(
+        read_animation_payload(&data),
+        Some((77, Some(("bow".to_owned(), true, 12))))
+    );
+    assert_eq!(
+        read_animation_payload(&animation_payload(5, None, 0)),
+        Some((5, None))
+    );
+    assert_eq!(read_animation_payload(&data[..2]), None);
+    // A client times it from its own clock of the entity.
+    let kind = crate::mobs::sensor_scan_tests::kind();
+    let mut mobs = vec![Mob::new(77, kind, horizon_core::geometry::Vec3::ZERO, 0.0)];
+    mobs[0].age = 30;
+    assert!(receive_animation(&mut mobs, &data));
+    assert_eq!(
+        mobs[0].extra.animation,
+        Some(Playing {
+            name: "bow".into(),
+            repeat: true,
+            started: 18,
+        })
+    );
+    assert!(receive_animation(
+        &mut mobs,
+        &animation_payload(77, None, 0)
+    ));
+    assert!(mobs[0].extra.animation.is_none());
+    assert!(!receive_animation(
+        &mut mobs,
+        &animation_payload(5, Some(&playing), 0)
+    ));
+}
+
 /// A Custom with the goals and targets of `json` (`{"goals": [..], "targets": [..]}`).
 fn declared(json: &str) -> Custom {
     #[derive(serde::Deserialize)]

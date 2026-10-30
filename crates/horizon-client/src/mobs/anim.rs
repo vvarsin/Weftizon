@@ -78,6 +78,9 @@ pub enum Anim {
 pub struct AnimState {
     pub attack_anim: f32,
     pub attack_anim_o: f32,
+    /// The age the last swing started at: a mod's entity plays its
+    /// `attack` keyframes from it.
+    pub swing_started: Option<u32>,
     pub flap: f32,
     pub flap_o: f32,
     pub flap_speed: f32,

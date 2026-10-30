@@ -94,8 +94,11 @@ clients without the same mods (they need the same content, as for blocks).
   `nearest_attackable` (entity ids; a mod's entity is matched by its id, not its template's species).
   A declared list replaces the template's selector; brain-driven templates refuse them. Players' docs:
   [mods.md#entity-behaviour](mods.md#entity-behaviour).
-- Animation triggers: `attack` keyframes on the attack swing, and a hook-point to play a named animation
-  (Weft's `play_animation`), synced to clients through a Horizon custom payload.
+- ✅ Animation triggers: `attack` keyframes from each swing (`AnimState.swing_started`), and
+  `Mob::play_animation(name, repeat)` (Weft's `play_animation`; native mods call
+  `native_play_animation`) in place of idle and walk, synced by the entity tracker as the
+  `horizon:play_animation` custom payload: at once when it changes, and with the pairing (with the
+  ticks it has run) for a player who comes near later.
 - Callbacks for code: native hook points `entity_tick`, `entity_hurt`, `entity_died`, `entity_interact`
   per entity type, batched per type as Weft's `on_tick` is.
 - Per-entity components (Weft `entity_component`) saved in the entity's NBT under `horizon:components`.

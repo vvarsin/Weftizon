@@ -2943,6 +2943,10 @@ impl Game<'_> {
                     m.swing_hand_modified(hand == Hand::Off, animation);
                 }
             }
+            // A Horizon server's animation a mod plays on its entity.
+            C::CustomPayload(p) if p.channel == horizon_client::mobs::custom::ANIMATION_CHANNEL => {
+                horizon_client::mobs::custom::receive_animation(&mut self.mobs, &p.data);
+            }
             // The player's own instances: its maximum health (the hearts the
             // HUD draws and the health it may hold), reach, speed and so on.
             // Then the received health again, which the old maximum clamped.

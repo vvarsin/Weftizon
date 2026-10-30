@@ -447,6 +447,75 @@ fn animation(a: &bedrock::Animation) -> keyframes::Animation {
     }
 }
 
+/// The custom payload in which a server tells its clients the animation a
+/// mod plays on an entity: its id (varint), the animation's name (empty: none
+/// any more), whether it repeats, and the ticks since it started (varint), so
+/// a player who comes near later sees it at the same point.
+pub const ANIMATION_CHANNEL: &str = "horizon:play_animation";
+/// Characters of an animation's name at most.
+pub const MAX_ANIMATION_NAME: usize = 64;
+
+/// A named animation a mod plays on an entity (Weft's `play_animation`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Playing {
+    pub name: String,
+    pub repeat: bool,
+    /// The entity's age when it started.
+    pub started: u32,
+}
+
+impl Mob {
+    /// Plays the animation `name` of a mod's entity in place of `idle` and
+    /// `walk`: once, or over and over when `repeat`. An empty name goes back
+    /// to idle and walk. Every player who sees the entity sees it.
+    pub fn play_animation(&mut self, name: &str, repeat: bool) {
+        self.extra.animation = (!name.is_empty()).then(|| Playing {
+            name: name.chars().take(MAX_ANIMATION_NAME).collect(),
+            repeat,
+            started: self.age,
+        });
+    }
+}
+
+/// [`ANIMATION_CHANNEL`]'s payload for entity `id`.
+pub fn animation_payload(id: i32, playing: Option<&Playing>, elapsed: u32) -> Vec<u8> {
+    let mut w = horizon_protocol::buf::Writer::new();
+    w.varint(id);
+    w.string(playing.map_or("", |p| p.name.as_str()));
+    w.bool(playing.is_some_and(|p| p.repeat));
+    w.varint(elapsed.min(i32::MAX as u32) as i32);
+    w.data
+}
+
+/// An [`ANIMATION_CHANNEL`] payload: the entity id, and the animation's
+/// name, repeat and ticks since it started (none for an empty name).
+pub fn read_animation_payload(data: &[u8]) -> Option<(i32, Option<(String, bool, u32)>)> {
+    let mut r = horizon_protocol::buf::Reader::new(data);
+    let id = r.varint().ok()?;
+    let name = r.string(MAX_ANIMATION_NAME * 4).ok()?;
+    let repeat = r.bool().ok()?;
+    let elapsed = r.varint().ok()?.max(0) as u32;
+    Some((id, (!name.is_empty()).then_some((name, repeat, elapsed))))
+}
+
+/// A client: the animation of an [`ANIMATION_CHANNEL`] payload on the entity
+/// it names, timed from the client's own clock of the entity. False when the
+/// payload doesn't read or the client has no such entity.
+pub fn receive_animation(mobs: &mut [Mob], data: &[u8]) -> bool {
+    let Some((id, playing)) = read_animation_payload(data) else {
+        return false;
+    };
+    let Some(m) = mobs.iter_mut().find(|m| m.id == id as u32) else {
+        return false;
+    };
+    m.extra.animation = playing.map(|(name, repeat, elapsed)| Playing {
+        name,
+        repeat,
+        started: m.age.saturating_sub(elapsed),
+    });
+    true
+}
+
 impl Custom {
     /// Which of its skins this entity wears: the same for one entity id,
     /// so every client of a server draws it alike.
@@ -474,8 +543,9 @@ impl Custom {
         glow.into_iter().chain(self.emissive.as_deref())
     }
     /// Adds the keyframe animations over the template's pose: `idle` all
-    /// the time, `walk` as much as it walks, `hurt` after a hit and `death`
-    /// while it dies.
+    /// the time, `walk` as much as it walks, or in their place the one a mod
+    /// plays ([`Mob::play_animation`]) while it plays; `attack` from each
+    /// swing, `hurt` after a hit and `death` while it dies.
     pub fn animate(&self, m: &Mob, s: &anim::State, p: &mut anim::Poses) {
         if self.animations.is_empty() {
             return;
@@ -492,9 +562,38 @@ impl Custom {
             };
             a.apply((seconds * 1000.0) as i64, scale, p);
         };
-        play("idle", s.age / 20.0, 1.0, p);
-        if s.speed > 0.01 {
-            play("walk", s.age / 20.0, (s.speed * 2.0).min(1.0), p);
+        let since = |tick: u32| (s.age - tick as f32).max(0.0) / 20.0;
+        // `play_animation(id, name, repeat)`: over and over when `repeat`,
+        // else once (or held on its last frame), then idle and walk again.
+        let played = m.extra.animation.as_ref().and_then(|playing| {
+            let (a, looping) = self.animations.get(&playing.name)?;
+            let seconds = since(playing.started);
+            let seconds = if playing.repeat {
+                seconds % a.length
+            } else if *looping == Loop::Hold {
+                seconds.min(a.length)
+            } else if seconds > a.length {
+                return None;
+            } else {
+                seconds
+            };
+            Some((a, seconds))
+        });
+        match played {
+            Some((a, seconds)) => a.apply((seconds * 1000.0) as i64, 1.0, p),
+            None => {
+                play("idle", s.age / 20.0, 1.0, p);
+                if s.speed > 0.01 {
+                    play("walk", s.age / 20.0, (s.speed * 2.0).min(1.0), p);
+                }
+            }
+        }
+        // Weft's attack keyframes: once from each swing (a melee hit).
+        if let Some(start) = m.anim.swing_started
+            && let Some((a, _)) = self.animations.get("attack")
+            && since(start) <= a.length
+        {
+            a.apply((since(start) * 1000.0) as i64, 1.0, p);
         }
         if m.hurt_time > 0 {
             play(
