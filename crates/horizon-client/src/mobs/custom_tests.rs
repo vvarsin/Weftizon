@@ -241,6 +241,89 @@ fn hook_batches_and_hits() {
     assert!(take_hurts(&mut mobs).is_empty(), "heard once");
 }
 
+/// Declared component values as NBT.
+#[test]
+fn component_values_read_as_nbt() {
+    let tag = |s: &str| json_tag(&serde_json::from_str(s).unwrap());
+    assert_eq!(tag("10"), Some(Tag::Int(10)));
+    assert_eq!(tag("5000000000"), Some(Tag::Long(5_000_000_000)));
+    assert_eq!(tag("0.5"), Some(Tag::Double(0.5f64.to_bits())));
+    assert_eq!(tag("true"), Some(Tag::Byte(1)));
+    assert_eq!(tag(r#""x""#), Some(Tag::String("x".into())));
+    assert_eq!(
+        tag("[1, 2.5]"),
+        Some(Tag::List(vec![
+            Tag::Double(1f64.to_bits()),
+            Tag::Double(2.5f64.to_bits())
+        ]))
+    );
+    assert_eq!(
+        tag(r#"{"a": [[1], []]}"#),
+        Some(Tag::Compound(
+            [(
+                "a".into(),
+                Tag::List(vec![Tag::List(vec![Tag::Int(1)]), Tag::List(vec![])])
+            )]
+            .into_iter()
+            .collect()
+        ))
+    );
+    assert_eq!(tag("null"), None);
+    assert_eq!(tag(r#"[1, "a"]"#), None);
+}
+
+/// Per-entity components start at the declared values, are saved under
+/// `horizon:components` and read back over the declared ones.
+#[test]
+fn components_save_with_the_entity() {
+    use horizon_core::geometry::Vec3;
+    let c = Custom {
+        id: intern("ruby:bull"),
+        components: [
+            ("ruby:mana".into(), Tag::Int(10)),
+            ("ruby:owner".into(), Tag::String("".into())),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let kind = std::sync::Arc::new(crate::mobs::MobType {
+        id: "ruby:bull".into(),
+        custom: Some(std::sync::Arc::new(c)),
+        ..(*crate::mobs::sensor_scan_tests::kind()).clone()
+    });
+    let mut m = Mob::new(3, kind.clone(), Vec3::new(1.0, 64.0, 2.0), 0.0);
+    assert_eq!(
+        m.extra.components.get(&"ruby:mana".into()),
+        Some(&Tag::Int(10))
+    );
+    m.extra.components.insert("ruby:mana".into(), Tag::Int(7));
+    m.extra.components.remove(&"ruby:owner".into());
+    m.extra.components.insert("ruby:new".into(), Tag::Byte(1));
+    let saved = crate::entity_nbt::mob_to_nbt(&m, [0, 0, 0, 3], None);
+    let Some(Tag::Compound(on_disk)) = saved.get(COMPONENTS) else {
+        panic!("{saved:?}")
+    };
+    assert_eq!(on_disk.len(), 2);
+    let types = std::collections::HashMap::from([("ruby:bull".to_owned(), kind)]);
+    let back = crate::entity_nbt::mob_from_nbt(&saved, &types, 9).unwrap();
+    // Its own values; the one it dropped comes back at its declared value.
+    assert_eq!(
+        back.extra.components,
+        [
+            ("ruby:mana".into(), Tag::Int(7)),
+            ("ruby:new".into(), Tag::Byte(1)),
+            ("ruby:owner".into(), Tag::String("".into())),
+        ]
+        .into_iter()
+        .collect()
+    );
+    // A mob with none writes no key, even over a loaded compound that had one.
+    let cow = Mob::new(4, crate::mobs::sensor_scan_tests::kind(), Vec3::ZERO, 0.0);
+    let plain = crate::entity_nbt::mob_to_nbt(&cow, [0, 0, 0, 4], Some(&saved));
+    assert!(plain.get(COMPONENTS).is_none());
+}
+
 /// A Custom with the goals and targets of `json` (`{"goals": [..], "targets": [..]}`).
 fn declared(json: &str) -> Custom {
     #[derive(serde::Deserialize)]

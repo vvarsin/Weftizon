@@ -537,6 +537,11 @@ impl MobTypes {
                 id: custom::intern(&e.id),
                 goals,
                 targets,
+                components: e
+                    .components
+                    .iter()
+                    .filter_map(|(k, v)| Some((k.as_str().into(), custom::json_tag(v)?)))
+                    .collect(),
                 textures: e.textures.clone(),
                 glows: e.glows.clone(),
                 emissive: e.emissive.clone(),
@@ -827,6 +832,10 @@ pub struct Extra {
     /// The hits a mod's entity took that its native mods have not heard of
     /// yet (`native_entity_hurt`): the damage and what it took of its health.
     pub hurts: Vec<(Damage, f32)>,
+    /// Weft's per-entity components: values a mod keeps on the entity,
+    /// saved with it (`custom::COMPONENTS`). Empty for vanilla's mobs unless
+    /// a native mod gives them some.
+    pub components: horizon_world::nbt::Compound,
     /// A player's or mannequin's `minecraft:scale`, which scales the whole model
     /// (`LivingEntityRenderState.scale`): the local player's own, and on a
     /// server the others' from their attribute updates; 0 is the default, 1.

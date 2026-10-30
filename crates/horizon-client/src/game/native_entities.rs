@@ -9,6 +9,7 @@
 use super::Game;
 use horizon_client::mobs::{Damage, Mob, Who, custom};
 use horizon_core::geometry::Vec3;
+use horizon_world::nbt::Tag;
 
 /// A mod's entity as a native mod reads it (`native_entity`).
 #[allow(dead_code)]
@@ -218,6 +219,34 @@ impl Game<'_> {
             return false;
         }
         m.play_animation(name, repeat);
+        true
+    }
+    /// Value `name` (`mymod:mana`) of its per-entity components (Weft's
+    /// `entity_component`): its type's declared value until a mod changes
+    /// it, saved with it. None when it has no such value.
+    pub(super) fn native_entity_component(&self, id: u32, name: &str) -> Option<Tag> {
+        self.native_mob(id)?
+            .extra
+            .components
+            .get(&name.into())
+            .cloned()
+    }
+    /// Sets value `name` of its per-entity components; `None` takes it out.
+    /// Any mob may carry them (Weft's `attach` on another's kind); the world
+    /// saves them with it. Server-side only: clients don't get them.
+    pub(super) fn native_set_entity_component(
+        &mut self,
+        id: u32,
+        name: &str,
+        value: Option<Tag>,
+    ) -> bool {
+        let Some(m) = self.native_mob_mut(id) else {
+            return false;
+        };
+        match value {
+            Some(v) => m.extra.components.insert(name.into(), v),
+            None => m.extra.components.remove(&name.into()),
+        };
         true
     }
 }

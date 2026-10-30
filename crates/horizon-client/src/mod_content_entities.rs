@@ -123,6 +123,7 @@ pub(super) fn build(
                 loot_table,
                 goals: e.goals.clone(),
                 targets: e.targets.clone(),
+                components: e.components.clone(),
             });
         }
     }

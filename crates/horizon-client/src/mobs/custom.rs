@@ -13,6 +13,7 @@ use horizon_mods::{
     bedrock::{self, Loop},
     behaviour,
 };
+use horizon_world::nbt::{Compound, Tag};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -53,9 +54,58 @@ pub struct Entry {
     pub goals: Option<Vec<behaviour::Goal>>,
     #[serde(default)]
     pub targets: Option<Vec<behaviour::Target>>,
+    /// Weft's per-entity components: the values each entity starts with.
+    #[serde(default)]
+    pub components: BTreeMap<String, serde_json::Value>,
 }
 fn one() -> f32 {
     1.0
+}
+
+/// The key of an entity's saved compound under which its per-entity
+/// components are kept (vanilla ignores keys it doesn't know).
+pub const COMPONENTS: &str = "horizon:components";
+
+/// A component's declared value as NBT: whole numbers as ints (longs past
+/// an int's range), other numbers as doubles, booleans as bytes, text,
+/// lists (of doubles when any number of the list has a fraction) and
+/// compounds. None for null or a list of mixed kinds, which the declaration
+/// check refuses.
+pub fn json_tag(v: &serde_json::Value) -> Option<Tag> {
+    use serde_json::Value as V;
+    Some(match v {
+        V::Null => return None,
+        V::Bool(b) => Tag::Byte(i8::from(*b)),
+        V::Number(n) => match n.as_i64() {
+            Some(i) => match i32::try_from(i) {
+                Ok(i) => Tag::Int(i),
+                Err(_) => Tag::Long(i),
+            },
+            None => Tag::Double(n.as_f64()?.to_bits()),
+        },
+        V::String(s) => Tag::String(s.as_str().into()),
+        V::Array(list) => {
+            let fractions = list
+                .iter()
+                .any(|e| e.as_number().is_some_and(|n| n.as_i64().is_none()));
+            let tags = list
+                .iter()
+                .map(|e| match e.as_f64() {
+                    Some(f) if fractions => Some(Tag::Double(f.to_bits())),
+                    _ => json_tag(e),
+                })
+                .collect::<Option<Vec<_>>>()?;
+            if tags.windows(2).any(|w| w[0].id() != w[1].id()) {
+                return None;
+            }
+            Tag::List(tags)
+        }
+        V::Object(map) => Tag::Compound(
+            map.iter()
+                .map(|(k, v)| Some((k.as_str().into(), json_tag(v)?)))
+                .collect::<Option<_>>()?,
+        ),
+    })
 }
 
 /// A declared goal or target selector with what it names resolved: its
@@ -166,6 +216,9 @@ pub fn register(m: &mut Mob) {
     let Some(c) = m.kind.custom.clone() else {
         return;
     };
+    // Its per-entity components start at the declared values (a saved
+    // entity's own are read over them).
+    m.extra.components.clone_from(&c.components);
     if let Some(list) = &c.goals {
         m.ai.goals.clear();
         for p in list {
@@ -315,6 +368,9 @@ pub struct Custom {
     /// Declared goals and target selectors ([`register`]); `None` keeps the template's.
     pub goals: Option<Vec<Planned<behaviour::Goal>>>,
     pub targets: Option<Vec<Planned<behaviour::Target>>>,
+    /// The per-entity components each of its entities starts with
+    /// (`Extra::components`).
+    pub components: Compound,
 }
 
 /// One copy of each sound event name, kept for the game's life: mob sounds are `&'static str`.

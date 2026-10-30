@@ -369,6 +369,52 @@ fn check_entities(goal: &str, entities: &[String]) -> Result<(), String> {
     }
 }
 
+/// What a component value's NBT tag is, for the lists that must hold one
+/// kind: numbers (whole ones are ints, unless a list has a fraction),
+/// booleans, strings, lists and compounds.
+fn value_kind(v: &serde_json::Value) -> Result<u8, String> {
+    use serde_json::Value as V;
+    match v {
+        V::Null => Err("null is no value; leave the component out".into()),
+        V::Bool(_) => Ok(0),
+        V::Number(_) => Ok(1),
+        V::String(_) => Ok(2),
+        V::Array(list) => {
+            let mut kinds = list.iter().map(value_kind);
+            if let Some(first) = kinds.next().transpose()? {
+                for k in kinds {
+                    if k? != first {
+                        return Err("a list holds values of one kind".into());
+                    }
+                }
+            }
+            Ok(3)
+        }
+        V::Object(map) => {
+            for v in map.values() {
+                value_kind(v)?;
+            }
+            Ok(4)
+        }
+    }
+}
+
+/// Checks a declaration's `components`: Weft's per-entity components, each
+/// entity's own values that start at these and are saved with it.
+pub(crate) fn check_components(
+    components: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    for (name, value) in components {
+        if !(name.contains(':') && crate::entity::resource_id(name)) {
+            return Err(format!(
+                "component {name:?} is not a namespaced name (mymod:mana)"
+            ));
+        }
+        value_kind(value).map_err(|e| format!("component {name}: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Checks a declaration's `goals` and `targets` for its `template`.
 pub(crate) fn check(
     template: &str,

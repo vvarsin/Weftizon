@@ -620,6 +620,8 @@ capabilities = ["registries"]
     fn entities_declare_goals_and_targets() {
         use crate::behaviour::{Goal, Target};
         let decl = br##"{"template": "minecraft:cow", "attack_damage": 4, "attack_knockback": 1.5,
+            "components": {"ruby:mana": 10, "ruby:owner": "", "ruby:path": [[1, 2], [3]],
+                           "ruby:stats": {"speed": 0.5, "tame": false}},
             "goals": [
                 {"goal": "float"},
                 {"goal": "melee", "priority": 2, "reach": 1.5},
@@ -641,6 +643,8 @@ capabilities = ["registries"]
         .unwrap();
         let e = &content.entities[0];
         assert_eq!(e.stats.attack_knockback, Some(1.5));
+        assert_eq!(e.components.len(), 4);
+        assert_eq!(e.components["ruby:mana"], 10);
         let goals = e.goals.as_ref().unwrap();
         assert_eq!(goals.len(), 7);
         assert_eq!(goals[0], Goal::Float { priority: None });
@@ -782,6 +786,23 @@ capabilities = ["registries"]
             r#"{"template": "minecraft:zombie", "attack_knockback": 9}"#,
             &[],
         );
+        let e = refused(
+            "e-component-name",
+            r#"{"template": "minecraft:zombie", "components": {"mana": 1}}"#,
+            &[],
+        );
+        assert!(e.contains("mymod:mana"), "{e}");
+        refused(
+            "e-component-null",
+            r#"{"template": "minecraft:zombie", "components": {"ruby:mana": null}}"#,
+            &[],
+        );
+        let e = refused(
+            "e-component-list",
+            r#"{"template": "minecraft:zombie", "components": {"ruby:bag": [1, "two"]}}"#,
+            &[],
+        );
+        assert!(e.contains("one kind"), "{e}");
         let nested = hmod(
             "e-nested",
             MANIFEST_TEXT,

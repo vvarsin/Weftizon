@@ -62,6 +62,8 @@ pub(crate) struct EntityFile {
     fire_immune: Option<bool>,
     goals: Option<Vec<crate::behaviour::Goal>>,
     targets: Option<Vec<crate::behaviour::Target>>,
+    #[serde(default)]
+    components: BTreeMap<String, serde_json::Value>,
     /// How much bigger the model is drawn than the template's.
     scale: Option<f32>,
     texture: Option<String>,
@@ -137,6 +139,9 @@ pub struct Entity {
     pub goals: Option<Vec<crate::behaviour::Goal>>,
     /// Its target selectors, in place of the template's; `None` keeps them.
     pub targets: Option<Vec<crate::behaviour::Target>>,
+    /// Weft's per-entity components: the values each entity starts with,
+    /// changed by native mods and saved with it (`horizon:components`).
+    pub components: BTreeMap<String, serde_json::Value>,
 }
 
 pub(crate) fn resource_id(s: &str) -> bool {
@@ -338,6 +343,7 @@ impl Entity {
             decl.goals.as_deref(),
             decl.targets.as_deref(),
         )?;
+        crate::behaviour::check_components(&decl.components)?;
         if let Some(t) = &decl.loot_table
             && !resource_id(t)
         {
@@ -390,6 +396,7 @@ impl Entity {
             spawns: decl.spawns,
             goals: decl.goals,
             targets: decl.targets,
+            components: decl.components,
         })
     }
 }

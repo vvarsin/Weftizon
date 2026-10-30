@@ -1056,6 +1056,16 @@ pub fn mob_to_nbt(m: &Mob, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
             map.insert("equipment".into(), Tag::Compound(equipment));
         }
     }
+    // Weft's per-entity components, under a key vanilla ignores; none
+    // written for a mob that has none.
+    if m.extra.components.is_empty() {
+        map.remove(&crate::mobs::custom::COMPONENTS.into());
+    } else {
+        map.insert(
+            crate::mobs::custom::COMPONENTS.into(),
+            Tag::Compound(m.extra.components.clone()),
+        );
+    }
     tag
 }
 /// `AttributeMap.pack` for the attributes with a base or permanent modifier
@@ -1681,6 +1691,13 @@ pub fn mob_from_nbt(tag: &Tag, types: &HashMap<String, Arc<MobType>>, id: u32) -
     }
     crate::mobs::raider::read_nbt(&mut m, tag);
     crate::mobs::riders::read_nbt(&mut m, tag);
+    // Its per-entity components, over the ones its type starts with (a
+    // component the mod added since keeps its declared value).
+    if let Some(Tag::Compound(saved)) = tag.get(crate::mobs::custom::COMPONENTS) {
+        m.extra
+            .components
+            .extend(saved.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
     // A mob saved mid-death finishes dying; one saved dead is dropped.
     if m.health <= 0.0 && m.death_time == 0 {
         return None;
