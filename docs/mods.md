@@ -144,6 +144,10 @@ itself. A name nobody defines is skipped.
   "structures": [ { "structure": "mymod:village_beach", "weight": 10 } ] }
 ```
 
+A mod can also modify another loot table without replacing it: its own
+`data/<id>/loot_table/<path>.json` holds `"horizon:add_to": "<namespace>:<path>"` and a `pools`
+array. The pools are appended to the named table, and the file is not a table itself.
+
 A pool addition holds `"elements"` as a pool does. `horizon-port-pack carry` writes these from the Lithostitched
 modifiers `add_structure_set_entries` and `add_template_pool_elements`.
 

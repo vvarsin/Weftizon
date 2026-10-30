@@ -254,6 +254,8 @@ Recipes and loot use 26.3 data-pack formats.
 - Recipe: `data/my_mod/recipe/my_recipe.json`
 - Loot table: `data/my_mod/loot_table/blocks/my_block.json` or
   `data/my_mod/loot_table/entities/my_mob.json`
+- Loot modification: `data/my_mod/loot_table/blocks/stone.json` with
+  `"horizon:add_to": "minecraft:blocks/stone"` and `pools` appends those pools to the vanilla table
 - Tags: `data/minecraft/tags/block/mineable/pickaxe.json` to add your block to a vanilla tag
 - Convention tags shared by Fabric/NeoForge mods: `data/c/tags/...`
 

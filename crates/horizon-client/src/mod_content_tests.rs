@@ -1288,6 +1288,47 @@ fn png(w: u32, h: u32, pixel: [u8; 4]) -> Vec<u8> {
     out
 }
 
+/// A mod's own loot table with `horizon:add_to` appends pools to another table.
+#[test]
+fn loot_additions_append_to_named_table() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-loot-add-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let toml = manifest("lootmod", "");
+    let m = folder_mod(
+        &scratch.join("lootmod"),
+        &[
+            ("horizon-mod.toml", &toml),
+            (
+                "data/lootmod/loot_table/blocks/stone.json",
+                r#"{"horizon:add_to":"minecraft:blocks/stone",
+                    "pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"lootmod:gem"}]}]}"#,
+            ),
+        ],
+    );
+    let out = scratch.join("root");
+    build(&base, &[m], &out).unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(
+        &fs::read(out.join("data/minecraft/loot_table/blocks/stone.json")).unwrap(),
+    )
+    .unwrap();
+    let pools = doc["pools"].as_array().unwrap();
+    assert!(pools.iter().any(|p| {
+        p["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["name"] == "lootmod:gem")
+    }));
+    assert!(
+        !out.join("data/lootmod/loot_table/blocks/stone.json")
+            .exists()
+    );
+    fs::remove_dir_all(scratch).unwrap();
+}
+
 /// A Weft-style entity mod: files found by the entity's name, a Blockbench
 /// model and animations, a glow mask, a variant, sounds and spawns.
 fn ghost_mod(dir: &Path) -> ContentMod {

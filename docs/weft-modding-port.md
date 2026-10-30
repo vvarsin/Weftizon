@@ -120,7 +120,7 @@ clients without the same mods (they need the same content, as for blocks).
 - Events, questions, value chains and attributes as a hook-point family (`horizon_mods::events` names,
   native handlers), the built-in events of Weft mapped to Horizon's call sites.
 - Commands (typed builders over `horizon-command`) and a World API for native mods.
-- Loot modification (`horizon:add_pools` over another table, as `horizon:add_to` does for pools) and recipe kinds.
+- Loot modification: **done** (`"horizon:add_to"` + `pools` appends to another table); recipe kinds still later.
 
 ## 4. Machines, block entities, inventories and menus
 

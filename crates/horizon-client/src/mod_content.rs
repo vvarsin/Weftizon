@@ -1449,6 +1449,7 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     let mut warnings = Vec::new();
     let mut worldgen: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
     let mut additions: BTreeMap<&str, Vec<Addition>> = BTreeMap::new();
+    let mut loot_additions: BTreeMap<String, Vec<J>> = BTreeMap::new();
     for m in mods {
         let declarations = format!("data/{}/horizon/", m.id);
         let mut reader = m.content.reader()?;
@@ -1466,6 +1467,24 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 let merge = tags.entry(file.clone()).or_default();
                 warnings.extend(merge.add(&m.id, file, replace, shared, values));
             } else if !file.starts_with(&declarations) {
+                // A mod's own loot table can append pools to another table.
+                if file.starts_with("data/")
+                    && file.contains("/loot_table/")
+                    && file.ends_with(".json")
+                {
+                    let doc: J =
+                        serde_json::from_slice(&bytes).map_err(|e| format!("{file}: {e}"))?;
+                    if let Some(J::Str(target)) = doc.get("horizon:add_to") {
+                        let Some(J::Arr(pools)) = doc.get("pools") else {
+                            return Err(format!("{}: {file}: no pools", m.id).into());
+                        };
+                        loot_additions
+                            .entry(target.clone())
+                            .or_default()
+                            .extend(pools.iter().cloned());
+                        continue;
+                    }
+                }
                 overlay.write(file, &bytes)?;
                 if let Some((bundle, id)) = worldgen_entry(file) {
                     let text = String::from_utf8(bytes).map_err(|e| format!("{file}: {e}"))?;
@@ -1566,6 +1585,18 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 .map_err(|e| format!("{bundle}: {e}"))?;
         }
         overlay.write(bundle, &serde_json::to_vec(&doc)?)?;
+    }
+    // Loot additions: append the named table's pools to the table it names.
+    for (target, pools) in &loot_additions {
+        let (ns, path) = target.split_once(':').unwrap_or(("minecraft", target));
+        let rel = format!("data/{ns}/loot_table/{path}.json");
+        let file = out_path(&overlay, &rel);
+        let mut doc = read_json(&file).map_err(|e| format!("loot table {target}: {e}"))?;
+        let Some(J::Arr(list)) = doc.get_mut("pools") else {
+            return Err(format!("loot table {target}: no pools").into());
+        };
+        list.extend(pools.iter().cloned());
+        overlay.write(&rel, &serde_json::to_vec(&doc)?)?;
     }
     // The commands suggest ids from `command-registries.json`: add the
     // structures, pools, sets and features the mods bring.
