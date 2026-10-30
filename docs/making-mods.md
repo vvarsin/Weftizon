@@ -218,6 +218,13 @@ of its key: `animation.ghost.idle` becomes `idle`. The game plays:
 Loop modes are `true`, `false`, and `"hold_on_last_frame"`. Molang is not evaluated yet:
 expressions read as 0.
 
+A porting gotcha: a model in your mod namespace must name vanilla parents with the
+`minecraft:` prefix. Use `"parent": "minecraft:item/generated"` and
+`"parent": "minecraft:block/cube"`, not `"item/generated"` or `"block/cube"`. Without the prefix,
+the parent resolves to your namespace (`mymod:item/generated`), which does not exist; the item or
+block loads with no error but its model/icon is missing. This was found while testing an
+Invasion-Mod port.
+
 Use it with:
 
 ```text
