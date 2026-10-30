@@ -669,7 +669,8 @@ capabilities = ["registries"]
                 {"target": "hurt_by", "alert_others": true},
                 {"target": "nearest_attackable", "entities": ["minecraft:player"], "must_see": false}
             ],
-            "spawn_egg": {"colors": [10, 20]}}"##;
+            "spawn_egg": {"colors": [10, 20]},
+            "solid": true, "kinematic": true, "carry_height": 0.5}"##;
         let content = hmod(
             "entity-goals",
             MANIFEST_TEXT,
@@ -689,6 +690,10 @@ capabilities = ["registries"]
         assert_eq!(
             egg.components["minecraft:entity_data"],
             serde_json::json!({ "id": "ruby:bull" })
+        );
+        assert_eq!(
+            (e.solid, e.kinematic, e.carry_height),
+            (true, true, Some(0.5))
         );
         let goals = e.goals.as_ref().unwrap();
         assert_eq!(goals.len(), 7);
@@ -851,6 +856,11 @@ capabilities = ["registries"]
         refused(
             "e-spawn-egg-model",
             r#"{"template": "minecraft:zombie", "spawn_egg": {"item_model": "Nope"}}"#,
+            &[],
+        );
+        refused(
+            "e-carry-height",
+            r#"{"template": "minecraft:zombie", "carry_height": -1}"#,
             &[],
         );
         let e = hmod(

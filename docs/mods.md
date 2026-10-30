@@ -227,6 +227,10 @@ spawn egg is generated as item `<id>_spawn_egg`, copying a vanilla egg and carry
 lang (`item.<mod>.<name>_spawn_egg`) and, with `item_model`, its item model and texture. Not yet: armour and
 held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
 
+A declaration can also make an entity a platform: `"solid": true` blocks players and lets them stand on it;
+`"kinematic": true` makes it a moving platform that carries a player standing on top; `carry_height` is the
+height above its top a player may ride. Weft's block decks (`blocks(&DECK)`) are still later.
+
 #### Entity behaviour
 
 `goals` and `targets` give a declared entity an AI of its own, from a fixed vocabulary (Weft's `goals(..)`); each

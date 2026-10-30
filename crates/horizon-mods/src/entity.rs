@@ -90,6 +90,9 @@ pub(crate) struct EntityFile {
     #[serde(default)]
     spawns: Vec<Spawn>,
     spawn_egg: Option<SpawnEgg>,
+    solid: Option<bool>,
+    kinematic: Option<bool>,
+    carry_height: Option<f64>,
 }
 
 /// Values that replace the template's; unset keeps it.
@@ -156,6 +159,12 @@ pub struct Entity {
     pub components: BTreeMap<String, serde_json::Value>,
     /// Its spawn egg, if it declares one; the content root makes the item.
     pub spawn_egg: Option<SpawnEgg>,
+    /// Weft's `solid()`: players collide with it and can stand on it.
+    pub solid: bool,
+    /// Weft's `kinematic()`: a moving platform; players on top move with it.
+    pub kinematic: bool,
+    /// How high above its top a player may ride it (Weft's `carry_height`).
+    pub carry_height: Option<f64>,
 }
 
 pub(crate) fn resource_id(s: &str) -> bool {
@@ -369,6 +378,11 @@ impl Entity {
         {
             return Err(format!("loot_table {t:?} is not a resource name"));
         }
+        if let Some(h) = decl.carry_height
+            && !(h.is_finite() && h >= 0.0)
+        {
+            return Err("carry_height is a finite number 0 or more".into());
+        }
         for s in &decl.spawns {
             if s.biomes.is_empty() {
                 return Err("a spawn names no biomes".into());
@@ -418,6 +432,9 @@ impl Entity {
             targets: decl.targets,
             components: decl.components,
             spawn_egg: decl.spawn_egg,
+            solid: decl.solid.unwrap_or(false),
+            kinematic: decl.kinematic.unwrap_or(false),
+            carry_height: decl.carry_height,
         })
     }
 }

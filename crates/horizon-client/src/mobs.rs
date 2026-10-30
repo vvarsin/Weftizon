@@ -547,6 +547,9 @@ impl MobTypes {
                 emissive: e.emissive.clone(),
                 scale: e.scale,
                 loot_table: e.loot_table.clone(),
+                solid: e.solid,
+                kinematic: e.kinematic,
+                carry_height: e.carry_height,
                 ..Default::default()
             };
             if let Some((model, animations)) = custom::load_model(root, &e) {

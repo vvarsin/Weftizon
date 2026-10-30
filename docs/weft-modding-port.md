@@ -38,7 +38,7 @@ behaviour; do not copy Weft source.
 | Packaging / loader | `declare_mod!`, native cdylib, C ABI, zip mods loaded in parallel | `.hmod` content mods and `.hnmod` mixin mods | Foundation (exists) |
 | Names / handles | `namespace:path` names, handles with ids, generated names | content namespaces; network ids after vanilla's | Foundation (exists) |
 | **Entities** | size, health, speed, category, texture, model, animations, sounds, spawns | **done (phase 1)**: declarations from vanilla templates, Bedrock models and animations, skins, variants, glow, sounds, spawns, loot | 1 ✅ |
-| Entity behaviour | AI goals, attack damage, tick/hurt/death/interact, components, kinematic platforms | template behaviour only | 2 |
+| Entity behaviour | AI goals, attack damage, tick/hurt/death/interact, components, kinematic platforms | goals, animations, hooks, components, solid/kinematic/carry_height done; block decks later | 2 |
 | Blocks | hardness, tool tier, drops, light, render layers, model boxes, collision, states, events, particles | template copies with properties and shapes; native hooks for behaviour | 3 |
 | Items | texture, stack, durability, tools, damage, placed block, wearable, use | template copies with component patches | 3 |
 | Recipes / loot | shaped/shapeless, recipe kinds, loot pools, loot modification | 26.3 data-pack recipes and loot; no loot modifiers | 3 |
@@ -106,7 +106,7 @@ clients without the same mods (they need the same content, as for blocks).
   remove, `native_play_animation`). Cancelling or changing damage waits for phase 3's questions and
   chains. Not verified with a built native mod yet: the dispatch (batches, hits taken once) is unit tested.
 - Per-entity components (Weft `entity_component`) saved in the entity's NBT under `horizon:components`.
-- Kinematic platforms (`solid`, `kinematic`, `carry_height`, block decks) last, after machines.
+- Kinematic platforms (`solid`, `kinematic`, `carry_height`) are in; Weft's block decks are still later.
 - Tests: goal selection probes against the template's (same RNG order), callbacks in `lan_e2e`.
 
 ## 3. Blocks, items and inter-mod behaviour

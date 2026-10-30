@@ -124,6 +124,9 @@ pub(super) fn build(
                 goals: e.goals.clone(),
                 targets: e.targets.clone(),
                 components: e.components.clone(),
+                solid: e.solid,
+                kinematic: e.kinematic,
+                carry_height: e.carry_height,
             });
         }
     }

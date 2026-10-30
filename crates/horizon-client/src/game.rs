@@ -9699,8 +9699,49 @@ impl Game<'_> {
         })
         .collect()
     }
+    /// A player standing on a custom kinematic entity moves with it.
+    /// (`Weft::kinematic`; the entity's own previous -> current delta.)
+    fn carry_kinematic_platforms(&mut self) {
+        let mut delta = Vec3::ZERO;
+        for m in &self.mobs {
+            if Some(m.id) == self.riding {
+                continue;
+            }
+            let Some(c) = m.kind.custom.as_ref() else {
+                continue;
+            };
+            if !c.kinematic || !m.alive() {
+                continue;
+            }
+            let old = m.bounds_at(m.previous);
+            let top = old.max_position().y;
+            let Some(p) = self.player.as_ref() else {
+                break;
+            };
+            if p.position.y < top - 1.0e-7 {
+                continue;
+            }
+            let w = f64::from(p.dimensions.width) / 2.0;
+            if p.position.x + w < old.min_position().x
+                || p.position.x - w > old.max_position().x
+                || p.position.z + w < old.min_position().z
+                || p.position.z - w > old.max_position().z
+            {
+                continue;
+            }
+            delta = m.position.subtract(m.previous);
+            break;
+        }
+        if (delta.x != 0.0 || delta.y != 0.0 || delta.z != 0.0)
+            && let Some(p) = self.player.as_mut()
+        {
+            p.position = p.position.add_vector(delta);
+        }
+    }
+
     fn tick_mobs(&mut self) -> Result<()> {
         self.tick_creatures()?;
+        self.carry_kinematic_platforms();
         self.position_rider();
         self.tick_stats();
         self.tick_scoreboard();

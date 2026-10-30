@@ -25,6 +25,8 @@ impl Game<'_> {
                     && Some(m.id) != self.riding
                     && happy_ghast::collides_with_player(m, p.position.y))
                     || (m.species() == horizon_client::mobs::Species::Shulker && m.alive())
+                    || (Some(m.id) != self.riding
+                        && horizon_client::mobs::custom::collides_with_player(m, p.position.y))
             })
             .map(|m| m.bounds())
             .chain(

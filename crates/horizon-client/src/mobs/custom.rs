@@ -57,6 +57,11 @@ pub struct Entry {
     /// Weft's per-entity components: the values each entity starts with.
     #[serde(default)]
     pub components: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub solid: bool,
+    #[serde(default)]
+    pub kinematic: bool,
+    pub carry_height: Option<f64>,
 }
 fn one() -> f32 {
     1.0
@@ -106,6 +111,19 @@ pub fn json_tag(v: &serde_json::Value) -> Option<Tag> {
                 .collect::<Option<_>>()?,
         ),
     })
+}
+
+/// A custom entity's platform collision: solid/kinematic entities may block a
+/// player and carry one on top. `feet_y` is the player's feet.
+pub fn collides_with_player(m: &super::Mob, feet_y: f64) -> bool {
+    let Some(c) = m.kind.custom.as_ref() else {
+        return false;
+    };
+    if !(c.solid || c.kinematic) || !m.alive() {
+        return false;
+    }
+    let b = m.bounds();
+    b.max_position().y > feet_y - 1.0e-7 && b.min_position().y < feet_y + 2.0
 }
 
 /// A declared goal or target selector with what it names resolved: its
@@ -371,6 +389,10 @@ pub struct Custom {
     /// The per-entity components each of its entities starts with
     /// (`Extra::components`).
     pub components: Compound,
+    /// Weft's `solid()` and `kinematic()` platform flags.
+    pub solid: bool,
+    pub kinematic: bool,
+    pub carry_height: Option<f64>,
 }
 
 /// One copy of each sound event name, kept for the game's life: mob sounds are `&'static str`.

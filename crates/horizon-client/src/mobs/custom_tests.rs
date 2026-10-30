@@ -241,6 +241,35 @@ fn hook_batches_and_hits() {
     assert!(take_hurts(&mut mobs).is_empty(), "heard once");
 }
 
+/// A custom solid/kinematic entity blocks a player and can carry one.
+#[test]
+fn solid_and_kinematic_platforms_collide() {
+    use horizon_core::geometry::Vec3;
+    let platform = Custom {
+        id: "ruby:platform",
+        solid: true,
+        kinematic: true,
+        ..Default::default()
+    };
+    let kind = std::sync::Arc::new(crate::mobs::MobType {
+        id: "ruby:platform".into(),
+        custom: Some(std::sync::Arc::new(platform)),
+        ..(*crate::mobs::sensor_scan_tests::kind()).clone()
+    });
+    let m = Mob::new(1, kind.clone(), Vec3::new(0.0, 64.0, 0.0), 0.0);
+    let top = m.bounds().max_position().y;
+    assert!(collides_with_player(&m, top));
+    assert!(!collides_with_player(&m, top + 3.0));
+
+    let plain = std::sync::Arc::new(crate::mobs::MobType {
+        id: "ruby:plain".into(),
+        custom: Some(std::sync::Arc::new(Custom::default())),
+        ..(*crate::mobs::sensor_scan_tests::kind()).clone()
+    });
+    let m2 = Mob::new(2, plain, Vec3::new(0.0, 64.0, 0.0), 0.0);
+    assert!(!collides_with_player(&m2, m2.bounds().max_position().y));
+}
+
 /// Declared component values as NBT.
 #[test]
 fn component_values_read_as_nbt() {
