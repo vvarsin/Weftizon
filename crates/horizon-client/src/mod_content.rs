@@ -1228,6 +1228,38 @@ fn merge_tag(text: Option<&str>, more: &[J], what: &str) -> Result<String> {
     Ok(serde_json::to_string_pretty(&doc)?)
 }
 
+/// Adds one key to a namespace's `en_us.json`, keeping the mod's own value.
+fn add_lang(overlay: &Overlay<'_>, ns: &str, key: String, value: String) -> Result<()> {
+    let rel = format!("assets/{ns}/lang/en_us.json");
+    let path = out_path(overlay, &rel);
+    let mut doc: serde_json::Value = if fs::read(&path).is_ok() {
+        serde_json::from_slice(&fs::read(&path)?).map_err(|e| format!("{rel}: {e}"))?
+    } else {
+        serde_json::json!({})
+    };
+    let Some(map) = doc.as_object_mut() else {
+        return Err(format!("{rel}: not a JSON object").into());
+    };
+    if !map.contains_key(&key) {
+        map.insert(key, serde_json::Value::String(value));
+    }
+    overlay.write(&rel, &serde_json::to_vec(&doc).map_err(|e| e.to_string())?)
+}
+
+/// `zombie_t1a` -> `Zombie T1a`, for a generated spawn egg's name.
+fn title_case(path: &str) -> String {
+    path.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// A simple two-colour spawn egg texture, 16 x 16 RGBA: an egg silhouette in
 /// the first colour with spots of the second.
 fn spawn_egg_png(colors: &[u8]) -> Result<Vec<u8>> {
@@ -1564,6 +1596,40 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             overlay.write(
                 &format!("assets/{ns}/textures/item/{name}.png"),
                 &spawn_egg_png(&egg.colors)?,
+            )?;
+            // The generated egg needs a name key in the mod's language file.
+            let title = title_case(path);
+            add_lang(
+                &overlay,
+                ns,
+                format!("item.{ns}.{name}"),
+                format!("{title} Spawn Egg"),
+            )?;
+        }
+    }
+    // Declared items and blocks need name keys too; the mod's own value wins.
+    for m in mods {
+        for item in &m.content.items {
+            let (ns, path) = item.id.split_once(':').unwrap_or((m.id.as_str(), &item.id));
+            add_lang(&overlay, ns, format!("item.{ns}.{path}"), title_case(path))?;
+        }
+        for block in &m.content.blocks {
+            let (ns, path) = block
+                .id
+                .split_once(':')
+                .unwrap_or((m.id.as_str(), &block.id));
+            add_lang(&overlay, ns, format!("block.{ns}.{path}"), title_case(path))?;
+        }
+    }
+    // A declared entity needs its name key; a mod's own value wins.
+    for m in mods {
+        for e in &m.content.entities {
+            let (ns, path) = e.id.split_once(':').unwrap_or((m.id.as_str(), &e.id));
+            add_lang(
+                &overlay,
+                ns,
+                format!("entity.{ns}.{path}"),
+                title_case(path),
             )?;
         }
     }

@@ -55,6 +55,11 @@ my_mod/
       loot_table/entities/my_mob.json
 ```
 
+Names are generated when you do not provide a `lang` key: items get `item.<mod>.<name>`,
+blocks get `block.<mod>.<name>`, entities get `entity.<mod>.<name>`, and spawn eggs get
+`item.<mod>.<name>_spawn_egg`. Your own `assets/<mod>/lang/en_us.json` value wins. Add it to name
+things exactly as you want.
+
 The manifest:
 
 ```toml

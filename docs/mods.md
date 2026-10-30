@@ -229,7 +229,8 @@ entities get network ids after vanilla's, so a server and its players need the s
 spawn egg is generated as item `<id>_spawn_egg`, copying a vanilla egg and carrying its `minecraft:entity_data`:
 `"spawn_egg": {"colors": [10, 20]}`. The colours make a simple egg item model and texture automatically;
 `"item_model": "mymod:item/ghost_spawn_egg"` names your own model and texture instead. Add the item name
-to the lang (`item.<mod>.<name>_spawn_egg`). Not yet: armour and
+to the lang (`item.<mod>.<name>_spawn_egg`). If no key is present, the content root adds a default
+name for the item, block, entity and spawn egg; your own lang value wins. Not yet: armour and
 held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
 
 A declaration can also make an entity a platform: `"solid": true` blocks players and lets them stand on it;

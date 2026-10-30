@@ -1288,6 +1288,39 @@ fn png(w: u32, h: u32, pixel: [u8; 4]) -> Vec<u8> {
     out
 }
 
+/// Declared items and blocks get name keys when the mod has none.
+#[test]
+fn generated_item_and_block_names() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-auto-names-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let toml = manifest("names", "");
+    let m = folder_mod(
+        &scratch.join("names"),
+        &[
+            ("horizon-mod.toml", &toml),
+            (
+                "data/names/horizon/item/rocket.json",
+                r#"{"template":"minecraft:iron_ingot"}"#,
+            ),
+            (
+                "data/names/horizon/block/rock.json",
+                r#"{"template":"minecraft:stone","item":true}"#,
+            ),
+        ],
+    );
+    let out = scratch.join("root");
+    build(&base, &[m], &out).unwrap();
+    let lang: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("assets/names/lang/en_us.json")).unwrap())
+            .unwrap();
+    assert_eq!(lang["item.names.rocket"], "Rocket");
+    assert_eq!(lang["block.names.rock"], "Rock");
+    fs::remove_dir_all(scratch).unwrap();
+}
+
 /// A mod's own loot table with `horizon:add_to` appends pools to another table.
 #[test]
 fn loot_additions_append_to_named_table() {
@@ -1459,6 +1492,12 @@ fn custom_entities_join_the_root() {
         out.join("assets/ghosts/textures/item/ghost_spawn_egg.png")
             .exists()
     );
+    let lang: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("assets/ghosts/lang/en_us.json")).unwrap())
+            .unwrap();
+    assert_eq!(lang["item.ghosts.ghost_spawn_egg"], "Ghost Spawn Egg");
+    assert_eq!(lang["entity.ghosts.ghost"], "Ghost");
+    assert_eq!(lang["entity.ghosts.brute"], "Brute");
 
     // Network ids after vanilla's, and the command lists.
     let registries: serde_json::Value =
