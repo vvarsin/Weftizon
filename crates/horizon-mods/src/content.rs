@@ -401,6 +401,40 @@ impl Content {
             .map_err(|e| format!("{name}: {e}"))?;
             self.entities.push(decl);
         }
+        // A declared entity's spawn egg: an item copying a vanilla egg, with
+        // its own entity id and name. A mod can give it its own item model.
+        for e in &self.entities {
+            let Some(egg) = &e.spawn_egg else {
+                continue;
+            };
+            let (ns, path) = e.id.split_once(':').unwrap_or((id, &e.id));
+            let item_id = format!("{ns}:{path}_spawn_egg");
+            if !ids.insert(item_id.clone()) {
+                return Err(format!("spawn egg item {item_id} is already an item"));
+            }
+            let mut components = BTreeMap::new();
+            components.insert(
+                "minecraft:entity_data".into(),
+                serde_json::json!({ "id": e.id }),
+            );
+            components.insert(
+                "minecraft:item_name".into(),
+                serde_json::json!({ "translate": format!("item.{ns}.{path}_spawn_egg") }),
+            );
+            if let Some(model) = &egg.item_model {
+                components.insert(
+                    "minecraft:item_model".into(),
+                    serde_json::Value::String(model.clone()),
+                );
+            }
+            self.items.push(Item {
+                id: item_id,
+                template: "minecraft:zombie_spawn_egg".into(),
+                max_stack_size: None,
+                rarity: None,
+                components,
+            });
+        }
         Ok(())
     }
 }
@@ -634,7 +668,8 @@ capabilities = ["registries"]
             "targets": [
                 {"target": "hurt_by", "alert_others": true},
                 {"target": "nearest_attackable", "entities": ["minecraft:player"], "must_see": false}
-            ]}"##;
+            ],
+            "spawn_egg": {"colors": [10, 20]}}"##;
         let content = hmod(
             "entity-goals",
             MANIFEST_TEXT,
@@ -645,6 +680,16 @@ capabilities = ["registries"]
         assert_eq!(e.stats.attack_knockback, Some(1.5));
         assert_eq!(e.components.len(), 4);
         assert_eq!(e.components["ruby:mana"], 10);
+        let egg = content
+            .items
+            .iter()
+            .find(|i| i.id == "ruby:bull_spawn_egg")
+            .unwrap();
+        assert_eq!(egg.template, "minecraft:zombie_spawn_egg");
+        assert_eq!(
+            egg.components["minecraft:entity_data"],
+            serde_json::json!({ "id": "ruby:bull" })
+        );
         let goals = e.goals.as_ref().unwrap();
         assert_eq!(goals.len(), 7);
         assert_eq!(goals[0], Goal::Float { priority: None });
@@ -803,6 +848,27 @@ capabilities = ["registries"]
             &[],
         );
         assert!(e.contains("one kind"), "{e}");
+        refused(
+            "e-spawn-egg-model",
+            r#"{"template": "minecraft:zombie", "spawn_egg": {"item_model": "Nope"}}"#,
+            &[],
+        );
+        let e = hmod(
+            "e-spawn-egg-dup",
+            MANIFEST_TEXT,
+            &[
+                (
+                    "data/ruby/horizon/entity/ghost.json",
+                    br#"{"template": "minecraft:zombie", "spawn_egg": {}}"#,
+                ),
+                (
+                    "data/ruby/horizon/item/ghost_spawn_egg.json",
+                    br#"{"template": "minecraft:zombie_spawn_egg"}"#,
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert!(e.contains("ghost_spawn_egg"), "{e}");
         let nested = hmod(
             "e-nested",
             MANIFEST_TEXT,

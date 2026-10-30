@@ -221,8 +221,11 @@ tells every player who sees the entity, and one who comes near later, at the poi
 
 A broken declaration, model or animation file refuses the mod, with the file and the reason. `/summon <id>:<name>`
 summons it, worlds save it under its id, and its name is the translation `entity.<id>.<name>`. Content mods'
-entities get network ids after vanilla's, so a server and its players need the same mods. Not yet: spawn eggs,
-armour and held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
+entities get network ids after vanilla's, so a server and its players need the same mods. A declared entity's
+spawn egg is generated as item `<id>_spawn_egg`, copying a vanilla egg and carrying its `minecraft:entity_data`:
+`"spawn_egg": {"colors": [10, 20], "item_model": "mymod:item/ghost_spawn_egg"}`. Add its name to the
+lang (`item.<mod>.<name>_spawn_egg`) and, with `item_model`, its item model and texture. Not yet: armour and
+held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
 
 #### Entity behaviour
 

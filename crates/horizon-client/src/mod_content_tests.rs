@@ -1299,7 +1299,8 @@ fn ghost_mod(dir: &Path) -> ContentMod {
             br##"{"template": "minecraft:zombie", "health": 30, "width": 0.8, "height": 2.4,
                 "speed": 0.3, "scale": 1.25, "variants": ["ghost_blue"],
                 "sounds": {"step": "minecraft:block.wool.step"},
-                "spawns": [{"biomes": ["minecraft:plains", "#minecraft:is_forest"], "weight": 7, "max_count": 3}]}"##,
+                "spawns": [{"biomes": ["minecraft:plains", "#minecraft:is_forest"], "weight": 7, "max_count": 3}],
+                "spawn_egg": {"colors": [10, 20]}}"##,
         ),
         (
             "data/ghosts/horizon/entity/brute.json",
@@ -1394,6 +1395,13 @@ fn custom_entities_join_the_root() {
     let m = ghost_mod(&scratch.join("ghosts"));
     let out = scratch.join("root");
     build(&base, std::slice::from_ref(&m), &out).unwrap();
+    // A declared spawn egg becomes an item with the entity's id.
+    let items: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("items.json")).unwrap()).unwrap();
+    assert_eq!(
+        items["ghosts:ghost_spawn_egg"]["minecraft:entity_data"]["id"],
+        "ghosts:ghost"
+    );
 
     // Network ids after vanilla's, and the command lists.
     let registries: serde_json::Value =

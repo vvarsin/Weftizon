@@ -44,6 +44,17 @@ pub struct Spawn {
     pub max_count: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnEgg {
+    /// The two egg colours, kept for the mod's own item model and texture.
+    #[serde(default)]
+    pub colors: Vec<u8>,
+    /// A custom item model for the egg (`minecraft:item_model`), if the mod has one.
+    #[serde(default)]
+    pub item_model: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EntityFile {
@@ -78,6 +89,7 @@ pub(crate) struct EntityFile {
     loot_table: Option<String>,
     #[serde(default)]
     spawns: Vec<Spawn>,
+    spawn_egg: Option<SpawnEgg>,
 }
 
 /// Values that replace the template's; unset keeps it.
@@ -142,6 +154,8 @@ pub struct Entity {
     /// Weft's per-entity components: the values each entity starts with,
     /// changed by native mods and saved with it (`horizon:components`).
     pub components: BTreeMap<String, serde_json::Value>,
+    /// Its spawn egg, if it declares one; the content root makes the item.
+    pub spawn_egg: Option<SpawnEgg>,
 }
 
 pub(crate) fn resource_id(s: &str) -> bool {
@@ -344,6 +358,12 @@ impl Entity {
             decl.targets.as_deref(),
         )?;
         crate::behaviour::check_components(&decl.components)?;
+        if let Some(egg) = &decl.spawn_egg
+            && let Some(m) = &egg.item_model
+            && !resource_id(m)
+        {
+            return Err(format!("spawn_egg item_model {m:?} is not a resource name"));
+        }
         if let Some(t) = &decl.loot_table
             && !resource_id(t)
         {
@@ -397,6 +417,7 @@ impl Entity {
             goals: decl.goals,
             targets: decl.targets,
             components: decl.components,
+            spawn_egg: decl.spawn_egg,
         })
     }
 }

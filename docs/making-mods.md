@@ -229,11 +229,13 @@ entity network ids are assigned after vanilla's.
 
 ### Current limits
 
-Phase 1 (custom entities) is done and committed. Phase 2 is being implemented now: declared AI
-goals, attack animations, entity tick/hurt/death/interact hooks, per-entity components and
-moving platforms. Until phase 2 lands, a declared entity uses its template's AI and behaviour.
-Spawn eggs, armour/held items on a mod's own model, and the template's extra layers (for example
-a sheep's wool on a custom model) are later phases.
+Phase 1 (custom entities) is done. Phase 2 is mostly done: declared AI goals, attack animations,
+entity tick/hurt/death/interact hooks and per-entity components are in; kinematic platforms are
+the remaining part. A declared entity can now have its own goals and target selectors.
+Spawn eggs are generated early: `"spawn_egg": {"colors": [..], "item_model": "mymod:item/egg"}`
+creates item `<id>_spawn_egg`, copying a vanilla egg with the entity's `minecraft:entity_data`.
+Armour/held items on a mod's own model, and the template's extra layers (for example a sheep's
+wool on a custom model), are later phases.
 
 ---
 
