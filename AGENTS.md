@@ -1,8 +1,10 @@
-# Horizon: a map for agents
+# Weftizon: a map for agents
 
-Minecraft: Java Edition 26.3 rewritten in Rust (wgpu). Vanilla is the specification wherever it has the
-feature. Read [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
+Minecraft: Java Edition 26.3 rewritten in Rust (wgpu), forked from Horizon and being extended with
+Weft's modding features. Vanilla is the specification wherever it has the feature. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
+The Weft modding port roadmap is [docs/weft-modding-port.md](docs/weft-modding-port.md).
 
 ## Rules that bite
 
