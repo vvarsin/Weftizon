@@ -1443,6 +1443,22 @@ fn custom_entities_join_the_root() {
         items["ghosts:ghost_spawn_egg"]["minecraft:entity_data"]["id"],
         "ghosts:ghost"
     );
+    assert_eq!(
+        items["ghosts:ghost_spawn_egg"]["minecraft:item_model"],
+        "ghosts:item/ghost_spawn_egg"
+    );
+    assert!(
+        out.join("assets/ghosts/items/ghost_spawn_egg.json")
+            .exists()
+    );
+    assert!(
+        out.join("assets/ghosts/models/item/ghost_spawn_egg.json")
+            .exists()
+    );
+    assert!(
+        out.join("assets/ghosts/textures/item/ghost_spawn_egg.png")
+            .exists()
+    );
 
     // Network ids after vanilla's, and the command lists.
     let registries: serde_json::Value =

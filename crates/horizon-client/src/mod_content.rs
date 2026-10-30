@@ -1228,6 +1228,35 @@ fn merge_tag(text: Option<&str>, more: &[J], what: &str) -> Result<String> {
     Ok(serde_json::to_string_pretty(&doc)?)
 }
 
+/// A simple two-colour spawn egg texture, 16 x 16 RGBA: an egg silhouette in
+/// the first colour with spots of the second.
+fn spawn_egg_png(colors: &[u8]) -> Result<Vec<u8>> {
+    let base = colors[0];
+    let overlay = colors.get(1).copied().unwrap_or(base);
+    let mut pixels = Vec::with_capacity(16 * 16 * 4);
+    for y in 0..16 {
+        for x in 0..16 {
+            let dx = (f64::from(x) - 7.5) / 5.0;
+            let dy = (f64::from(y) - 7.5) / 6.0;
+            if dx * dx + dy * dy > 1.0 {
+                pixels.extend([0, 0, 0, 0]);
+                continue;
+            }
+            let spot = (x + 2 * y) % 7 == 0 || (x == 5 && y == 6);
+            let c = if spot { overlay } else { base };
+            pixels.extend([c, c, c, 255]);
+        }
+    }
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, 16, 16);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    let mut writer = e.write_header()?;
+    writer.write_image_data(&pixels)?;
+    writer.finish()?;
+    Ok(out)
+}
+
 /// The block and item ids and tags a content root has, for tag entries.
 struct Known {
     blocks: std::collections::BTreeSet<String>,
@@ -1503,6 +1532,39 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                     overlay.write(&format!("worldgen/structure/{ns}/{path}"), &bytes)?;
                 }
             }
+        }
+    }
+    // Spawn eggs with colours: a simple egg texture and generated item model.
+    for m in mods {
+        for e in &m.content.entities {
+            let Some(egg) = &e.spawn_egg else {
+                continue;
+            };
+            if egg.item_model.is_some() || egg.colors.is_empty() {
+                continue;
+            }
+            let (ns, path) = e.id.split_once(':').unwrap_or((m.id.as_str(), &e.id));
+            let name = format!("{path}_spawn_egg");
+            let model = format!("{ns}:item/{name}");
+            overlay.write(
+                &format!("assets/{ns}/items/{name}.json"),
+                &serde_json::to_vec(&serde_json::json!({
+                    "model": {"type": "minecraft:model", "model": model}
+                }))
+                .map_err(|e| e.to_string())?,
+            )?;
+            overlay.write(
+                &format!("assets/{ns}/models/item/{name}.json"),
+                &serde_json::to_vec(&serde_json::json!({
+                    "parent": "minecraft:item/generated",
+                    "textures": {"layer0": format!("{ns}:item/{name}")}
+                }))
+                .map_err(|e| e.to_string())?,
+            )?;
+            overlay.write(
+                &format!("assets/{ns}/textures/item/{name}.png"),
+                &spawn_egg_png(&egg.colors)?,
+            )?;
         }
     }
     // A tag naming an id nobody registers fails as a whole in vanilla, and

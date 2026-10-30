@@ -227,8 +227,9 @@ A broken declaration, model or animation file refuses the mod, with the file and
 summons it, worlds save it under its id, and its name is the translation `entity.<id>.<name>`. Content mods'
 entities get network ids after vanilla's, so a server and its players need the same mods. A declared entity's
 spawn egg is generated as item `<id>_spawn_egg`, copying a vanilla egg and carrying its `minecraft:entity_data`:
-`"spawn_egg": {"colors": [10, 20], "item_model": "mymod:item/ghost_spawn_egg"}`. Add its name to the
-lang (`item.<mod>.<name>_spawn_egg`) and, with `item_model`, its item model and texture. Not yet: armour and
+`"spawn_egg": {"colors": [10, 20]}`. The colours make a simple egg item model and texture automatically;
+`"item_model": "mymod:item/ghost_spawn_egg"` names your own model and texture instead. Add the item name
+to the lang (`item.<mod>.<name>_spawn_egg`). Not yet: armour and
 held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
 
 A declaration can also make an entity a platform: `"solid": true` blocks players and lets them stand on it;

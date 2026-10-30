@@ -421,10 +421,13 @@ impl Content {
                 "minecraft:item_name".into(),
                 serde_json::json!({ "translate": format!("item.{ns}.{path}_spawn_egg") }),
             );
-            if let Some(model) = &egg.item_model {
+            let model = egg.item_model.clone().or_else(|| {
+                (!egg.colors.is_empty()).then(|| format!("{ns}:item/{path}_spawn_egg"))
+            });
+            if let Some(model) = model {
                 components.insert(
                     "minecraft:item_model".into(),
-                    serde_json::Value::String(model.clone()),
+                    serde_json::Value::String(model),
                 );
             }
             self.items.push(Item {
@@ -690,6 +693,10 @@ capabilities = ["registries"]
         assert_eq!(
             egg.components["minecraft:entity_data"],
             serde_json::json!({ "id": "ruby:bull" })
+        );
+        assert_eq!(
+            egg.components["minecraft:item_model"],
+            serde_json::json!("ruby:item/bull_spawn_egg")
         );
         assert_eq!(
             (e.solid, e.kinematic, e.carry_height),

@@ -114,8 +114,8 @@ clients without the same mods (they need the same content, as for blocks).
 - Block/item behaviour callbacks: use, place, break, neighbour change, scheduled tick, as hook points
   with data-driven forms for the common ones (drop table, light, replaceable, tool tier).
 - Spawn eggs for declared entities (`"spawn_egg": {"colors": [..]}` → an item copying a vanilla egg with
-  `minecraft:entity_data`). **Done early**: the content root generates `<id>_spawn_egg`; a custom `item_model`
-  names the mod's item model and texture.
+  `minecraft:entity_data`). **Done early**: the content root generates `<id>_spawn_egg`, plus a simple
+  two-colour egg model/texture from the colours; a custom `item_model` names the mod's own model and texture.
 - Weft components/tags as data (`fuel`, `food`, `hardness`, `light`) over vanilla components.
 - Events, questions, value chains and attributes as a hook-point family (`horizon_mods::events` names,
   native handlers), the built-in events of Weft mapped to Horizon's call sites.

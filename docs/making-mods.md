@@ -240,8 +240,9 @@ Phase 1 (custom entities) is done. Phase 2 is mostly done: declared AI goals, at
 entity tick/hurt/death/interact hooks, per-entity components and basic solid/kinematic platforms
 (`solid`, `kinematic`, `carry_height`) are in; Weft's block decks are still later. A declared entity
 can now have its own goals and target selectors.
-Spawn eggs are generated early: `"spawn_egg": {"colors": [..], "item_model": "mymod:item/egg"}`
-creates item `<id>_spawn_egg`, copying a vanilla egg with the entity's `minecraft:entity_data`.
+Spawn eggs are generated early: `"spawn_egg": {"colors": [..]}` creates item `<id>_spawn_egg`,
+copying a vanilla egg with the entity's `minecraft:entity_data`; the colours make a simple egg texture
+and item model. `"item_model": "mymod:item/egg"` names your own model and texture instead.
 Armour/held items on a mod's own model, and the template's extra layers (for example a sheep's
 wool on a custom model), are later phases.
 
