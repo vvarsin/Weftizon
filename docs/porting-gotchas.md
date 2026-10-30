@@ -95,3 +95,35 @@ After fixes, the full Invasion content port loaded and spawned:
 
 The remaining gaps are behaviour: Invasion's Nexus machine, wave AI, custom item use and
 entity behaviour need native mods or later Weft phases. Content data alone cannot port them.
+
+## TheAfterdark port test
+
+TheAfterdark is a 1.20.1 multi-loader mod: assets, a teleport block/catalyst, a custom
+dimension and a large worldgen data set.
+
+What loaded:
+
+- blockstate/model/textures and the teleport catalyst/block item models
+- item/block names and the custom item icons
+- worldgen data files parsed without a game error
+- the custom block and catalyst were placable/givable
+
+What did not work:
+
+- **Custom dimension.** The port copied `dimension/afterdark.json` and added a
+  `dimension_type/afterdark.json`, but `/execute in the_afterdark:afterdark` answered
+  `Unknown dimension`. Horizon's game dimensions are still only Overworld, Nether and End;
+  content mods cannot add a playable dimension yet. This is a phase-5 feature, not a data bug.
+- **Custom worldgen feature types.** The configured features use Java feature types
+  (`the_afterdark:*`). Data files alone do not register them; a native mod or generator support
+  is needed once the dimension is playable.
+- **Teleport block behaviour.** `TeleportBlockEntity` and the teleport logic are Java code.
+  The content block is only a static block; it needs a native block-entity mod.
+- **Old structure path.** The mod uses `data/the_afterdark/structures/` (plural); Horizon's
+  content root expects `data/<ns>/structure/` (singular). The port renamed it to
+  `structure/teleport_altar.nbt`.
+- **1.20.1 item models** need 26.3 item definitions (`assets/<ns>/items/<name>.json`) in
+  addition to `models/item/<name>.json`; the port added them.
+
+So the data/assets port is clean, but TheAfterdark is not fully playable from content data
+alone. Its dimension and teleport behaviour are the missing pieces.
