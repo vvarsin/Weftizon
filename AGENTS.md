@@ -1,12 +1,12 @@
 # Weftizon: a map for agents
 
 Minecraft: Java Edition 26.3 rewritten in Rust (wgpu), forked from Horizon and being extended with
-Weft's modding features. Vanilla is the specification wherever it has the feature. Read
+Weft-style modding features. Vanilla is the specification wherever it has the feature. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
-The Weft modding port roadmap is [docs/weft-modding-port.md](docs/weft-modding-port.md).
+The Weftizon modding roadmap is [docs/weft-modding-port.md](docs/weft-modding-port.md).
 
-## The Weft modding port
+## The Weftizon modding port
 
 Weftizon adds [Weft](https://github.com/VortexSo4/Weft)'s modding surface on top of Horizon, one complete feature
 at a time in the roadmap's order. What a mod can do is in [docs/mods.md](docs/mods.md).
