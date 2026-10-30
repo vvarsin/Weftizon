@@ -81,6 +81,11 @@ drops; `native_place_block` hears a block placed from an item (`BlockItem.place`
 API 15 adds block entities for a mod's blocks (`native_block_entity`, `native_block_entity_ticks`,
 `native_block_entity_tick`): made when the block is placed, ticked on the server and saved with the chunk. Bundles that use them need `"hooks": 15`.
 
+API 16 adds content mods' entities, Weft's `on_tick`, `on_hurt`, `on_death` and `on_interact` for the mobs a content
+mod declares ([Entities](#entities)): `native_entity_tick`, `native_entity_hurt`, `native_entity_died`,
+`native_entity_interact`, and helpers to read, move, hurt, heal, remove and animate an entity
+(`native_play_animation`). Bundles that use them need `"hooks": 16`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page. The first one shows a notice once (the first build downloads
@@ -291,3 +296,28 @@ stock client shows as a chest (`generic_9x1` to `generic_9x6`); nothing is insta
 
 The menu hooks run with no player's state swapped in; `native_player_stacks` and `native_exchange_items` refuse a
 player whose state is (inside `native_perform_command`): call them from a menu hook or `native_server_tick`.
+
+### Entities
+
+API 16, `crates/horizon-client/src/game/native_entities.rs`: code for the mobs a content mod declares
+(`data/<id>/horizon/entity/<name>.json`, [mods.md](mods.md#custom-entities)), so one mod can be a content mod's
+declarations and a native mod's behaviour, as a Weft mod's `r.entity(..)` is. The hooks name the entity's type
+(`mymod:ghost`): check it is yours. They run where the world is simulated, for every player of it.
+
+- **`native_entity_tick(entity, ids)`**: once a tick for each type with any alive in the level, after every mob of the
+  level ticked: all its entities at once (Weft's `on_tick`; batch your work over `ids`).
+- **`native_entity_hurt(entity, id, damage)`**: a hit landed (Weft's `on_hurt`, the `ENTITY_HURT` event): the damage
+  type (`minecraft:player_attack`, `minecraft:fall`...), what it took of the health, whether a player dealt it and the
+  attacking mob's id. Heard after the hit, at the end of the tick it landed in or the start of the next, always
+  before the death it caused. Stopping or changing damage is not a hook yet (Weft's `question::HURT` and
+  `chain::DAMAGE`, roadmap phase 3).
+- **`native_entity_died(entity, id, damage)`**: it dies, once, before its loot drops (Weft's `on_death`).
+- **`native_entity_interact(entity, id, stack, claimed)`**: a player right clicks it, before the template's own
+  interaction (Weft's `on_interact`); set `claimed` to take the click: the hand swings and nothing else happens. The
+  acting player's state is swapped in, as for `native_use_item`.
+- Helpers, by entity id, for mobs of the level the hook runs in: `native_entity(id)` (type, position, velocity,
+  rotation, health, age, target, the animation playing), `native_entities_of(entity)`,
+  `native_set_entity_velocity`, `native_teleport_entity`, `native_hurt_entity` (generic damage),
+  `native_heal_entity`, `native_remove_entity` (no death, no loot) and `native_play_animation(id, name, repeat)`
+  (Weft's `play_animation`: a keyframe animation of the entity's file in place of idle and walk, once or over and
+  over, `""` to stop; every player who sees the entity sees it).

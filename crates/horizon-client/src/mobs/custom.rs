@@ -498,6 +498,35 @@ pub fn read_animation_payload(data: &[u8]) -> Option<(i32, Option<(String, bool,
     Some((id, (!name.is_empty()).then_some((name, repeat, elapsed))))
 }
 
+/// Each type of mods' entities alive among `mobs`, by id, with the ids of
+/// its entities in their order: the batches of `native_entity_tick`.
+pub fn tick_batches(mobs: &[Mob]) -> BTreeMap<&'static str, Vec<u32>> {
+    let mut batches: BTreeMap<&'static str, Vec<u32>> = BTreeMap::new();
+    for m in mobs {
+        if let Some(c) = &m.kind.custom
+            && m.alive()
+            && !m.removed
+        {
+            batches.entry(c.id).or_default().push(m.id);
+        }
+    }
+    batches
+}
+
+/// Takes the hits mods' entities took out of `mobs` (`Extra::hurts`), in
+/// the mobs' order: the type, the entity, the damage and what it took.
+pub fn take_hurts(mobs: &mut [Mob]) -> Vec<(&'static str, u32, super::Damage, f32)> {
+    let mut hits = Vec::new();
+    for m in mobs {
+        if let Some(c) = &m.kind.custom
+            && !m.extra.hurts.is_empty()
+        {
+            hits.extend(m.extra.hurts.drain(..).map(|(d, a)| (c.id, m.id, d, a)));
+        }
+    }
+    hits
+}
+
 /// A client: the animation of an [`ANIMATION_CHANNEL`] payload on the entity
 /// it names, timed from the client's own clock of the entity. False when the
 /// payload doesn't read or the client has no such entity.

@@ -6,6 +6,10 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 16 adds content mods' entities (`native_entity_tick`,
+//! `native_entity_hurt`, `native_entity_died`, `native_entity_interact`,
+//! and `native_entity`, `native_play_animation`... in `native_entities.rs`).
+//!
 //! API 15 adds block entities for a mod's blocks (`native_block_entity`,
 //! `native_block_entity_ticks`, `native_block_entity_tick`): made when the
 //! block is placed, ticked on the server and saved with the chunk.
@@ -56,6 +60,7 @@ use super::native_lifecycle::{NativeLifecycleContext, ServerTickPhase, WorldPhas
 use super::{
     Game, GameLevel, LevelDimension, Screen,
     execution_role::ExecutionRole,
+    native_entities::NativeDamage,
     native_panel_recipes::RecipePage,
     native_server::{NativeCommand, NativeServerPlayer},
 };
@@ -81,7 +86,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 15;
+pub(crate) const NATIVE_HOOKS_API: u32 = 16;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.
@@ -547,6 +552,48 @@ impl Game<'_> {
         state: BlockStateId,
     ) {
         let _ = (stack, pos, state);
+    }
+    /// The server ticked the entities of type `entity` (`mymod:ghost`), a
+    /// content mod's entity (`data/<id>/horizon/entity/`), alive in this
+    /// level: `ids`, all at once (Weft's `on_tick`), once a tick per type
+    /// with any, after every mob of the level ticked. Read and change them
+    /// with `native_entity`, `native_set_entity_velocity`,
+    /// `native_play_animation`... Server-side. API 16.
+    pub(super) fn native_entity_tick(&mut self, entity: &str, ids: &[u32]) {
+        let _ = (entity, ids);
+    }
+    /// Entity `id` of type `entity`, a content mod's, was hurt (Weft's
+    /// `on_hurt`): the hit landed and its health is already lower (it may be
+    /// dying: `native_entity_died` follows). Heard at the end of the tick it
+    /// landed in, or the next one's start, in order. Server-side. API 16.
+    pub(super) fn native_entity_hurt(&mut self, entity: &str, id: u32, damage: &NativeDamage) {
+        let _ = (entity, id, damage);
+    }
+    /// Entity `id` of type `entity`, a content mod's, dies (Weft's
+    /// `on_death`, `LivingEntity.die`), once, before its loot drops;
+    /// `damage` is the hit that killed it, if any. Server-side. API 16.
+    pub(super) fn native_entity_died(
+        &mut self,
+        entity: &str,
+        id: u32,
+        damage: Option<&NativeDamage>,
+    ) {
+        let _ = (entity, id, damage);
+    }
+    /// A player right clicks entity `id` of type `entity`, a content mod's,
+    /// holding `stack` in `self.hand` (Weft's `on_interact`): before the
+    /// template's own interaction (a name tag, milking, riding...). Set
+    /// `claimed` to take the click: the hand swings and nothing else
+    /// happens. Server-side, for every player of the world (the helpers read
+    /// the acting one). API 16.
+    pub(super) fn native_entity_interact(
+        &mut self,
+        entity: &str,
+        id: u32,
+        stack: Option<&ItemStack>,
+        claimed: &mut bool,
+    ) {
+        let _ = (entity, id, stack, claimed);
     }
 }
 

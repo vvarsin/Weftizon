@@ -271,6 +271,10 @@ milk, a creeper with declared goals no longer swells (swelling is one of its goa
 brain instead of goals (villager, warden, sniffer, axolotl, breeze, creaking, copper golem, happy ghast) take no
 `goals` or `targets`.
 
+Behaviour that needs code (every tick, on a hit, at death, on a right click) is a native mod's: the hook points
+`native_entity_tick`, `native_entity_hurt`, `native_entity_died` and `native_entity_interact` name the declared
+entity's type ([native-mods.md#entities](native-mods.md#entities)).
+
 ## Native mods
 
 Behaviour that needs code (a new key, a HUD, a tool that changes how mining works) is a native mod. It is a bundle of

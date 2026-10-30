@@ -824,6 +824,9 @@ pub struct Extra {
     /// The animation a mod plays on its entity (`Mob::play_animation`), on
     /// the server and on the clients that see it.
     pub animation: Option<custom::Playing>,
+    /// The hits a mod's entity took that its native mods have not heard of
+    /// yet (`native_entity_hurt`): the damage and what it took of its health.
+    pub hurts: Vec<(Damage, f32)>,
     /// A player's or mannequin's `minecraft:scale`, which scales the whole model
     /// (`LivingEntityRenderState.scale`): the local player's own, and on a
     /// server the others' from their attribute updates; 0 is the default, 1.
@@ -2531,6 +2534,11 @@ impl Mob {
             self.extra.in_love = 0;
         }
         self.last_damage = Some((source, i64::from(self.age)));
+        // A mod's entity: the hit waits for the game to tell its native mods
+        // (`native_entity_hurt`), wherever it landed.
+        if self.kind.custom.is_some() {
+            self.extra.hurts.push((source, dealt));
+        }
         if let Some(who) = source.attacker {
             self.ai.last_hurt_by = Some(who);
             self.ai.last_hurt_by_time = self.age as i32;

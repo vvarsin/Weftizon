@@ -188,6 +188,59 @@ fn animation_payloads_round_trip() {
     ));
 }
 
+/// The batches `native_entity_tick` gets: each type of mods' entities with
+/// its alive ones, in order; and the hits `native_entity_hurt` gets, taken
+/// once, for mods' entities only.
+#[test]
+fn hook_batches_and_hits() {
+    use crate::mobs::{Damage, DamageKind};
+    use horizon_core::geometry::Vec3;
+    let of = |id: &str| {
+        std::sync::Arc::new(crate::mobs::MobType {
+            id: id.into(),
+            custom: Some(std::sync::Arc::new(Custom {
+                id: intern(id),
+                ..Default::default()
+            })),
+            ..(*crate::mobs::sensor_scan_tests::kind()).clone()
+        })
+    };
+    let (ghost, imp, cow) = (
+        of("ruby:ghost"),
+        of("ruby:imp"),
+        crate::mobs::sensor_scan_tests::kind(),
+    );
+    let mut mobs: Vec<Mob> = [
+        (1, &ghost),
+        (2, &cow),
+        (3, &imp),
+        (4, &ghost),
+        (5, &ghost),
+        (6, &ghost),
+    ]
+    .into_iter()
+    .map(|(id, k)| Mob::new(id, k.clone(), Vec3::ZERO, 0.0))
+    .collect();
+    mobs[4].health = 0.0;
+    mobs[5].removed = true;
+    let batches = tick_batches(&mobs);
+    assert_eq!(
+        batches.into_iter().collect::<Vec<_>>(),
+        [("ruby:ghost", vec![1, 4]), ("ruby:imp", vec![3])]
+    );
+    // Hits: the mod's entities' are kept for the hook, vanilla's are not.
+    assert!(mobs[0].damage(3.0, Damage::mob(9, [1.0, 0.0, 0.0])));
+    assert!(mobs[1].damage(3.0, Damage::of(DamageKind::Generic)));
+    assert!(mobs[2].damage(2.5, Damage::of(DamageKind::Fall)));
+    assert!(mobs[1].extra.hurts.is_empty());
+    let hits = take_hurts(&mut mobs);
+    assert_eq!(hits.len(), 2);
+    assert_eq!((hits[0].0, hits[0].1, hits[0].3), ("ruby:ghost", 1, 3.0));
+    assert_eq!(hits[0].2.attacker, Some(crate::mobs::Who::Mob(9)));
+    assert_eq!((hits[1].0, hits[1].2.kind), ("ruby:imp", DamageKind::Fall));
+    assert!(take_hurts(&mut mobs).is_empty(), "heard once");
+}
+
 /// A Custom with the goals and targets of `json` (`{"goals": [..], "targets": [..]}`).
 fn declared(json: &str) -> Custom {
     #[derive(serde::Deserialize)]

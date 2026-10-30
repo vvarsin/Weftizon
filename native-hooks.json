@@ -139,6 +139,26 @@
       "name": "place_block",
       "version": 1,
       "target": "horizon_client::game::native_hooks::Game<'_>::native_place_block"
+    },
+    {
+      "name": "entity_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_tick"
+    },
+    {
+      "name": "entity_hurt",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_hurt"
+    },
+    {
+      "name": "entity_died",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_died"
+    },
+    {
+      "name": "entity_interact",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_interact"
     }
   ]
 }

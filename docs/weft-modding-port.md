@@ -99,8 +99,12 @@ clients without the same mods (they need the same content, as for blocks).
   `native_play_animation`) in place of idle and walk, synced by the entity tracker as the
   `horizon:play_animation` custom payload: at once when it changes, and with the pairing (with the
   ticks it has run) for a player who comes near later.
-- Callbacks for code: native hook points `entity_tick`, `entity_hurt`, `entity_died`, `entity_interact`
-  per entity type, batched per type as Weft's `on_tick` is.
+- ✅ Callbacks for code (API 16, `game/native_entities.rs`): native hook points `entity_tick`
+  (batched per type as Weft's `on_tick` is, after the level's mobs ticked), `entity_hurt` (after the
+  hit, before the death it caused), `entity_died` (before the loot), `entity_interact` (claimable,
+  before the template's interaction), and helpers by entity id (read, velocity, teleport, hurt, heal,
+  remove, `native_play_animation`). Cancelling or changing damage waits for phase 3's questions and
+  chains. Not verified with a built native mod yet: the dispatch (batches, hits taken once) is unit tested.
 - Per-entity components (Weft `entity_component`) saved in the entity's NBT under `horizon:components`.
 - Kinematic platforms (`solid`, `kinematic`, `carry_height`, block decks) last, after machines.
 - Tests: goal selection probes against the template's (same RNG order), callbacks in `lan_e2e`.

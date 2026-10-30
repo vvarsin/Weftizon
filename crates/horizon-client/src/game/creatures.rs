@@ -627,6 +627,9 @@ impl Game<'_> {
     /// The entity phase of `tick_creatures`: every mob's tick, deaths, and the
     /// projectiles and effects that follow from them.
     pub(super) fn tick_creature_entities(&mut self) -> Result<()> {
+        // Native mods hear the hits mods' entities took since the last tick
+        // (by the player, projectiles...) before their deaths.
+        self.native_entity_hurts();
         // LivingEntity.die runs when the killing blow lands: mobs killed
         // since the last tick (by the player, explosions...) die first.
         let killed: Vec<Mob> = self
@@ -815,6 +818,8 @@ impl Game<'_> {
         }
         self.mobs.append(&mut mobs);
         self.died = died;
+        // The hits of the mobs' own ticks, before the deaths they caused.
+        self.native_entity_hurts();
         // ... and entity event 60 goes out as it is: the poof.
         for (id, at, width, height) in gone {
             let at = [at.x, at.y, at.z];
@@ -859,6 +864,10 @@ impl Game<'_> {
             queued.append(&mut m.outbox);
         }
         self.handle_mob_events(queued)?;
+        // Native mods: the hits of this tick's projectiles and effects, then
+        // each type of mods' entities at once (Weft's `on_tick`).
+        self.native_entity_hurts();
+        self.native_entity_ticks();
         Ok(())
     }
     /// `LivingEntity.makePoofParticles` (entity event 60) about a mob's box.
@@ -879,6 +888,8 @@ impl Game<'_> {
     }
     /// LivingEntity.die / dropAllDeathLoot.
     fn mob_died(&mut self, m: &Mob) {
+        // A content mod's entity: its native mods hear it die.
+        self.native_entity_dies(m);
         // LivingEntity.die: a sleeper gets up, and its bed is free again.
         if let Some(bed) = horizon_client::mobs::villager::sleeping_pos(m) {
             self.wake_villager(m.id);
@@ -4020,6 +4031,11 @@ impl Game<'_> {
             if d < distance {
                 return Ok(false);
             }
+        }
+        // A content mod's entity: its native mods may take the click.
+        if self.native_entity_interacts(index) {
+            self.swing_arm();
+            return Ok(true);
         }
         if self.name_mob(index) {
             return Ok(true);
