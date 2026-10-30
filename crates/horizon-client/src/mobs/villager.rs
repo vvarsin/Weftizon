@@ -919,6 +919,7 @@ mod tests {
             step_sound: None,
             food: Arc::default(),
             tempt: Arc::default(),
+            custom: None,
         });
         Mob::new(1, kind, horizon_core::geometry::Vec3::ZERO, 0.0)
     }

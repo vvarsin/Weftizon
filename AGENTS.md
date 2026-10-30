@@ -6,6 +6,20 @@ Weft's modding features. Vanilla is the specification wherever it has the featur
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
 The Weft modding port roadmap is [docs/weft-modding-port.md](docs/weft-modding-port.md).
 
+## The Weft modding port
+
+Weftizon adds [Weft](https://github.com/VortexSo4/Weft)'s modding surface on top of Horizon, one complete feature
+at a time in the roadmap's order. What a mod can do is in [docs/mods.md](docs/mods.md).
+
+- Data first: a feature a content mod can declare goes in `data/<id>/horizon/<kind>/*.json`, read and checked in
+  `horizon-mods` (so `cargo horizon-mod check` refuses what the game would), then written into the content root by
+  `mod_content` and read by the game's ordinary loaders. With no mod on, the root is the base root and nothing changes.
+- A mod's thing copies a vanilla *template* and keeps its behaviour; only what it declares differs. Vanilla's own
+  rows, ids and files are never rewritten (vanilla parity), only added to.
+- Weft is MPL-2.0: port from its docs and behaviour, not its source.
+- Each feature lands with tests (unit tests in `horizon-mods`, the content root end to end in
+  `mod_content_tests.rs`), its docs, and the roadmap's status; then it is committed and pushed.
+
 ## Rules that bite
 
 - **Never commit Mojang's files**: game jars, assets, decompiled source, prepared resources (`.local/`).
@@ -143,7 +157,7 @@ the same `horizon_client::<module>` paths), `G:` = bin (`crates/horizon-client/s
 | Audio | L: `audio.rs` (mixer), `sound_engine.rs`, `sound_events.rs`, `music.rs`, `ambience.rs`; G: `music.rs`, `subtitle_hud.rs` |
 | Resource packs | L: `packs.rs` + `packs/`, `pack_screen.rs`, `atlas_sources.rs`, `sprites.rs`, `mipmap.rs`, `model_library.rs`, `font.rs`; `horizon-client-core/src/lang.rs`; crate `horizon-assets`; G: `packs.rs` |
 | Agent control | L: `control.rs` (socket), `bin/horizon-ctl/`; G: `control.rs`, `agent.rs`, `events.rs`, `ui_control.rs` ([docs/agent-control.md](docs/agent-control.md)) |
-| Mods | crate `horizon-mods`; G: `mods.rs`; L: `mod_content.rs`, `mod_list.rs` |
+| Mods | crate `horizon-mods` (`content.rs`, `entity.rs` declarations, `bedrock.rs` Blockbench models and animations); G: `mods.rs`; L: `mod_content.rs` (+ `mod_content_entities.rs`), `mods/custom.rs` (content mods' entities at run time), `mod_list.rs` |
 | Horizon extras, settings | L: `extras.rs`, `graphics.rs`, `settings.rs`, `minimap.rs`; G: `extras.rs`, `tweaks.rs`, `options.rs` |
 
 ## How `Game` is organised

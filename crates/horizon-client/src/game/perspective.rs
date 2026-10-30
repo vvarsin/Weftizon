@@ -214,6 +214,7 @@ fn load_player_type(root: &Path) -> Option<Arc<MobType>> {
             step_sound: None,
             food: Arc::from([]),
             tempt: Arc::from([]),
+            custom: None,
         })
     })
 }

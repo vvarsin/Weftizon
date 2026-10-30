@@ -158,6 +158,19 @@ fn avatar(m: &Mob) -> bool {
 }
 /// The model layer key and texture for the mob's body.
 pub fn body(m: &Mob) -> (String, String) {
+    let Some(c) = &m.kind.custom else {
+        return template_body(m);
+    };
+    // A content mod's entity: its own model and skin, or its template's.
+    let (model, texture) = if c.own_model {
+        (super::custom::LAYER.to_owned(), m.kind.texture.clone())
+    } else {
+        template_body(m)
+    };
+    (model, c.texture(m).map_or(texture, str::to_owned))
+}
+/// `body` as the template's renderer picks it.
+fn template_body(m: &Mob) -> (String, String) {
     use Species as S;
     let baby = m.is_baby();
     let b = |s: &str| {
@@ -479,6 +492,29 @@ pub fn body_color(m: &Mob, alpha: f32) -> u32 {
 /// Extra render layers drawn over the body with the same pose. `age` is the
 /// render state's `ageInTicks` (`Mob.age` plus the partial tick).
 pub fn layers(m: &Mob, age: f32) -> Vec<Layer> {
+    let Some(c) = &m.kind.custom else {
+        return template_layers(m, age);
+    };
+    // The template's layers fit the template's model only.
+    let mut v = if c.own_model {
+        Vec::new()
+    } else {
+        template_layers(m, age)
+    };
+    let (model, _) = body(m);
+    for texture in c.bright_layers(m) {
+        v.push(Layer {
+            model: model.clone(),
+            texture: texture.to_owned(),
+            color: 0xFFFF_FFFF,
+            full_bright: true,
+            scroll: 0.0,
+        });
+    }
+    v
+}
+/// `layers` as the template's renderer adds them.
+fn template_layers(m: &Mob, age: f32) -> Vec<Layer> {
     use Species as S;
     let mut v = Vec::new();
     if avatar(m) {
@@ -1032,6 +1068,12 @@ pub fn base_transform_at(m: &Mob, alpha: f32, origin: glam::Mat4) -> glam::Mat4 
     base *= species_rotations(m, alpha);
     base *= glam::Mat4::from_scale(glam::Vec3::new(-1.0, -1.0, 1.0));
     base *= species_scale(m, alpha);
+    // A content mod's entity drawn bigger or smaller than its template.
+    if let Some(c) = &m.kind.custom
+        && c.scale != 1.0
+    {
+        base *= glam::Mat4::from_scale(glam::Vec3::splat(c.scale));
+    }
     base * glam::Mat4::from_translation(glam::Vec3::new(0.0, -1.501, 0.0))
 }
 /// `LivingEntityRenderer.isShaking`: a fully frozen mob (the skeleton's own

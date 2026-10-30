@@ -455,11 +455,13 @@ impl HudAtlas {
         for folder in folders {
             walk(&textures.join(folder), &mut files);
         }
-        // Content mods' equipment textures, which their equipment assets name as `<ns>:<path>`.
+        // Content mods' entity textures, named `<ns>:entity/<path>`: the skins
+        // of their entities, and the equipment textures their equipment
+        // assets name.
         if folders.contains(&"entity") {
             for namespace in horizon_items::content_namespaces::namespaces(root) {
                 walk(
-                    &root.join(format!("assets/{namespace}/textures/entity/equipment")),
+                    &root.join(format!("assets/{namespace}/textures/entity")),
                     &mut files,
                 );
             }

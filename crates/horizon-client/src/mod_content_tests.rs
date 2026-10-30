@@ -1273,3 +1273,388 @@ fn shapes_reject_unknown_or_missing_template_values() {
     }
     fs::remove_dir_all(scratch).unwrap();
 }
+
+/// A small RGBA PNG.
+fn png(w: u32, h: u32, pixel: [u8; 4]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, w, h);
+    e.set_color(png::ColorType::Rgba);
+    e.set_depth(png::BitDepth::Eight);
+    let mut writer = e.write_header().unwrap();
+    writer
+        .write_image_data(&pixel.repeat((w * h) as usize))
+        .unwrap();
+    writer.finish().unwrap();
+    out
+}
+
+/// A Weft-style entity mod: files found by the entity's name, a Blockbench
+/// model and animations, a glow mask, a variant, sounds and spawns.
+fn ghost_mod(dir: &Path) -> ContentMod {
+    let manifest = manifest("ghosts", "");
+    let files: [(&str, &[u8]); 13] = [
+        ("horizon-mod.toml", manifest.as_bytes()),
+        (
+            "data/ghosts/horizon/entity/ghost.json",
+            br##"{"template": "minecraft:zombie", "health": 30, "width": 0.8, "height": 2.4,
+                "speed": 0.3, "scale": 1.25, "variants": ["ghost_blue"],
+                "sounds": {"step": "minecraft:block.wool.step"},
+                "spawns": [{"biomes": ["minecraft:plains", "#minecraft:is_forest"], "weight": 7, "max_count": 3}]}"##,
+        ),
+        (
+            "data/ghosts/horizon/entity/brute.json",
+            br#"{"template": "minecraft:husk", "category": "creature"}"#,
+        ),
+        ("assets/ghosts/textures/entity/ghost.png", &[]),
+        ("assets/ghosts/textures/entity/ghost_e.png", &[]),
+        ("assets/ghosts/textures/entity/ghost_blue.png", &[]),
+        (
+            "assets/ghosts/models/entity/ghost.geo.json",
+            br#"{"format_version": "1.12.0", "minecraft:geometry": [{
+                "description": {"identifier": "geometry.ghost", "texture_width": 64, "texture_height": 32},
+                "bones": [
+                    {"name": "body", "pivot": [0, 24, 0], "cubes": [{"origin": [-4, 12, -2], "size": [8, 12, 4], "uv": [16, 16]}]},
+                    {"name": "head", "parent": "body", "pivot": [0, 24, 0], "cubes": [{"origin": [-4, 24, -4], "size": [8, 8, 8], "uv": [0, 0]}]},
+                    {"name": "rightArm", "parent": "body", "pivot": [-5, 22, 0], "cubes": [{"origin": [-8, 12, -2], "size": [4, 12, 4], "uv": [40, 16]}]},
+                    {"name": "leftArm", "parent": "body", "pivot": [5, 22, 0], "mirror": true, "cubes": [{"origin": [4, 12, -2], "size": [4, 12, 4], "uv": [40, 16]}]}]}]}"#,
+        ),
+        (
+            "assets/ghosts/animations/entity/ghost.animation.json",
+            br#"{"format_version": "1.8.0", "animations": {
+                "animation.ghost.idle": {"loop": true, "animation_length": 2,
+                    "bones": {"head": {"rotation": {"0": [0, 0, 0], "1": [0, 40, 0], "2": [0, 0, 0]}}}},
+                "animation.ghost.death": {"loop": "hold_on_last_frame",
+                    "bones": {"body": {"rotation": {"0": [0, 0, 0], "1": [0, 0, 90]}}}}}}"#,
+        ),
+        ("assets/ghosts/sounds/entity/ghost/hurt1.ogg", b"OggS"),
+        ("assets/ghosts/sounds/entity/ghost/hurt2.ogg", b"OggS"),
+        ("assets/ghosts/sounds/entity/ghost/death.ogg", b"OggS"),
+        (
+            "assets/ghosts/sounds.json",
+            br#"{"entity.ghost.death": {"sounds": ["ghosts:entity/ghost/death"], "subtitle": "subtitles.ghosts.death"}}"#,
+        ),
+        (
+            "data/ghosts/loot_table/entities/ghost.json",
+            br#"{"type": "minecraft:entity", "pools": []}"#,
+        ),
+    ];
+    for (name, bytes) in files {
+        let path = dir.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+    let tex = dir.join("assets/ghosts/textures/entity");
+    fs::write(tex.join("ghost.png"), png(64, 32, [200, 220, 255, 255])).unwrap();
+    fs::write(tex.join("ghost_blue.png"), png(64, 32, [90, 120, 255, 255])).unwrap();
+    // The left half of the mask glows.
+    let mut mask = png(64, 32, [0, 0, 0, 255]);
+    {
+        let mut pixels = Vec::new();
+        for _y in 0..32 {
+            for x in 0..64 {
+                pixels.extend(if x < 32 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 0, 255]
+                });
+            }
+        }
+        mask.clear();
+        let mut e = png::Encoder::new(&mut mask, 64, 32);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        let mut w = e.write_header().unwrap();
+        w.write_image_data(&pixels).unwrap();
+    }
+    fs::write(tex.join("ghost_e.png"), mask).unwrap();
+    let package = horizon_mods::Package::read(dir).unwrap();
+    ContentMod {
+        id: "ghosts".into(),
+        content: Content::read(dir, &package.manifest).unwrap(),
+    }
+}
+
+/// Declared entities reach every table the game reads them from: the entity
+/// type registry, `/summon`, spawn placement, `entity-types.json`, the mob
+/// types (template behaviour, own model, skins, glow, sounds, loot), the
+/// sound events, the biomes' spawn lists, and the renderer.
+#[test]
+fn custom_entities_join_the_root() {
+    use crate::mobs::{Mob, MobTypes, Species, custom, render};
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch = std::env::temp_dir().join(format!("horizon-mod-entities-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = ghost_mod(&scratch.join("ghosts"));
+    let out = scratch.join("root");
+    build(&base, std::slice::from_ref(&m), &out).unwrap();
+
+    // Network ids after vanilla's, and the command lists.
+    let registries: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("registries.json")).unwrap()).unwrap();
+    let entries = registries["minecraft:entity_type"]["entries"]
+        .as_object()
+        .unwrap();
+    let vanilla_max = entries
+        .iter()
+        .filter(|(k, _)| k.starts_with("minecraft:"))
+        .map(|(_, v)| v["protocol_id"].as_u64().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(
+        entries["ghosts:brute"]["protocol_id"].as_u64(),
+        Some(vanilla_max + 1)
+    );
+    assert_eq!(
+        entries["ghosts:ghost"]["protocol_id"].as_u64(),
+        Some(vanilla_max + 2)
+    );
+    let commands: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("command-registries.json")).unwrap()).unwrap();
+    for key in ["entity_types", "summonable"] {
+        assert!(
+            commands[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "ghosts:ghost"),
+            "{key}"
+        );
+    }
+    let mob_data: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("mob-data.json")).unwrap()).unwrap();
+    assert_eq!(
+        mob_data["placements"]["ghosts:ghost"],
+        mob_data["placements"]["minecraft:zombie"]
+    );
+
+    // entity-types.json: the template's row with the declaration; vanilla's rows untouched.
+    let base_types = fs::read_to_string(base.join("entity-types.json")).unwrap();
+    let types_text = fs::read_to_string(out.join("entity-types.json")).unwrap();
+    assert!(types_text.starts_with(base_types.trim_end().trim_end_matches('}')));
+    let types: serde_json::Value = serde_json::from_str(&types_text).unwrap();
+    let ghost = &types["ghosts:ghost"];
+    assert_eq!(
+        (ghost["width"].as_f64(), ghost["height"].as_f64()),
+        (Some(0.8), Some(2.4))
+    );
+    let zombie = &types["minecraft:zombie"];
+    let eye = zombie["eye_height"].as_f64().unwrap() * 2.4 / zombie["height"].as_f64().unwrap();
+    assert!((ghost["eye_height"].as_f64().unwrap() - eye).abs() < 1e-9);
+    assert_eq!(
+        ghost["attributes"]["minecraft:max_health"].as_f64(),
+        Some(30.0)
+    );
+    assert_eq!(types["ghosts:brute"]["category"], "creature");
+
+    // The mob types.
+    let mobs = MobTypes::load(&out).unwrap();
+    let vanilla = MobTypes::load(&base).unwrap();
+    assert_eq!(mobs.types.len(), vanilla.types.len() + 2);
+    let g = &mobs.types["ghosts:ghost"];
+    assert_eq!(g.species, Species::Zombie);
+    assert_eq!((g.max_health, g.width, g.speed), (30.0, 0.8, 0.3));
+    assert_eq!(
+        g.attack_damage,
+        vanilla.types["minecraft:zombie"].attack_damage
+    );
+    let c = g.custom.as_ref().unwrap();
+    assert!(c.own_model);
+    assert_eq!(c.scale, 1.25);
+    assert_eq!(
+        c.textures,
+        ["ghosts:entity/ghost", "ghosts:entity/ghost_blue"]
+    );
+    assert_eq!(
+        c.glows,
+        [Some("ghosts:entity/ghost_horizon_glow".to_owned()), None]
+    );
+    assert_eq!(c.loot_table.as_deref(), Some("ghosts:entities/ghost"));
+    assert_eq!(c.step, Some("minecraft:block.wool.step"));
+    assert!(c.animations.contains_key("idle") && c.animations.contains_key("death"));
+    assert_eq!(g.sounds[1], "ghosts:entity.ghost.hurt");
+    // The mod's own sounds.json names the death sound, so its event is the mod's.
+    assert_eq!(g.sounds[2], "ghosts:entity.ghost.death");
+    assert_eq!(g.sounds[0], vanilla.types["minecraft:zombie"].sounds[0]);
+    assert!(g.layers.contains_key(custom::LAYER));
+    let names = |p: &crate::mobs::Part| {
+        fn walk(p: &crate::mobs::Part, out: &mut Vec<String>) {
+            out.push(p.name.clone());
+            p.children.iter().for_each(|c| walk(c, out));
+        }
+        let mut out = Vec::new();
+        walk(p, &mut out);
+        out
+    };
+    let parts = names(&g.model);
+    for role in ["body", "head", "right_arm", "left_arm"] {
+        assert!(parts.iter().any(|p| p == role), "{parts:?}");
+    }
+    let brute = &mobs.types["ghosts:brute"];
+    let husk = &vanilla.types["minecraft:husk"];
+    assert_eq!(
+        (brute.species, brute.category.as_str()),
+        (Species::Husk, "creature")
+    );
+    assert_eq!((&brute.texture, brute.sounds), (&husk.texture, husk.sounds));
+    let bc = brute.custom.as_ref().unwrap();
+    assert!(!bc.own_model);
+    assert_eq!(bc.loot_table.as_deref(), Some("minecraft:entities/husk"));
+    // Vanilla's types are what they were.
+    let vz = &vanilla.types["minecraft:zombie"];
+    let mz = &mobs.types["minecraft:zombie"];
+    assert_eq!(
+        (vz.max_health, vz.width, vz.speed),
+        (mz.max_health, mz.width, mz.speed)
+    );
+    assert!(mz.custom.is_none());
+
+    // The glow layer: the skin where the mask glows, clear elsewhere.
+    let glow = fs::read(out.join("assets/ghosts/textures/entity/ghost_horizon_glow.png")).unwrap();
+    let (w, _, pixels) = crate::hud::decode_bytes(&glow).unwrap();
+    assert_eq!(pixels[..4], [200, 220, 255, 255]);
+    assert_eq!(pixels[((w - 1) * 4 + 3) as usize], 0);
+
+    // Sound events: the mod's own entry kept, the files' added.
+    let sounds = crate::sound_events::SoundRegistry::load(&out);
+    assert!(sounds.contains("ghosts:entity.ghost.hurt"));
+    assert!(sounds.contains("ghosts:entity.ghost.death"));
+    let doc: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("assets/ghosts/sounds.json")).unwrap()).unwrap();
+    assert_eq!(
+        doc["entity.ghost.death"]["subtitle"],
+        "subtitles.ghosts.death"
+    );
+    assert_eq!(
+        doc["entity.ghost.hurt"]["sounds"][1],
+        "ghosts:entity/ghost/hurt2"
+    );
+
+    // Spawns: plains and the forest tag's biomes list the ghost as a monster.
+    let biomes = crate::biome::Biomes::load(&out).unwrap();
+    for name in [
+        "minecraft:plains",
+        "minecraft:forest",
+        "minecraft:birch_forest",
+    ] {
+        let b = biomes.get(biomes.index[name]);
+        let monsters = &b.spawns["monster"];
+        let e = monsters
+            .iter()
+            .find(|e| e.entity == "ghosts:ghost")
+            .unwrap_or_else(|| panic!("{name}"));
+        assert_eq!((e.weight, e.min, e.max), (7, 1, 3));
+        assert!(
+            monsters.iter().any(|e| e.entity == "minecraft:zombie"),
+            "{name} kept its own"
+        );
+    }
+    let desert = biomes.get(biomes.index["minecraft:desert"]);
+    assert!(
+        desert.spawns["monster"]
+            .iter()
+            .all(|e| e.entity != "ghosts:ghost")
+    );
+
+    // The renderer: its own model and skin, the glow layer full bright, and
+    // the idle animation turning the head over the template's pose.
+    let kind = std::sync::Arc::new(mobs.types["ghosts:ghost"].clone());
+    let mut mob = Mob::new(4, kind.clone(), horizon_core::geometry::Vec3::ZERO, 0.0);
+    let (model, texture) = render::body(&mob);
+    assert_eq!(model, custom::LAYER);
+    assert!(c.textures.contains(&texture));
+    let same = Mob::new(4, kind.clone(), horizon_core::geometry::Vec3::ZERO, 0.0);
+    assert_eq!(render::body(&same).1, texture, "one entity wears one skin");
+    let skins: std::collections::BTreeSet<String> = (0..64)
+        .map(|id| {
+            render::body(&Mob::new(
+                id,
+                kind.clone(),
+                horizon_core::geometry::Vec3::ZERO,
+                0.0,
+            ))
+            .1
+        })
+        .collect();
+    assert_eq!(skins.len(), 2, "both skins are worn");
+    let glowing = (0..64)
+        .map(|id| Mob::new(id, kind.clone(), horizon_core::geometry::Vec3::ZERO, 0.0))
+        .find(|m| render::body(m).1 == "ghosts:entity/ghost")
+        .unwrap();
+    let layers = render::layers(&glowing, 0.0);
+    assert!(
+        layers
+            .iter()
+            .any(|l| l.full_bright && l.texture == "ghosts:entity/ghost_horizon_glow")
+    );
+    let data = crate::mobs::MobData {
+        states: Vec::new(),
+        placements: Default::default(),
+        heightmaps: Default::default(),
+        animations: Default::default(),
+        biome_tags: Default::default(),
+        entity_tags: Default::default(),
+        villager_hats: Default::default(),
+        pois: Default::default(),
+    };
+    let mut vertices = Vec::new();
+    let atlas = |_: &str| Some([0.0, 0.0, 1.0, 1.0]);
+    render::render(
+        &mob,
+        0.0,
+        glam::DVec3::new(0.0, 0.0, 5.0),
+        &atlas,
+        0xF0,
+        &data,
+        &mut vertices,
+    );
+    // Body, head and two arms: six faces of four corners each, again for a glow layer.
+    let draws = 1 + render::layers(&mob, 0.0).len();
+    assert_eq!(vertices.len(), draws * 4 * 6 * 4);
+    let pose_at = |m: &Mob, age: u32| {
+        let mut m = m.clone();
+        m.age = age;
+        let s = crate::mobs::anim::state(&m, 0.0);
+        let mut poses = crate::mobs::anim::Poses::new(&m.kind.model);
+        crate::mobs::anim::setup(&m, &s, &mut poses, &data.animations);
+        poses.get("head")[4]
+    };
+    let template_yaw = pose_at(&mob, 0);
+    assert!((pose_at(&mob, 20) - template_yaw - 40f32.to_radians()).abs() < 1e-4);
+    mob.death_time = 30;
+    let mut poses = crate::mobs::anim::Poses::new(&mob.kind.model);
+    crate::mobs::anim::setup(
+        &mob,
+        &crate::mobs::anim::state(&mob, 0.0),
+        &mut poses,
+        &data.animations,
+    );
+    assert!(
+        (poses.get("body")[5] - 90f32.to_radians()).abs() < 1e-4,
+        "death holds its last frame"
+    );
+
+    // Saved under its own id, and read back as itself.
+    let types: std::collections::HashMap<String, std::sync::Arc<crate::mobs::MobType>> = mobs
+        .types
+        .iter()
+        .map(|(k, v)| (k.clone(), std::sync::Arc::new(v.clone())))
+        .collect();
+    let mut hurt = Mob::new(
+        9,
+        kind.clone(),
+        horizon_core::geometry::Vec3::new(1.5, 70.0, -2.5),
+        0.0,
+    );
+    hurt.health = 12.5;
+    let tag = crate::entity_nbt::mob_to_nbt(&hurt, [1, 2, 3, 4], None);
+    assert_eq!(
+        crate::entity_nbt::kind(&tag).as_deref(),
+        Some("ghosts:ghost")
+    );
+    let back = crate::entity_nbt::mob_from_nbt(&tag, &types, 10).unwrap();
+    assert_eq!((back.kind.id.as_str(), back.health), ("ghosts:ghost", 12.5));
+    assert!(back.kind.custom.is_some());
+    let _ = fs::remove_dir_all(&scratch);
+}

@@ -438,10 +438,19 @@ pub fn die(m: &mut Mob, d: &Death, sequences: &mut RandomSequences) -> (Vec<Drop
         .flatten();
     let drops_loot = d.mob_drops && (is_monster(s) || !m.is_baby());
     if drops_loot {
-        let table = format!(
-            "minecraft:entities/{}",
-            m.kind.id.trim_start_matches("minecraft:")
-        );
+        // EntityType.getDefaultLootTable: `<namespace>:entities/<path>`; a
+        // content mod's entity may name another (its template's by default).
+        let table = match m.kind.custom.as_ref().and_then(|c| c.loot_table.clone()) {
+            Some(table) => table,
+            None => {
+                let (ns, path) = m
+                    .kind
+                    .id
+                    .split_once(':')
+                    .unwrap_or(("minecraft", &m.kind.id));
+                format!("{ns}:entities/{path}")
+            }
+        };
         let params = EntityLootParams {
             this: this.clone(),
             damage: d.damage.clone(),

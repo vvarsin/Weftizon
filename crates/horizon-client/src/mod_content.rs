@@ -340,6 +340,8 @@ struct Plan<'a> {
     defaults: BTreeMap<String, u32>,
     /// The gameplay rows' sound objects, by block, for `sounds` overrides.
     sounds: BTreeMap<String, J>,
+    /// Declared entities as (id, template), in mod and id order.
+    entities: Vec<(String, String)>,
 }
 
 /// An item's component patch on its entry; `known` holds every type a vanilla item has, so typos fail.
@@ -592,12 +594,18 @@ impl<'a> Plan<'a> {
         // Block items and standalone items share the same registry. Sort
         // them together by mod ID and entry name before assigning IDs.
         items.sort_by(|a, b| a.rename.to.cmp(&b.rename.to));
+        let entities = sorted
+            .iter()
+            .flat_map(|m| m.content.entities.iter())
+            .map(|e| (e.id.clone(), e.template.clone()))
+            .collect();
         Ok(Plan {
             blocks,
             items,
             states: names.len(),
             defaults,
             sounds,
+            entities,
         })
     }
 
@@ -809,10 +817,15 @@ impl<'a> Plan<'a> {
                 // this report, so new ones get the ids after vanilla's, in plan order.
                 let new_items = self.items.iter().map(|i| i.rename.to.clone());
                 let new_blocks = self.blocks.iter().map(|b| b.decl.id.clone());
+                let new_entities = self.entities.iter().map(|(id, _)| id.clone());
                 for (registry, names) in [
                     ("minecraft:item", new_items.collect::<Vec<_>>()),
                     ("minecraft:block", new_blocks.collect()),
+                    ("minecraft:entity_type", new_entities.collect()),
                 ] {
+                    if names.is_empty() && registry == "minecraft:entity_type" {
+                        continue;
+                    }
                     let Some(J::Obj(entries)) =
                         doc.get_mut(registry).and_then(|r| r.get_mut("entries"))
                     else {
@@ -850,8 +863,33 @@ impl<'a> Plan<'a> {
                 if let Some(J::Arr(ids)) = doc.at("by_registry/minecraft:block/ids") {
                     ids.extend(new_blocks());
                 }
+                // `/summon` and entity arguments suggest and accept declared entities.
+                let new_entities = || self.entities.iter().map(|(id, _)| J::Str(id.clone()));
+                for key in [
+                    "entity_types",
+                    "summonable",
+                    "by_registry/minecraft:entity_type/ids",
+                ] {
+                    if let Some(J::Arr(ids)) = doc.at(key) {
+                        ids.extend(new_entities());
+                    }
+                }
             }
-            "mob-data.json" => states(doc, "states", false, false)?,
+            "mob-data.json" => {
+                states(doc, "states", false, false)?;
+                // SpawnPlacements: a declared entity is placed as its template is.
+                if let Some(J::Obj(placements)) = doc.get_mut("placements") {
+                    for (id, template) in &self.entities {
+                        let row = placements
+                            .iter()
+                            .find(|(k, _)| k == template)
+                            .map(|(_, v)| v.clone());
+                        if let Some(row) = row {
+                            placements.push((id.clone(), row));
+                        }
+                    }
+                }
+            }
             "worldgen/block_flags.json" => states(doc, "", false, false)?,
             "worldgen/blocks/structure-blocks.json" => {
                 for key in ["rotate", "mirror", "full_block"] {
@@ -1569,6 +1607,8 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             overlay.write(&own, &fs::read(&vanilla)?)?;
         }
     }
+    // Declared entities, after the mods' own files and the merged biome tags.
+    warnings.extend(entities::build(base, mods, &overlay)?);
     let mut namespaces: Vec<&str> = mods
         .iter()
         .flat_map(|m| m.content.namespaces.iter().map(String::as_str))
@@ -1660,6 +1700,9 @@ fn stamp(base: &Path, mods: &[ContentMod]) -> Result<String> {
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
+
+#[path = "mod_content_entities.rs"]
+mod entities;
 
 #[cfg(test)]
 #[path = "mod_content_tests.rs"]

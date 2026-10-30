@@ -4,7 +4,7 @@ Two kinds of mod run in Horizon:
 
 | Kind | File | What it is | Where it runs |
 |---|---|---|---|
-| **Content mod** | `.hmod` | Data and assets: blocks, items, recipes, loot, tags, models, textures, structures. No code. | Read when the game starts |
+| **Content mod** | `.hmod` | Data and assets: blocks, items, entities, recipes, loot, tags, models, textures, structures. No code. | Read when the game starts |
 | **Native mod** | `.hnmod` | A [horizon-mixins](https://github.com/horizon-rust/horizon-mixins) bundle: Rust that changes the game's own source before it is compiled. | In a game the launcher builds for the player ([native-mods.md](native-mods.md)) |
 
 Fabric and NeoForge jars do **not** run as they are: their code calls and patches Minecraft's Java classes, and
@@ -159,6 +159,65 @@ radius. `kernel_size` 0 is none.
 { "horizon:enhanced_terrain_adaptation": { "kernel_size": 24, "kernel_distance": 24,
     "top": "carve", "bottom": "none", "rigid_junctions": true, "inflate": true } }
 ```
+
+### Custom entities
+
+A content mod adds mobs by declaring them in `data/<id>/horizon/entity/<name>.json`. Each copies a vanilla mob, its
+*template*: its AI, its behaviour and the animation its model plays come along, and the declaration changes what it
+names. Unset keys keep the template's; unknown keys are refused.
+
+```json
+{ "template": "minecraft:zombie",
+  "health": 30, "speed": 0.3, "attack_damage": 4, "armor": 2, "follow_range": 32, "knockback_resistance": 0.2,
+  "width": 0.8, "height": 2.4, "eye_height": 2.2, "category": "monster", "fire_immune": true,
+  "scale": 1.25,
+  "texture": "ghost", "variants": ["ghost_blue", "ghost_green"], "emissive": "ghost_eyes",
+  "model": "ghost", "animations": "ghost",
+  "sounds": { "ambient": "minecraft:entity.ghast.ambient", "step": "minecraft:block.wool.step" },
+  "loot_table": "mymod:entities/ghost",
+  "spawns": [ { "biomes": ["minecraft:plains", "#minecraft:is_forest"], "weight": 10, "min_count": 1, "max_count": 3 } ] }
+```
+
+Files are found by the entity's name, as in Weft, so most declarations name none of them:
+
+| File | What it does |
+|---|---|
+| `assets/<id>/textures/entity/<name>.png` | The skin (`texture` names another under `textures/entity/`; `minecraft:zombie/husk` is vanilla's) |
+| `assets/<id>/textures/entity/<name>_e.png` | Weft's glow mask: red × alpha is how much a pixel of the skin glows. It is drawn full bright over the body, by day and in caves alike. Each variant may have its own |
+| `emissive` | A texture drawn full bright over the body as it is (an Entity Texture Features `_e` layer: the glowing pixels in colour, the rest clear) |
+| `variants` | More skins: each entity wears one of `texture` and these, picked by its entity id, so every player sees the same one |
+| `assets/<id>/models/entity/<name>.geo.json` | A Blockbench **Bedrock Entity** model, replacing the template's |
+| `assets/<id>/animations/entity/<name>.animation.json` | Its keyframe animations |
+| `assets/<id>/sounds/entity/<name>/<event>*.ogg` | `hurt*.ogg`, `death*.ogg`, `ambient*.ogg`, `step*.ogg`: one is played at random. They become the sound event `<id>:entity.<name>.<event>`; the mod's own `sounds.json` entry for that event wins |
+| `sounds` | Sound events by event (`ambient`, `hurt`, `death`, `step`) instead of files. Unset ones are the template's |
+| `data/<id>/loot_table/entities/<name>.json` | What it drops (vanilla's `EntityType.getDefaultLootTable`); without one, its template's table, or `loot_table` |
+| `spawns` | Natural spawns: the entity joins the spawn lists of these biomes (ids or `#tags`) in its category, with the weight and group size. Where and when it may spawn (light, ground, height) follow its template's spawn rules |
+
+The model file is read as Blockbench exports it: bones with `pivot`, `parent` and `rotation`, boxes with `origin`,
+`size`, `uv` (box UV or per face), `mirror`, `inflate`, and a `pivot` and `rotation` of their own (such a box turns in
+a part of its own), and `poly_mesh` bones (triangles and quads, `normalized_uvs` or not). Both the format of 1.12 and
+later (`minecraft:geometry`) and the legacy `geometry.<name>` one read. A bone's name gives it its role, case and `_`
+ignored, so the template's own animation moves it:
+
+| Bone | Part it drives |
+|---|---|
+| `head`, `body` | `head` (looks where the mob looks), `body` |
+| `rightArm`, `leftArm` | the arms (a zombie holds them out, a skeleton aims) |
+| `rightLeg`, `leftLeg`, or `leg0`, `leg1` in a model with two legs | the legs, swinging as it walks |
+| `leg0` .. `leg3` in a model with four | a quadruped's hind (`leg0`, `leg1`) and front legs |
+| `leg0` .. `leg7` in a model with more | a spider's legs |
+
+An animation's name is what follows the last dot of its key (`animation.ghost.idle` is `idle`). Keyframes carry
+`rotation` (degrees), `position` (pixels) and `scale`, as `[x, y, z]`, one number, or `pre`/`post` with
+`"lerp_mode": "catmullrom"`; they are added over the template's pose. `idle` plays all the time, `walk` as much as the
+mob walks, `hurt` after a hit and `death` while it dies. `loop` is `true`, `false` (once, then back) or
+`"hold_on_last_frame"`. Molang isn't evaluated: an expression reads as 0, and the log says so.
+
+A broken declaration, model or animation file refuses the mod, with the file and the reason. `/summon <id>:<name>`
+summons it, worlds save it under its id, and its name is the translation `entity.<id>.<name>`. Content mods'
+entities get network ids after vanilla's, so a server and its players need the same mods. Not yet: behaviour of
+its own (tick, hurt and interact callbacks, AI goals), spawn eggs, armour and held items on a model of the mod's own,
+and the template's extra layers (a sheep's wool) on one.
 
 ## Native mods
 

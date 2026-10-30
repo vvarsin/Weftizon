@@ -651,8 +651,20 @@ fn swim(p: &mut Poses, pos: f32, h: &Hum) {
         lerp(amount, x, 0.3 * (pos * 0.333_333_34).mcos()),
     );
 }
-/// Apply the mob's model animation to `p`.
+/// Apply the mob's model animation to `p`: its template's, then a content
+/// mod entity's own keyframes over it.
 pub fn setup(
+    m: &Mob,
+    s: &State,
+    p: &mut Poses,
+    w_anims: &HashMap<String, super::keyframes::Animation>,
+) {
+    template_setup(m, s, p, w_anims);
+    if let Some(c) = &m.kind.custom {
+        c.animate(m, s, p);
+    }
+}
+fn template_setup(
     m: &Mob,
     s: &State,
     p: &mut Poses,

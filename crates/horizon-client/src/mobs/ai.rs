@@ -1748,6 +1748,10 @@ pub fn speed_bonus(m: &Mob) -> f64 {
 /// The ambient, hurt and death sounds of species that pick them by state
 /// (`getHurtSound` / `getDeathSound` overrides); the type's otherwise.
 pub fn voice_sounds(m: &Mob) -> [&'static str; 3] {
+    // A content mod's entity: its own (or its template's plain) sounds.
+    if m.kind.custom.is_some() {
+        return m.kind.sounds;
+    }
     match m.species() {
         Species::Nautilus | Species::ZombieNautilus => super::nautilus::sounds(m),
         Species::SulfurCube => super::sulfur_cube::sounds(m),
@@ -2423,6 +2427,9 @@ pub fn step_sound(
     use Species as S;
     let baby = m.is_baby();
     let quiet = |s: &'static str| Some((s, 0.15, 1.0));
+    if let Some(step) = m.kind.custom.as_ref().and_then(|c| c.step) {
+        return quiet(step);
+    }
     match m.species() {
         // Silent footsteps, or only movement events.
         S::Allay

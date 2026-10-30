@@ -1,6 +1,6 @@
 //! A content mod's `assets/` and `data/` (API 0.2, docs/modpacks.md): the
-//! files it adds to the game's resource tree, and the blocks and items it
-//! declares in `data/<id>/horizon/block/` and `data/<id>/horizon/item/`.
+//! files it adds to the game's resource tree, and the blocks, items and
+//! entities it declares in `data/<id>/horizon/block/`, `item/` and `entity/`.
 //!
 //! Content is data, not code: nothing here runs in the sandbox. What a mod
 //! may add is fenced instead. Its own namespaces (its id and the ones its
@@ -161,6 +161,7 @@ pub struct Content {
     pub files: Vec<String>,
     pub blocks: Vec<Block>,
     pub items: Vec<Item>,
+    pub entities: Vec<crate::entity::Entity>,
     /// The namespaces it owns: the mod id, then the manifest's `namespaces`.
     pub namespaces: Vec<String>,
 }
@@ -247,6 +248,7 @@ impl Content {
             files,
             blocks: Vec::new(),
             items: Vec::new(),
+            entities: Vec::new(),
             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
         };
         content.check(manifest)?;
@@ -289,6 +291,7 @@ impl Content {
         }
         let mut blocks = Vec::new();
         let mut items = Vec::new();
+        let mut entities = Vec::new();
         for name in &self.files {
             let mut parts = name.splitn(3, '/');
             let (top, namespace, rest) = (
@@ -309,7 +312,7 @@ impl Content {
             }
             if !own && top == "data" && rest.starts_with("horizon/") {
                 return Err(format!(
-                    "{name}: blocks and items are declared in data/{id}/horizon/"
+                    "{name}: blocks, items and entities are declared in data/{id}/horizon/"
                 ));
             }
             let Some(decl) = (own && top == "data")
@@ -329,9 +332,11 @@ impl Content {
                 blocks.push((block, name.clone()));
             } else if let Some(item) = parse("item") {
                 items.push((item, name.clone()));
+            } else if let Some(entity) = parse("entity") {
+                entities.push((entity, name.clone()));
             } else {
                 return Err(format!(
-                    "{name}: data/{id}/horizon/ holds block/*.json and item/*.json only"
+                    "{name}: data/{id}/horizon/ holds block/*.json, item/*.json and entity/*.json only"
                 ));
             }
         }
@@ -375,6 +380,26 @@ impl Content {
                 rarity: file.rarity,
                 components: file.components,
             });
+        }
+        for (entity, name) in entities {
+            if entity.contains('/') {
+                return Err(format!(
+                    "{name}: an entity's name is one file name, not a folder path"
+                ));
+            }
+            let file: crate::entity::EntityFile =
+                serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
+            let mut read = |n: &str| self.file(n);
+            let decl = crate::entity::Entity::read(
+                entity,
+                file,
+                id,
+                &self.namespaces,
+                &self.files,
+                &mut read,
+            )
+            .map_err(|e| format!("{name}: {e}"))?;
+            self.entities.push(decl);
         }
         Ok(())
     }
@@ -510,6 +535,162 @@ capabilities = ["registries"]
         let content = package.and_then(|p| Content::read(&path, &p.manifest));
         std::fs::remove_dir_all(&dir).unwrap();
         content
+    }
+
+    const GHOST_GEO: &[u8] = br#"{"format_version": "1.12.0", "minecraft:geometry": [{
+        "description": {"texture_width": 64, "texture_height": 32},
+        "bones": [{"name": "body", "pivot": [0, 0, 0], "cubes": [{"origin": [-4, 0, -2], "size": [8, 16, 4], "uv": [0, 0]}]},
+                  {"name": "head", "parent": "body", "pivot": [0, 16, 0]}]}]}"#;
+    const GHOST_ANIM: &[u8] = br#"{"animations": {"animation.ghost.idle": {"loop": true,
+        "bones": {"head": {"rotation": {"0": [0, 0, 0], "1": [0, 20, 0]}}}}}}"#;
+
+    /// The files a declaration doesn't name are found by the entity's name.
+    #[test]
+    fn entities_find_their_files_by_name() {
+        let decl = br##"{"template": "minecraft:zombie", "health": 30, "width": 0.8,
+            "category": "monster", "sounds": {"ambient": "minecraft:entity.ghast.ambient"},
+            "variants": ["ghost_blue"],
+            "spawns": [{"biomes": ["#minecraft:is_overworld", "minecraft:plains"], "weight": 5, "max_count": 2}]}"##;
+        let content = hmod(
+            "entity",
+            MANIFEST_TEXT,
+            &[
+                ("data/ruby/horizon/entity/ghost.json", decl),
+                ("assets/ruby/textures/entity/ghost.png", b"png"),
+                ("assets/ruby/textures/entity/ghost_e.png", b"png"),
+                ("assets/ruby/textures/entity/ghost_blue.png", b"png"),
+                ("assets/ruby/models/entity/ghost.geo.json", GHOST_GEO),
+                (
+                    "assets/ruby/animations/entity/ghost.animation.json",
+                    GHOST_ANIM,
+                ),
+                ("assets/ruby/sounds/entity/ghost/hurt1.ogg", b"ogg"),
+                ("assets/ruby/sounds/entity/ghost/hurt2.ogg", b"ogg"),
+                ("assets/ruby/sounds/entity/ghost/death.ogg", b"ogg"),
+                ("assets/ruby/sounds/entity/ghost/ambient.ogg", b"ogg"),
+            ],
+        )
+        .unwrap();
+        let [e] = &content.entities[..] else {
+            panic!("{:?}", content.entities)
+        };
+        assert_eq!(
+            (e.id.as_str(), e.template.as_str()),
+            ("ruby:ghost", "minecraft:zombie")
+        );
+        assert_eq!((e.stats.health, e.stats.width), (Some(30.0), Some(0.8)));
+        assert_eq!(e.texture.as_ref().unwrap().atlas, "ruby:entity/ghost");
+        assert_eq!(e.variants[0].atlas, "ruby:entity/ghost_blue");
+        assert_eq!(
+            e.glow_masks.get("ruby:entity/ghost").map(String::as_str),
+            Some("assets/ruby/textures/entity/ghost_e.png")
+        );
+        assert_eq!(
+            e.model.as_deref(),
+            Some("assets/ruby/models/entity/ghost.geo.json")
+        );
+        assert!(e.animations.is_some());
+        // The declared ambient sound wins over the file; hurt and death come from the files.
+        assert_eq!(e.sounds["ambient"], "minecraft:entity.ghast.ambient");
+        assert_eq!(e.sounds["hurt"], "ruby:entity.ghost.hurt");
+        assert_eq!(
+            e.sound_files["hurt"],
+            ["ruby:entity/ghost/hurt1", "ruby:entity/ghost/hurt2"]
+        );
+        assert!(!e.sound_files.contains_key("ambient"));
+        assert_eq!(e.spawns[0].weight, 5);
+        assert_eq!((e.spawns[0].min_count, e.spawns[0].max_count), (1, 2));
+        // A declaration alone keeps the template's looks.
+        let bare = hmod(
+            "entity-bare",
+            MANIFEST_TEXT,
+            &[(
+                "data/ruby/horizon/entity/brute.json",
+                br#"{"template": "minecraft:husk"}"#,
+            )],
+        )
+        .unwrap();
+        let b = &bare.entities[0];
+        assert!(b.texture.is_none() && b.model.is_none() && b.sounds.is_empty());
+    }
+
+    #[test]
+    fn broken_entities_are_refused() {
+        let decl = "data/ruby/horizon/entity/ghost.json";
+        let refused = |name: &str, json: &str, extra: &[(&str, &[u8])]| {
+            let mut files: Vec<(&str, &[u8])> = vec![(decl, json.as_bytes())];
+            files.extend_from_slice(extra);
+            let e = hmod(name, MANIFEST_TEXT, &files).unwrap_err();
+            assert!(e.contains("ghost.json"), "{name}: {e}");
+            e
+        };
+        refused("e-template", r#"{"template": "ruby:zombie"}"#, &[]);
+        refused("e-key", r#"{"template": "minecraft:zombie", "hp": 3}"#, &[]);
+        refused(
+            "e-health",
+            r#"{"template": "minecraft:zombie", "health": -1}"#,
+            &[],
+        );
+        refused(
+            "e-category",
+            r#"{"template": "minecraft:zombie", "category": "boss"}"#,
+            &[],
+        );
+        let e = refused(
+            "e-texture",
+            r#"{"template": "minecraft:zombie", "texture": "nope"}"#,
+            &[],
+        );
+        assert!(e.contains("assets/ruby/textures/entity/nope.png"), "{e}");
+        refused(
+            "e-other",
+            r#"{"template": "minecraft:zombie", "texture": "gems:nope"}"#,
+            &[],
+        );
+        refused(
+            "e-sound",
+            r#"{"template": "minecraft:zombie", "sounds": {"roar": "a"}}"#,
+            &[],
+        );
+        refused(
+            "e-spawn",
+            r#"{"template": "minecraft:zombie", "spawns": [{"biomes": ["minecraft:plains"], "min_count": 3, "max_count": 2}]}"#,
+            &[],
+        );
+        refused(
+            "e-model",
+            r#"{"template": "minecraft:zombie"}"#,
+            &[("assets/ruby/models/entity/ghost.geo.json", b"{}")],
+        );
+        refused(
+            "e-anim",
+            r#"{"template": "minecraft:zombie"}"#,
+            &[
+                ("assets/ruby/models/entity/ghost.geo.json", GHOST_GEO),
+                (
+                    "assets/ruby/animations/entity/ghost.animation.json",
+                    b"{\"animations\": {\"a\": {\"loop\": 2}}}",
+                ),
+            ],
+        );
+        refused(
+            "e-anim-alone",
+            r#"{"template": "minecraft:zombie", "animations": "ghost"}"#,
+            &[(
+                "assets/ruby/animations/entity/ghost.animation.json",
+                GHOST_ANIM,
+            )],
+        );
+        let nested = hmod(
+            "e-nested",
+            MANIFEST_TEXT,
+            &[(
+                "data/ruby/horizon/entity/a/b.json",
+                br#"{"template": "minecraft:zombie"}"#,
+            )],
+        )
+        .unwrap_err();
+        assert!(nested.contains("one file name"), "{nested}");
     }
 
     #[test]

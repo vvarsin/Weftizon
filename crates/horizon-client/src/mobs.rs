@@ -27,6 +27,7 @@ pub mod copper_golem;
 pub mod creaking;
 pub mod creaking_heart;
 pub mod cube;
+pub mod custom;
 pub mod data;
 pub mod dolphin;
 pub mod doors;
@@ -378,6 +379,8 @@ pub struct MobType {
     pub food: Arc<[String]>,
     /// TemptGoal items when they differ from the food.
     pub tempt: Arc<[String]>,
+    /// A content mod's entity: its own looks, sounds and loot (`custom`).
+    pub custom: Option<Arc<custom::Custom>>,
 }
 impl MobType {
     pub fn layer(&self, key: &str) -> Option<&Arc<Part>> {
@@ -429,17 +432,9 @@ impl MobTypes {
             v.into()
         };
         let mut out = HashMap::new();
-        for def in species::ALL {
-            let id = format!("minecraft:{}", def.name);
-            let t = &types[&id];
-            if t.is_null() {
-                continue;
-            }
-            let model_key = format!("minecraft:{}", def.model);
-            let Some(model) = models.get(&model_key) else {
-                continue;
-            };
-            let defaults = exact.get(&id).cloned().unwrap_or_default();
+        let make = |def: &species::Def, id: &str, model: Arc<Part>| -> MobType {
+            let t = &types[id];
+            let defaults = exact.get(id).cloned().unwrap_or_default();
             let attr = |k: &str| defaults.get(&format!("minecraft:{k}")).copied();
             let mut layers = HashMap::new();
             if let Some(all) = models.as_object() {
@@ -456,57 +451,111 @@ impl MobTypes {
             let category = t["category"].as_str().unwrap_or("creature").to_owned();
             let speed = attr("movement_speed").unwrap_or(0.25);
             let flags = def.flags(t["fire_immune"].as_bool().unwrap_or(false));
+            MobType {
+                species: def.species,
+                width: t["width"].as_f64().unwrap_or(0.6),
+                height: t["height"].as_f64().unwrap_or(1.8),
+                eye_height: t["eye_height"].as_f64().unwrap_or(1.6),
+                max_health: attr("max_health").unwrap_or(10.0) as f32,
+                speed,
+                flying_speed: attr("flying_speed").unwrap_or(0.4),
+                attack_damage: attr("attack_damage").unwrap_or(0.0) as f32,
+                attack_knockback: attr("attack_knockback").unwrap_or(0.0),
+                follow_range: attr("follow_range").unwrap_or(16.0),
+                step_height: attr("step_height").unwrap_or(0.6),
+                armor: attr("armor").unwrap_or(0.0) as f32,
+                armor_toughness: attr("armor_toughness").unwrap_or(0.0) as f32,
+                knockback_resistance: attr("knockback_resistance").unwrap_or(0.0),
+                jump_strength: attr("jump_strength").unwrap_or(0.42),
+                attributes: Arc::new(defaults.clone()),
+                gravity: attr("gravity").unwrap_or(0.08),
+                safe_fall_distance: attr("safe_fall_distance").unwrap_or(3.0),
+                fall_damage_multiplier: attr("fall_damage_multiplier").unwrap_or(1.0),
+                water_efficiency: attr("water_movement_efficiency").unwrap_or(0.0),
+                water_slowdown: def.water_slowdown(),
+                air_speed: def.air_speed(),
+                baby_scale: def.baby_scale(),
+                head_rot_speed: def.head_rot_speed(),
+                max_head_x_rot: def.max_head_x_rot(),
+                max_head_y_rot: def.max_head_y_rot(),
+                ambient_interval: def.ambient_interval(),
+                flags,
+                model,
+                layers,
+                texture: def.texture.to_owned(),
+                brain: def.brain(),
+                anim: def.anim,
+                sounds: def.sounds,
+                step_sound: def.step_sound,
+                food: def
+                    .food_tag()
+                    .map(tag)
+                    .unwrap_or_else(|| Arc::from(Vec::new())),
+                tempt: def
+                    .tempt_tag()
+                    .or(def.food_tag())
+                    .map(tag)
+                    .unwrap_or_else(|| Arc::from(Vec::new())),
+                category,
+                id: id.to_owned(),
+                custom: None,
+            }
+        };
+        for def in species::ALL {
+            let id = format!("minecraft:{}", def.name);
+            if types[&id].is_null() {
+                continue;
+            }
+            let model_key = format!("minecraft:{}", def.model);
+            let Some(model) = models.get(&model_key) else {
+                continue;
+            };
             out.insert(
                 id.clone(),
-                MobType {
-                    species: def.species,
-                    width: t["width"].as_f64().unwrap_or(0.6),
-                    height: t["height"].as_f64().unwrap_or(1.8),
-                    eye_height: t["eye_height"].as_f64().unwrap_or(1.6),
-                    max_health: attr("max_health").unwrap_or(10.0) as f32,
-                    speed,
-                    flying_speed: attr("flying_speed").unwrap_or(0.4),
-                    attack_damage: attr("attack_damage").unwrap_or(0.0) as f32,
-                    attack_knockback: attr("attack_knockback").unwrap_or(0.0),
-                    follow_range: attr("follow_range").unwrap_or(16.0),
-                    step_height: attr("step_height").unwrap_or(0.6),
-                    armor: attr("armor").unwrap_or(0.0) as f32,
-                    armor_toughness: attr("armor_toughness").unwrap_or(0.0) as f32,
-                    knockback_resistance: attr("knockback_resistance").unwrap_or(0.0),
-                    jump_strength: attr("jump_strength").unwrap_or(0.42),
-                    attributes: Arc::new(defaults.clone()),
-                    gravity: attr("gravity").unwrap_or(0.08),
-                    safe_fall_distance: attr("safe_fall_distance").unwrap_or(3.0),
-                    fall_damage_multiplier: attr("fall_damage_multiplier").unwrap_or(1.0),
-                    water_efficiency: attr("water_movement_efficiency").unwrap_or(0.0),
-                    water_slowdown: def.water_slowdown(),
-                    air_speed: def.air_speed(),
-                    baby_scale: def.baby_scale(),
-                    head_rot_speed: def.head_rot_speed(),
-                    max_head_x_rot: def.max_head_x_rot(),
-                    max_head_y_rot: def.max_head_y_rot(),
-                    ambient_interval: def.ambient_interval(),
-                    flags,
-                    model: Arc::new(Part::parse("root", model)),
-                    layers,
-                    texture: def.texture.to_owned(),
-                    brain: def.brain(),
-                    anim: def.anim,
-                    sounds: def.sounds,
-                    step_sound: def.step_sound,
-                    food: def
-                        .food_tag()
-                        .map(tag)
-                        .unwrap_or_else(|| Arc::from(Vec::new())),
-                    tempt: def
-                        .tempt_tag()
-                        .or(def.food_tag())
-                        .map(tag)
-                        .unwrap_or_else(|| Arc::from(Vec::new())),
-                    category,
-                    id,
-                },
+                make(def, &id, Arc::new(Part::parse("root", model))),
             );
+        }
+        // Content mods' entities: a copy of the template's type under their
+        // id, with their row of entity-types.json (size and attributes).
+        for e in custom::entries(root) {
+            let Some(template) = out.get(&e.template) else {
+                log::warn!("Horizon: {}: template {} is not a mob", e.id, e.template);
+                continue;
+            };
+            if types[&e.id].is_null() {
+                log::warn!("Horizon: {}: no row in entity-types.json", e.id);
+                continue;
+            }
+            let def = species::def(template.species);
+            let mut t = make(def, &e.id, template.model.clone());
+            let mut extra = custom::Custom {
+                textures: e.textures.clone(),
+                glows: e.glows.clone(),
+                emissive: e.emissive.clone(),
+                scale: e.scale,
+                loot_table: e.loot_table.clone(),
+                ..Default::default()
+            };
+            if let Some((model, animations)) = custom::load_model(root, &e) {
+                t.layers.insert(custom::LAYER.to_owned(), model.clone());
+                t.model = model;
+                extra.own_model = true;
+                extra.animations = animations;
+            }
+            let sound = |key: &str, default: &'static str| {
+                e.sounds.get(key).map_or(default, |s| custom::intern(s))
+            };
+            t.sounds = [
+                sound("ambient", t.sounds[0]),
+                sound("hurt", t.sounds[1]),
+                sound("death", t.sounds[2]),
+            ];
+            extra.step = e.sounds.get("step").map(|s| custom::intern(s));
+            if let Some(first) = e.textures.first() {
+                t.texture = first.clone();
+            }
+            t.custom = Some(Arc::new(extra));
+            out.insert(e.id.clone(), t);
         }
         Ok(Self { types: out })
     }
@@ -3251,6 +3300,7 @@ pub(crate) mod sensor_scan_tests {
             step_sound: None,
             food: Arc::default(),
             tempt: Arc::default(),
+            custom: None,
         })
     }
     /// `n` mobs in pens of 20 spread over a square of `side` blocks, as on a

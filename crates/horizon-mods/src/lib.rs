@@ -2,7 +2,9 @@
 //! assets, no code), modpacks and, with `index`, the mod registry's index. Code mods are
 //! native (docs/native-mods.md).
 pub mod api_level;
+pub mod bedrock;
 pub mod content;
+pub mod entity;
 #[cfg(feature = "index")]
 pub mod index;
 pub mod manifest;
