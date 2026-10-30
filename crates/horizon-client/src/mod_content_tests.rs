@@ -1303,7 +1303,12 @@ fn ghost_mod(dir: &Path) -> ContentMod {
         ),
         (
             "data/ghosts/horizon/entity/brute.json",
-            br#"{"template": "minecraft:husk", "category": "creature"}"#,
+            br##"{"template": "minecraft:husk", "category": "creature", "attack_knockback": 1.0,
+                "goals": [{"goal": "float"}, {"goal": "melee", "reach": 1.2},
+                          {"goal": "tempt", "items": ["#minecraft:cow_food"]},
+                          {"goal": "wander", "speed": 0.8}],
+                "targets": [{"target": "hurt_by", "alert_others": true},
+                            {"target": "nearest_attackable", "entities": ["ghosts:ghost"]}]}"##,
         ),
         ("assets/ghosts/textures/entity/ghost.png", &[]),
         ("assets/ghosts/textures/entity/ghost_e.png", &[]),
@@ -1501,6 +1506,36 @@ fn custom_entities_join_the_root() {
     let bc = brute.custom.as_ref().unwrap();
     assert!(!bc.own_model);
     assert_eq!(bc.loot_table.as_deref(), Some("minecraft:entities/husk"));
+    // Its declared goals and targets, in place of the husk's; the tempting
+    // items read from the item tag.
+    assert_eq!(
+        types["ghosts:brute"]["attributes"]["minecraft:attack_knockback"].as_f64(),
+        Some(1.0)
+    );
+    assert_eq!(brute.attack_knockback, 1.0);
+    let tempt = &bc.goals.as_ref().unwrap()[2];
+    assert!(
+        tempt.items.iter().any(|i| i == "minecraft:wheat"),
+        "{tempt:?}"
+    );
+    let at = horizon_core::geometry::Vec3::ZERO;
+    let b = Mob::new(5, std::sync::Arc::new(brute.clone()), at, 0.0);
+    let h = Mob::new(6, std::sync::Arc::new(husk.clone()), at, 0.0);
+    for name in ["Float", "MeleeAttack", "Tempt", "Stroll"] {
+        assert!(b.ai.goals.has(name), "{name}");
+    }
+    assert!(h.ai.goals.has("MeleeAttack") && !h.ai.goals.has("Tempt"));
+    assert!(b.ai.goals.running_names().is_empty());
+    assert!(b.ai.targets.has("NearestTarget") && b.ai.targets.has("HurtByTarget"));
+    // The ghost declares none: the zombie's own.
+    let gm = Mob::new(7, std::sync::Arc::new(g.clone()), at, 0.0);
+    let zombie_kind = vanilla.types["minecraft:zombie"].clone();
+    let zm = Mob::new(8, std::sync::Arc::new(zombie_kind), at, 0.0);
+    assert_eq!(gm.ai.goals.has("Tempt"), zm.ai.goals.has("Tempt"));
+    assert_eq!(
+        gm.ai.goals.has("MeleeAttack"),
+        zm.ai.goals.has("MeleeAttack")
+    );
     // Vanilla's types are what they were.
     let vz = &vanilla.types["minecraft:zombie"];
     let mz = &mobs.types["minecraft:zombie"];

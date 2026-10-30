@@ -8,8 +8,11 @@
 //! template's [`super::MobType`] with [`Custom`] attached. Bedrock models and
 //! animations are read with `horizon_mods::bedrock` into the Java model space
 //! the renderer draws.
-use super::{Mob, Part, Polygon, anim, keyframes};
-use horizon_mods::bedrock::{self, Loop};
+use super::{Mob, Part, Polygon, anim, goals, keyframes};
+use horizon_mods::{
+    bedrock::{self, Loop},
+    behaviour,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
@@ -45,14 +48,259 @@ pub struct Entry {
     #[serde(default)]
     pub sounds: BTreeMap<String, String>,
     pub loot_table: Option<String>,
+    /// Its AI goals and target selectors in place of the template's.
+    #[serde(default)]
+    pub goals: Option<Vec<behaviour::Goal>>,
+    #[serde(default)]
+    pub targets: Option<Vec<behaviour::Target>>,
 }
 fn one() -> f32 {
     1.0
 }
 
+/// A declared goal or target selector with what it names resolved: its
+/// priority, the entities it acts on and the items that tempt it.
+#[derive(Clone, Debug)]
+pub struct Planned<T> {
+    pub priority: i32,
+    pub spec: T,
+    /// It names `minecraft:player`.
+    pub player: bool,
+    pub kinds: goals::Kinds,
+    pub items: Arc<[String]>,
+}
+
+/// Entity ids as what a goal matches: the player, vanilla species, mods'
+/// entities. A vanilla id that is no mob is left out.
+fn kinds(owner: &str, names: &[String]) -> (bool, goals::Kinds) {
+    let mut player = false;
+    let mut kinds = goals::Kinds::default();
+    for name in names {
+        match name.strip_prefix("minecraft:") {
+            Some("player") => player = true,
+            Some(path) => match super::species::ALL.iter().find(|d| d.name == path) {
+                Some(d) => kinds.species.push(d.species),
+                None => log::warn!("Horizon: {owner}: {name} is not a mob"),
+            },
+            None => kinds.declared.push(intern(name)),
+        }
+    }
+    (player, kinds)
+}
+
+/// The declared goals and targets of entity `owner`, resolved; `item_tag`
+/// lists the items of an item tag.
+pub fn plan(
+    owner: &str,
+    goals: Option<&[behaviour::Goal]>,
+    targets: Option<&[behaviour::Target]>,
+    item_tag: &dyn Fn(&str) -> Vec<String>,
+) -> (
+    Option<Vec<Planned<behaviour::Goal>>>,
+    Option<Vec<Planned<behaviour::Target>>>,
+) {
+    let none: Arc<[String]> = Arc::from(Vec::new());
+    let goals = goals.map(|list| {
+        list.iter()
+            .enumerate()
+            .map(|(i, g)| {
+                let (player, kinds) = match g {
+                    behaviour::Goal::Avoid { entities, .. } => kinds(owner, entities),
+                    _ => Default::default(),
+                };
+                let items = match g {
+                    behaviour::Goal::Tempt { items, .. } => {
+                        let mut all = Vec::new();
+                        for item in items {
+                            match item.strip_prefix('#') {
+                                Some(tag) => all.extend(item_tag(tag)),
+                                None => all.push(item.clone()),
+                            }
+                        }
+                        all.sort();
+                        all.dedup();
+                        Arc::from(all)
+                    }
+                    _ => none.clone(),
+                };
+                Planned {
+                    priority: g.priority().unwrap_or(i as i32),
+                    spec: g.clone(),
+                    player,
+                    kinds,
+                    items,
+                }
+            })
+            .collect()
+    });
+    let targets = targets.map(|list| {
+        list.iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let (player, kinds) = match t {
+                    behaviour::Target::NearestAttackable { entities, .. } => kinds(owner, entities),
+                    behaviour::Target::HurtBy { .. } => Default::default(),
+                };
+                Planned {
+                    priority: t.priority().unwrap_or(i as i32),
+                    spec: t.clone(),
+                    player,
+                    kinds,
+                    items: none.clone(),
+                }
+            })
+            .collect()
+    });
+    (goals, targets)
+}
+
+/// `registerGoals` for a mod's entity: its declared goals and target
+/// selectors in place of the template's (which the template registered
+/// first, with the rest of its set-up).
+pub fn register(m: &mut Mob) {
+    use super::goals::{
+        Avoid, AvoidEntity, FleeSun, Float, LeapAtTarget, LookAtPlayer, MeleeAttack, NearestTarget,
+        Panic, Prey, RandomLookAround, RestrictSun, Stroll, Tempt,
+    };
+    use behaviour::{Goal as G, Target as T};
+    let Some(c) = m.kind.custom.clone() else {
+        return;
+    };
+    if let Some(list) = &c.goals {
+        m.ai.goals.clear();
+        for p in list {
+            let g = &mut m.ai.goals;
+            let at = p.priority;
+            match &p.spec {
+                G::Float { .. } => g.add(at, Float),
+                G::Melee {
+                    speed,
+                    follow_unseen,
+                    reach,
+                    interval,
+                    ..
+                } => {
+                    let mut goal =
+                        MeleeAttack::new(*speed, *follow_unseen).interval(*interval as i32);
+                    if let Some(r) = reach {
+                        goal = goal.reach(*r);
+                    }
+                    g.add(at, goal);
+                }
+                G::LeapAtTarget { velocity_y, .. } => g.add(at, LeapAtTarget::new(*velocity_y)),
+                G::Ranged {
+                    projectile,
+                    speed,
+                    interval,
+                    range,
+                    ..
+                } => {
+                    let fire: super::witch::Fire = match projectile.as_str() {
+                        "snowball" => super::golem::snowball_attack,
+                        "llama_spit" => super::llama::spit,
+                        _ => |m, who, power, cx| {
+                            super::undead::perform_ranged_attack(m, who, cx, power)
+                        },
+                    };
+                    let interval = *interval as i32;
+                    g.add(
+                        at,
+                        super::witch::RangedAttack::new(*speed, interval, interval, *range, fire),
+                    );
+                }
+                G::Wander {
+                    speed,
+                    interval,
+                    avoid_water,
+                    ..
+                } => {
+                    let stroll = if *avoid_water {
+                        Stroll::avoiding_water(*speed)
+                    } else {
+                        Stroll::new(*speed)
+                    };
+                    g.add(at, stroll.interval(*interval as i32));
+                }
+                G::LookAtPlayer {
+                    distance,
+                    probability,
+                    ..
+                } => {
+                    let mut look = LookAtPlayer::new(*distance);
+                    look.probability = *probability;
+                    g.add(at, look);
+                }
+                G::RandomLookAround { .. } => g.add(at, RandomLookAround::default()),
+                G::Panic { speed, .. } => g.add(at, Panic::new(*speed)),
+                G::Tempt { speed, scared, .. } => {
+                    g.add(at, Tempt::new(*speed, p.items.clone(), *scared));
+                }
+                G::Avoid {
+                    distance,
+                    walk_speed,
+                    sprint_speed,
+                    ..
+                } => {
+                    if p.player {
+                        g.add(
+                            at,
+                            AvoidEntity::new(Avoid::Player, *distance, *walk_speed, *sprint_speed),
+                        );
+                    }
+                    if p.kinds != Default::default() {
+                        g.add(
+                            at,
+                            AvoidEntity::new(
+                                Avoid::Kinds(p.kinds.clone()),
+                                *distance,
+                                *walk_speed,
+                                *sprint_speed,
+                            ),
+                        );
+                    }
+                }
+                G::RestrictSun { .. } => g.add(at, RestrictSun),
+                G::FleeSun { speed, .. } => g.add(at, FleeSun::new(*speed)),
+            }
+        }
+    }
+    if let Some(list) = &c.targets {
+        m.ai.targets.clear();
+        for p in list {
+            let t = &mut m.ai.targets;
+            match &p.spec {
+                T::HurtBy { alert_others, .. } => {
+                    let goal = super::goals::HurtByTarget::new();
+                    t.add(p.priority, if *alert_others { goal.alert() } else { goal });
+                }
+                T::NearestAttackable {
+                    must_see, interval, ..
+                } => {
+                    let interval = *interval as i32;
+                    if p.player {
+                        t.add(
+                            p.priority,
+                            NearestTarget::player(*must_see).interval(interval),
+                        );
+                    }
+                    if p.kinds != Default::default() {
+                        t.add(
+                            p.priority,
+                            NearestTarget::new(Prey::Kinds(p.kinds.clone()), *must_see)
+                                .interval(interval),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A declared entity's own looks and sounds, on its [`super::MobType`].
 #[derive(Clone, Debug, Default)]
 pub struct Custom {
+    /// Its id (`mymod:ghost`), one copy for the game's life.
+    pub id: &'static str,
     pub textures: Vec<String>,
     pub glows: Vec<Option<String>>,
     pub emissive: Option<String>,
@@ -64,6 +312,9 @@ pub struct Custom {
     pub loot_table: Option<String>,
     /// Keyframe animations by name (`idle`, `walk`, `hurt`, `death`...).
     pub animations: HashMap<String, (keyframes::Animation, Loop)>,
+    /// Declared goals and target selectors ([`register`]); `None` keeps the template's.
+    pub goals: Option<Vec<Planned<behaviour::Goal>>>,
+    pub targets: Option<Vec<Planned<behaviour::Target>>>,
 }
 
 /// One copy of each sound event name, kept for the game's life: mob sounds are `&'static str`.

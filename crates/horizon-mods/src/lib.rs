@@ -3,6 +3,7 @@
 //! native (docs/native-mods.md).
 pub mod api_level;
 pub mod bedrock;
+pub mod behaviour;
 pub mod content;
 pub mod entity;
 #[cfg(feature = "index")]

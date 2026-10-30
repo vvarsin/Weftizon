@@ -382,6 +382,8 @@ pub fn register(m: &mut Mob) {
         Family::Panda => super::panda::register(m),
         Family::PolarBear => super::polar_bear::register(m),
     }
+    // A mod's entity: its declared goals in place of the template's.
+    super::custom::register(m);
     // FloatGoal's constructor lets the navigation float, as do the
     // constructors of these brain-driven and flying mobs. A floater rises
     // 0.04 a tick in Mob.jumpInLiquid, the others 0.3 (the bounce of #542).
@@ -2204,8 +2206,13 @@ pub fn do_hurt_target(m: &mut Mob, who: Who, cx: &mut Cx) {
             seconds: burn,
         });
     }
-    let knock = super::gear::knockback(m);
-    if knock > 0 {
+    let mut knock = f64::from(super::gear::knockback(m));
+    // Mob.getKnockback: the attack_knockback attribute as well, for a mod's
+    // entity (vanilla's mobs with one hit through their own code above).
+    if m.kind.custom.is_some() {
+        knock += m.kind.attack_knockback;
+    }
+    if knock > 0.0 {
         let (dx, dz) = match who {
             Who::Player => cx.w.player.as_ref().map_or((0.0, 0.0), |p| {
                 (p.position.x - m.position.x, p.position.z - m.position.z)
@@ -2215,7 +2222,7 @@ pub fn do_hurt_target(m: &mut Mob, who: Who, cx: &mut Cx) {
             }),
         };
         let len = (dx * dx + dz * dz).sqrt().max(1e-5);
-        let k = f64::from(knock) * 0.5;
+        let k = knock * 0.5;
         cx.events.push(MobEvent::Push {
             target: who,
             velocity: [dx / len * k, 0.1, dz / len * k],

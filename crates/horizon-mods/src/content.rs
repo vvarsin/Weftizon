@@ -612,6 +612,69 @@ capabilities = ["registries"]
         .unwrap();
         let b = &bare.entities[0];
         assert!(b.texture.is_none() && b.model.is_none() && b.sounds.is_empty());
+        assert!(b.goals.is_none() && b.targets.is_none());
+    }
+
+    /// Goals and targets read with their defaults, in the declared order.
+    #[test]
+    fn entities_declare_goals_and_targets() {
+        use crate::behaviour::{Goal, Target};
+        let decl = br##"{"template": "minecraft:cow", "attack_damage": 4, "attack_knockback": 1.5,
+            "goals": [
+                {"goal": "float"},
+                {"goal": "melee", "priority": 2, "reach": 1.5},
+                {"goal": "ranged", "projectile": "snowball", "range": 10},
+                {"goal": "wander", "speed": 0.8, "avoid_water": false},
+                {"goal": "tempt", "items": ["minecraft:wheat", "#minecraft:cow_food"]},
+                {"goal": "avoid", "entities": ["minecraft:wolf", "ruby:ghost"]},
+                {"goal": "look_at_player"}
+            ],
+            "targets": [
+                {"target": "hurt_by", "alert_others": true},
+                {"target": "nearest_attackable", "entities": ["minecraft:player"], "must_see": false}
+            ]}"##;
+        let content = hmod(
+            "entity-goals",
+            MANIFEST_TEXT,
+            &[("data/ruby/horizon/entity/bull.json", decl)],
+        )
+        .unwrap();
+        let e = &content.entities[0];
+        assert_eq!(e.stats.attack_knockback, Some(1.5));
+        let goals = e.goals.as_ref().unwrap();
+        assert_eq!(goals.len(), 7);
+        assert_eq!(goals[0], Goal::Float { priority: None });
+        assert_eq!(
+            goals[1],
+            Goal::Melee {
+                priority: Some(2),
+                speed: 1.0,
+                follow_unseen: false,
+                reach: Some(1.5),
+                interval: 20,
+            }
+        );
+        assert!(matches!(&goals[2], Goal::Ranged { interval: 40, range, .. } if *range == 10.0));
+        assert!(matches!(
+            goals[3],
+            Goal::Wander {
+                interval: 120,
+                avoid_water: false,
+                ..
+            }
+        ));
+        assert_eq!(
+            e.targets.as_ref().unwrap()[1],
+            Target::NearestAttackable {
+                priority: None,
+                entities: vec!["minecraft:player".into()],
+                must_see: false,
+                interval: 10,
+            }
+        );
+        // The declaration round-trips through the content root's file.
+        let json = serde_json::to_string(goals).unwrap();
+        assert_eq!(&serde_json::from_str::<Vec<Goal>>(&json).unwrap(), goals);
     }
 
     #[test]
@@ -680,6 +743,44 @@ capabilities = ["registries"]
                 "assets/ruby/animations/entity/ghost.animation.json",
                 GHOST_ANIM,
             )],
+        );
+        let e = refused(
+            "e-goal",
+            r#"{"template": "minecraft:zombie", "goals": [{"goal": "dance"}]}"#,
+            &[],
+        );
+        assert!(e.contains("dance"), "{e}");
+        let e = refused(
+            "e-goal-key",
+            r#"{"template": "minecraft:zombie", "goals": [{"goal": "melee", "sped": 1}]}"#,
+            &[],
+        );
+        assert!(e.contains("sped"), "{e}");
+        let e = refused(
+            "e-goal-brain",
+            r#"{"template": "minecraft:warden", "goals": [{"goal": "float"}]}"#,
+            &[],
+        );
+        assert!(e.contains("brain"), "{e}");
+        refused(
+            "e-goal-projectile",
+            r#"{"template": "minecraft:zombie", "goals": [{"goal": "ranged", "projectile": "egg"}]}"#,
+            &[],
+        );
+        refused(
+            "e-goal-speed",
+            r#"{"template": "minecraft:zombie", "goals": [{"goal": "wander", "speed": 0}]}"#,
+            &[],
+        );
+        refused(
+            "e-target-entity",
+            r#"{"template": "minecraft:zombie", "targets": [{"target": "nearest_attackable", "entities": ["player"]}]}"#,
+            &[],
+        );
+        refused(
+            "e-knockback",
+            r#"{"template": "minecraft:zombie", "attack_knockback": 9}"#,
+            &[],
         );
         let nested = hmod(
             "e-nested",

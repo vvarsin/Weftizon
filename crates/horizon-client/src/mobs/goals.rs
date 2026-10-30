@@ -1234,6 +1234,9 @@ pub struct MeleeAttack {
     pub baby_interval: Option<i32>,
     /// The sound played after each strike (a fox's bite).
     pub bite: Option<&'static str>,
+    /// A mod's entity's reach past its box (`melee`'s `reach`); unset,
+    /// vanilla's (`Mob.getAttackBoundingBox`).
+    pub reach: Option<f64>,
 }
 impl MeleeAttack {
     pub fn new(speed: f64, follow_unseen: bool) -> Self {
@@ -1250,6 +1253,21 @@ impl MeleeAttack {
             interval: 20,
             baby_interval: None,
             bite: None,
+            reach: None,
+        }
+    }
+    /// Hits from `reach` blocks past its box.
+    pub fn reach(mut self, reach: f64) -> Self {
+        self.reach = Some(reach);
+        self
+    }
+    fn in_range(&self, m: &Mob, t: &TargetInfo) -> bool {
+        match self.reach {
+            Some(r) => m
+                .bounds()
+                .inflate(Vec3::new(r, 0.0, r))
+                .intersects(t.bounds),
+            None => m.within_melee_range(t),
         }
     }
     pub fn zombie(mut self) -> Self {
@@ -1293,7 +1311,7 @@ impl Goal for MeleeAttack {
             return false;
         }
         let path = m.create_path_to_entity(cx.w, [t.position.x, t.position.y, t.position.z], 0);
-        let ok = path.is_some() || m.within_melee_range(&t);
+        let ok = path.is_some() || self.in_range(m, &t);
         m.ai.pending_path = path;
         ok
     }
@@ -1372,7 +1390,7 @@ impl Goal for MeleeAttack {
                 &t,
                 cx,
             );
-        } else if self.until_attack <= 0 && m.within_melee_range(&t) && m.sees(cx.w, who) {
+        } else if self.until_attack <= 0 && self.in_range(m, &t) && m.sees(cx.w, who) {
             let interval = match self.baby_interval {
                 Some(baby) if m.is_baby() => baby,
                 _ => self.interval,
@@ -1442,11 +1460,28 @@ impl Goal for LeapAtTarget {
         m.velocity = Vec3::new(d[0], f64::from(self.yd), d[2]);
     }
 }
+/// Entity kinds a mod's goal names (`horizon_mods::behaviour`): vanilla
+/// species, not mods' entities copying them, and mods' entities by id.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Kinds {
+    pub species: Vec<Species>,
+    pub declared: Vec<&'static str>,
+}
+impl Kinds {
+    pub fn matches(&self, s: &Seen) -> bool {
+        match s.declared {
+            Some(id) => self.declared.contains(&id),
+            None => self.species.contains(&s.species),
+        }
+    }
+}
 /// What a target goal hunts.
 #[derive(Clone, Debug)]
 pub enum Prey {
     Player,
     Species(Vec<Species>),
+    /// What a mod's entity hunts (`nearest_attackable`).
+    Kinds(Kinds),
     /// Any mob matching a predicate on its snapshot.
     Filter(fn(&Seen) -> bool),
 }
@@ -1626,6 +1661,7 @@ impl Goal for NearestTarget {
                             && !illager_spares(attacker, s)
                             && match prey {
                                 Prey::Species(list) => list.contains(&s.species),
+                                Prey::Kinds(kinds) => kinds.matches(s),
                                 Prey::Filter(f) => f(s),
                                 Prey::Player => false,
                             }
@@ -1774,6 +1810,8 @@ impl Goal for HurtByTarget {
         {
             let range = m.attrs.follow_range;
             let species = m.species();
+            // A mod's entity calls its own kind, not its template's.
+            let declared = m.kind.custom.as_ref().map(|c| c.id);
             let id = m.id;
             let pos = m.position;
             // TamableAnimal: its owner (`getOwner`, none for a wild one) and
@@ -1795,6 +1833,7 @@ impl Goal for HurtByTarget {
                         s.id != id
                             && s.alive
                             && s.species == species
+                            && s.declared == declared
                             && s.target.is_none()
                             && (s.position.x - pos.x).abs() <= range + 1.0
                             && (s.position.y - pos.y).abs() <= 11.0
@@ -1843,6 +1882,8 @@ impl Goal for HurtByTarget {
 pub enum Avoid {
     Player,
     Species(Vec<Species>),
+    /// What a mod's entity runs from (`avoid`).
+    Kinds(Kinds),
 }
 /// AvoidEntityGoal.
 #[derive(Clone, Debug)]
@@ -1913,14 +1954,18 @@ impl Goal for AvoidEntity {
                     })
                     .map(|p| p.position)
             }
-            Avoid::Species(list) => {
+            what @ (Avoid::Species(_) | Avoid::Kinds(_)) => {
                 let id = m.id;
                 let y = m.position.y;
                 let seen_when = self.seen_when;
                 let hit =
                     cx.w.nearby(m.position, max, move |s| {
                         s.id != id
-                            && list.contains(&s.species)
+                            && match what {
+                                Avoid::Species(list) => list.contains(&s.species),
+                                Avoid::Kinds(kinds) => kinds.matches(s),
+                                Avoid::Player => false,
+                            }
                             && seen_when.is_none_or(|f| f(s))
                             && (s.position.y - y).abs() <= 3.0 + max
                     })
@@ -1970,7 +2015,7 @@ impl Goal for AvoidEntity {
                     .map(|p| p.position)
                     .unwrap_or(self.from)
             }
-            Avoid::Species(_) => self.from,
+            Avoid::Species(_) | Avoid::Kinds(_) => self.from,
         };
         m.ai.nav.speed_modifier = if m.distance_sqr(from) < 49.0 {
             self.sprint

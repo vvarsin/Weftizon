@@ -215,9 +215,55 @@ mob walks, `hurt` after a hit and `death` while it dies. `loop` is `true`, `fals
 
 A broken declaration, model or animation file refuses the mod, with the file and the reason. `/summon <id>:<name>`
 summons it, worlds save it under its id, and its name is the translation `entity.<id>.<name>`. Content mods'
-entities get network ids after vanilla's, so a server and its players need the same mods. Not yet: behaviour of
-its own (tick, hurt and interact callbacks, AI goals), spawn eggs, armour and held items on a model of the mod's own,
-and the template's extra layers (a sheep's wool) on one.
+entities get network ids after vanilla's, so a server and its players need the same mods. Not yet: spawn eggs,
+armour and held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
+
+#### Entity behaviour
+
+`goals` and `targets` give a declared entity an AI of its own, from a fixed vocabulary (Weft's `goals(..)`); each
+entry is the vanilla goal of the same job, run by vanilla's goal selector. A list replaces the template's list of
+that kind; leaving it out keeps the template's. `priority` orders them as vanilla's selector does (lower first; a
+lower one interrupts a higher one that uses the same controls) and defaults to the entry's place in the list.
+
+```json
+{ "template": "minecraft:cow", "attack_damage": 4, "attack_knockback": 1.5,
+  "goals": [
+    { "goal": "float" },
+    { "goal": "melee", "speed": 1.2, "reach": 1.5 },
+    { "goal": "tempt", "items": ["#minecraft:cow_food"], "speed": 1.1 },
+    { "goal": "avoid", "entities": ["minecraft:wolf"], "distance": 8 },
+    { "goal": "wander", "speed": 0.8 },
+    { "goal": "look_at_player", "distance": 6 },
+    { "goal": "random_look_around" } ],
+  "targets": [
+    { "target": "hurt_by", "alert_others": true },
+    { "target": "nearest_attackable", "entities": ["minecraft:player", "mymod:ghost"] } ] }
+```
+
+| Goal | Vanilla goal | Keys (default) |
+|---|---|---|
+| `float` | `FloatGoal`: swims up in water and lava | |
+| `melee` | `MeleeAttackGoal`: walks to its target and hits it with its `attack_damage`; `attack_knockback` pushes | `speed` (1), `follow_unseen` (false), `reach` past its box (vanilla's, about 0.83), `interval` ticks (20) |
+| `leap_at_target` | `LeapAtTargetGoal` | `velocity_y` (0.4) |
+| `ranged` | `RangedAttackGoal`: keeps within `range` and shoots | `projectile`: `arrow` (a skeleton's), `snowball`, `llama_spit`; `speed` (1), `interval` (40), `range` (15) |
+| `wander` | `WaterAvoidingRandomStrollGoal`, `RandomStrollGoal` with `avoid_water` false | `speed` (1), `interval` (120), `avoid_water` (true) |
+| `look_at_player` | `LookAtPlayerGoal` | `distance` (8), `probability` (0.02) |
+| `random_look_around` | `RandomLookAroundGoal` | |
+| `panic` | `PanicGoal`: runs after a hit or while burning | `speed` (1.25) |
+| `tempt` | `TemptGoal`: follows a player holding one of `items` (ids or `#tags`) | `speed` (1), `scared` (false) |
+| `avoid` | `AvoidEntityGoal`: runs from `entities` | `distance` (6), `walk_speed` (1), `sprint_speed` (1.2) |
+| `restrict_sun`, `flee_sun` | `RestrictSunGoal`, `FleeSunGoal` | `flee_sun`: `speed` (1) |
+
+| Target | Vanilla goal | Keys (default) |
+|---|---|---|
+| `hurt_by` | `HurtByTargetGoal`: whoever hurt it | `alert_others` (false): its own kind around joins in |
+| `nearest_attackable` | `NearestAttackableTargetGoal`: the nearest of `entities` it can see within its `follow_range` | `must_see` (true), `interval` (10) |
+
+Entities are ids: `minecraft:player`, a vanilla mob (`minecraft:zombie` is a zombie, never a mod's entity copying
+one) or a mod's entity (`mymod:ghost`). The template's own behaviour beyond its goals stays: a cow still gives
+milk, a creeper with declared goals no longer swells (swelling is one of its goals). Templates that think with a
+brain instead of goals (villager, warden, sniffer, axolotl, breeze, creaking, copper golem, happy ghast) take no
+`goals` or `targets`.
 
 ## Native mods
 

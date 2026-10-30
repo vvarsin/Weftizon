@@ -54,11 +54,14 @@ pub(crate) struct EntityFile {
     health: Option<f64>,
     speed: Option<f64>,
     attack_damage: Option<f64>,
+    attack_knockback: Option<f64>,
     armor: Option<f64>,
     follow_range: Option<f64>,
     knockback_resistance: Option<f64>,
     category: Option<String>,
     fire_immune: Option<bool>,
+    goals: Option<Vec<crate::behaviour::Goal>>,
+    targets: Option<Vec<crate::behaviour::Target>>,
     /// How much bigger the model is drawn than the template's.
     scale: Option<f32>,
     texture: Option<String>,
@@ -86,6 +89,7 @@ pub struct Stats {
     /// `minecraft:movement_speed`.
     pub speed: Option<f64>,
     pub attack_damage: Option<f64>,
+    pub attack_knockback: Option<f64>,
     pub armor: Option<f64>,
     pub follow_range: Option<f64>,
     pub knockback_resistance: Option<f64>,
@@ -129,9 +133,13 @@ pub struct Entity {
     pub sound_files: BTreeMap<String, Vec<String>>,
     pub loot_table: Option<String>,
     pub spawns: Vec<Spawn>,
+    /// Its AI goals, in place of the template's; `None` keeps them.
+    pub goals: Option<Vec<crate::behaviour::Goal>>,
+    /// Its target selectors, in place of the template's; `None` keeps them.
+    pub targets: Option<Vec<crate::behaviour::Target>>,
 }
 
-fn resource_id(s: &str) -> bool {
+pub(crate) fn resource_id(s: &str) -> bool {
     let (ns, path) = s.split_once(':').unwrap_or(("minecraft", s));
     let ok = |p: &str, extra: &[u8]| {
         !p.is_empty()
@@ -184,6 +192,7 @@ impl Entity {
         }
         for (v, what, max) in [
             (decl.attack_damage, "attack_damage", 2048.0),
+            (decl.attack_knockback, "attack_knockback", 5.0),
             (decl.armor, "armor", 30.0),
             (decl.knockback_resistance, "knockback_resistance", 1.0),
         ] {
@@ -324,6 +333,11 @@ impl Entity {
         for event in sound_files.keys() {
             sounds.insert(event.clone(), format!("{mod_id}:entity.{name}.{event}"));
         }
+        crate::behaviour::check(
+            &decl.template,
+            decl.goals.as_deref(),
+            decl.targets.as_deref(),
+        )?;
         if let Some(t) = &decl.loot_table
             && !resource_id(t)
         {
@@ -356,6 +370,7 @@ impl Entity {
                 health: decl.health,
                 speed: decl.speed,
                 attack_damage: decl.attack_damage,
+                attack_knockback: decl.attack_knockback,
                 armor: decl.armor,
                 follow_range: decl.follow_range,
                 knockback_resistance: decl.knockback_resistance,
@@ -373,6 +388,8 @@ impl Entity {
             sound_files,
             loot_table: decl.loot_table,
             spawns: decl.spawns,
+            goals: decl.goals,
+            targets: decl.targets,
         })
     }
 }

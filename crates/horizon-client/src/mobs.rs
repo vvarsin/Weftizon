@@ -528,7 +528,15 @@ impl MobTypes {
             }
             let def = species::def(template.species);
             let mut t = make(def, &e.id, template.model.clone());
+            let item_tag = |tag: &str| -> Vec<String> {
+                item_tags.get(tag).into_iter().flatten().cloned().collect()
+            };
+            let (goals, targets) =
+                custom::plan(&e.id, e.goals.as_deref(), e.targets.as_deref(), &item_tag);
             let mut extra = custom::Custom {
+                id: custom::intern(&e.id),
+                goals,
+                targets,
                 textures: e.textures.clone(),
                 glows: e.glows.clone(),
                 emissive: e.emissive.clone(),
@@ -1723,6 +1731,8 @@ pub struct Seen {
     pub last_damage: Option<Damage>,
     pub id: u32,
     pub species: Species,
+    /// A mod's entity: its id (`custom::Custom::id`); `None` for vanilla's.
+    pub declared: Option<&'static str>,
     pub position: Vec3,
     pub bounds: Aabb,
     pub eye_y: f64,
@@ -1861,6 +1871,7 @@ impl Mob {
             last_damage: self.last_damage.map(|(d, _)| d),
             id: m.id,
             species: m.species(),
+            declared: m.kind.custom.as_ref().map(|c| c.id),
             position: m.position,
             bounds: m.bounds(),
             eye_y: m.eye_y(),

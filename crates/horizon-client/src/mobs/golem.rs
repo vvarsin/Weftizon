@@ -470,7 +470,7 @@ pub fn register_snow(m: &mut Mob) {
     );
 }
 /// `SnowGolem.performRangedAttack`.
-fn snowball_attack(m: &mut Mob, who: Who, _power: f32, cx: &mut Cx) {
+pub(super) fn snowball_attack(m: &mut Mob, who: Who, _power: f32, cx: &mut Cx) {
     let Some(t) = cx.w.target_info(who) else {
         return;
     };

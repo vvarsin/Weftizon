@@ -86,10 +86,14 @@ clients without the same mods (they need the same content, as for blocks).
 
 ## 2. Entity behaviour and AI
 
-- Data: `goals` in the entity declaration from a fixed vocabulary mapped to Horizon's goal
-  implementations (`mobs/goals.rs`): `melee(reach)`, `ranged`, `wander`, `look_at_player`, `panic`,
-  `tempt(items)`, `avoid(entity)`, `float`; `attack_damage`, `attack_knockback`; target selectors
-  (`hurt_by`, `nearest_attackable(entity, tag)`). A declared list replaces the template's selector.
+- ✅ Data: `goals` in the entity declaration from a fixed vocabulary mapped to Horizon's goal
+  implementations (`horizon_mods::behaviour` → `mobs/custom.rs::register`): `float`, `melee` (`reach`),
+  `leap_at_target`, `ranged` (arrow, snowball, llama spit), `wander`, `look_at_player`,
+  `random_look_around`, `panic`, `tempt` (items and `#tags`), `avoid`, `restrict_sun`, `flee_sun`;
+  `attack_knockback`; target selectors `hurt_by` (`alert_others` calls its own kind) and
+  `nearest_attackable` (entity ids; a mod's entity is matched by its id, not its template's species).
+  A declared list replaces the template's selector; brain-driven templates refuse them. Players' docs:
+  [mods.md#entity-behaviour](mods.md#entity-behaviour).
 - Animation triggers: `attack` keyframes on the attack swing, and a hook-point to play a named animation
   (Weft's `play_animation`), synced to clients through a Horizon custom payload.
 - Callbacks for code: native hook points `entity_tick`, `entity_hurt`, `entity_died`, `entity_interact`

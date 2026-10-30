@@ -121,6 +121,8 @@ pub(super) fn build(
                 scale: e.scale.unwrap_or(1.0),
                 sounds: e.sounds.clone(),
                 loot_table,
+                goals: e.goals.clone(),
+                targets: e.targets.clone(),
             });
         }
     }
@@ -195,6 +197,7 @@ fn row(mut t: serde_json::Map<String, Value>, e: &Entity) -> serde_json::Map<Str
             ("max_health", s.health),
             ("movement_speed", s.speed),
             ("attack_damage", s.attack_damage),
+            ("attack_knockback", s.attack_knockback),
             ("armor", s.armor),
             ("follow_range", s.follow_range),
             ("knockback_resistance", s.knockback_resistance),
