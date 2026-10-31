@@ -51,6 +51,21 @@ fn resources(
 fn raw(json: String) -> Result<Box<RawValue>, DecodeError> {
     Ok(RawValue::from_string(json)?)
 }
+/// 1.20.1 vanilla features that 26.3 removed, as 1.20.1's data writes them, so a
+/// pack of that version can still name them. Only read when no pack defines the
+/// name. `seagrass_simple` waits on the liquid carving mask, which is empty
+/// (see `PlacementModifier::LegacyLiquidCarvingMask`).
+fn legacy_feature(placed: bool, name: &str) -> Option<&'static str> {
+    Some(match (placed, name) {
+        (false, "minecraft:seagrass_simple") => {
+            r#"{"type":"minecraft:simple_block","config":{"to_place":{"type":"minecraft:simple_state_provider","state":{"Name":"minecraft:seagrass"}}}}"#
+        }
+        (true, "minecraft:seagrass_simple") => {
+            r#"{"feature":"minecraft:seagrass_simple","placement":[{"type":"minecraft:carving_mask","step":"liquid"},{"type":"minecraft:rarity_filter","chance":10},{"type":"minecraft:block_predicate_filter","predicate":{"type":"minecraft:all_of","predicates":[{"type":"minecraft:matching_blocks","blocks":"minecraft:stone","offset":[0,-1,0]},{"type":"minecraft:matching_blocks","blocks":"minecraft:water"},{"type":"minecraft:matching_blocks","blocks":"minecraft:water","offset":[0,1,0]}]}},{"type":"minecraft:biome"}]}"#
+        }
+        _ => return None,
+    })
+}
 fn entries(value: &RawValue) -> Result<Vec<Box<RawValue>>, DecodeError> {
     let values: Vec<Box<RawValue>> = serde_json::from_str(value.get())?;
     if values.len() > 8192 {
@@ -142,19 +157,25 @@ impl FeatureCatalog {
         work: &mut Expansion,
     ) -> Result<String, DecodeError> {
         let name = identifier(name)?;
-        let name = match name.as_str() {
-            "minecraft:seagrass_simple" => "minecraft:seagrass_short".to_owned(),
-            _ => name,
-        };
         let key = (placed, name.clone());
         if work.active.contains(&key) {
             return Err(DecodeError::Registry(format!(
                 "cyclic feature reference {name}"
             )));
         }
-        let value = if placed { &self.placed } else { &self.features }
-            .get(&name)
-            .ok_or_else(|| DecodeError::Registry(format!("unknown feature reference {name}")))?;
+        let table = if placed { &self.placed } else { &self.features };
+        let legacy;
+        let value = match table.get(&name) {
+            Some(value) => value,
+            None => {
+                legacy = raw(legacy_feature(placed, &name)
+                    .ok_or_else(|| {
+                        DecodeError::Registry(format!("unknown feature reference {name}"))
+                    })?
+                    .to_owned())?;
+                &legacy
+            }
+        };
         work.active.push(key);
         let result = if placed {
             self.expand_placed(value, depth + 1, work)
@@ -251,7 +272,10 @@ impl FeatureCatalog {
                     self.expand_placed(required(&object, "vegetation_feature")?, depth + 1, work)?;
                 object.insert("vegetation_feature".into(), raw(expanded)?);
             }
-            "minecraft:coral_tree" | "minecraft:coral_claw" | "minecraft:root_system" => {
+            "minecraft:coral_tree"
+            | "minecraft:coral_claw"
+            | "minecraft:root_system"
+            | "minecraft:random_patch" => {
                 let expanded =
                     self.expand_placed(required(&object, "feature")?, depth + 1, work)?;
                 object.insert("feature".into(), raw(expanded)?);
@@ -312,5 +336,47 @@ impl FeatureCatalog {
             _ => {}
         }
         Ok(serde_json::to_string(&object)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expanded(catalog: &FeatureCatalog, name: &str) -> serde_json::Value {
+        let raw = raw(serde_json::to_string(name).unwrap()).unwrap();
+        let mut work = Expansion {
+            remaining: 65536,
+            active: vec![],
+        };
+        serde_json::from_str(&catalog.expand_placed(&raw, 0, &mut work).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn removed_vanilla_features_resolve_to_their_1_20_1_definitions() {
+        let tags = TagDefinitions::default();
+        let empty =
+            FeatureCatalog::from_resources(&BTreeMap::new(), &BTreeMap::new(), &tags).unwrap();
+        let seagrass = expanded(&empty, "minecraft:seagrass_simple");
+        assert_eq!(seagrass["feature"]["type"], "minecraft:simple_block");
+        assert_eq!(
+            seagrass["feature"]["to_place"]["state"]["Name"],
+            "minecraft:seagrass"
+        );
+        assert_eq!(seagrass["placement"][0]["type"], "minecraft:carving_mask");
+        assert_eq!(seagrass["placement"][0]["step"], "liquid");
+        assert!(
+            empty
+                .placed_feature(r#""minecraft:seagrass_short""#)
+                .is_err()
+        );
+        // A pack's own definition wins.
+        let placed = BTreeMap::from([(
+            "minecraft:seagrass_simple".to_owned(),
+            r#"{"feature":{"type":"minecraft:no_op"},"placement":[]}"#.to_owned(),
+        )]);
+        let pack = FeatureCatalog::from_resources(&BTreeMap::new(), &placed, &tags).unwrap();
+        let seagrass = expanded(&pack, "minecraft:seagrass_simple");
+        assert_eq!(seagrass["feature"]["type"], "minecraft:no_op");
     }
 }

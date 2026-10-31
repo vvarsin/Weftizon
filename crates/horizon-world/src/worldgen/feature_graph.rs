@@ -92,6 +92,15 @@ pub enum FeatureDefinition {
     ModFall(mod_features::ModFallFeature),
     ModPatch(mod_features::ModPatchFeature),
     ModPlant(mod_features::ModPlantFeature),
+    /// 1.20.1's `random_patch` (26.3 composes patches from count and offset
+    /// modifiers instead): `tries` positions spread around the origin, each
+    /// running the nested placed feature.
+    RandomPatch {
+        tries: i32,
+        xz_spread: i32,
+        y_spread: i32,
+        feature: Box<PlacedFeatureDefinition>,
+    },
     Template(Box<super::structure::features::TemplateFeature>),
     Fossil(Box<super::structure::features::FossilFeature>),
     WeightedChoice(OptionalWeightedList<PlacedFeatureDefinition>),
@@ -693,13 +702,26 @@ impl FeatureDefinition {
             )
             .map(Self::ModFall),
             "minecraft:random_patch" => {
-                mod_features::ModPatchFeature::decode(
-                    json,
-                    blocks.ok_or(DecodeError::Field("random patch bindings"))?,
-                    depth,
-                    remaining,
-                )
-                .map(Self::ModPatch)
+                // RandomPatchConfiguration: POSITIVE_INT tries (128) and
+                // NON_NEGATIVE_INT spreads (7, 3).
+                let int = |name, default, low| {
+                    super::optional(&object, name)
+                        .map(|raw| super::int_range(raw, name, low, i32::MAX - 1))
+                        .transpose()
+                        .map(|value| value.unwrap_or(default))
+                };
+                Ok(Self::RandomPatch {
+                    tries: int("tries", 128, 1)?,
+                    xz_spread: int("xz_spread", 7, 0)?,
+                    y_spread: int("y_spread", 3, 0)?,
+                    feature: Box::new(PlacedFeatureDefinition::decode(
+                        required(&object, "feature")?.get(),
+                        depth + 1,
+                        remaining,
+                        empty_tags,
+                        blocks,
+                    )?),
+                })
             }
             "the_afterdark:waterloggable_random_patch" => mod_features::ModPatchFeature::decode(
                 json,
@@ -950,6 +972,31 @@ impl FeatureDefinition {
             Self::ModFall(feature) => feature.place(world, random, origin),
             Self::ModPatch(feature) => feature.place(world, random, origin),
             Self::ModPlant(feature) => feature.place(world, random, origin),
+            Self::RandomPatch {
+                tries,
+                xz_spread,
+                y_spread,
+                feature,
+            } => {
+                let (xz, y) = (xz_spread + 1, y_spread + 1);
+                let mut placed = false;
+                for _ in 0..*tries {
+                    if run.remaining.get() == 0 {
+                        return Err(FeatureExecutionError::WorkLimit);
+                    }
+                    run.remaining.set(run.remaining.get() - 1);
+                    let dx = random.next_int_bound(xz)? - random.next_int_bound(xz)?;
+                    let dy = random.next_int_bound(y)? - random.next_int_bound(y)?;
+                    let dz = random.next_int_bound(xz)? - random.next_int_bound(xz)?;
+                    let position = [
+                        origin[0].wrapping_add(dx),
+                        origin[1].wrapping_add(dy),
+                        origin[2].wrapping_add(dz),
+                    ];
+                    placed |= feature.place_in(&mut placer, world, random, position, run)?;
+                }
+                Ok(placed)
+            }
             Self::Template(feature) => feature
                 .place(world, random, origin)
                 .map_err(FeatureExecutionError::Query),
@@ -1196,6 +1243,114 @@ impl FeatureDefinition {
                 }
                 fallback.place_in(&mut placer, world, random, origin, run)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        anchor::WorldGenerationContext, feature_catalog::FeatureCatalog, tags::TagDefinitions,
+    };
+    use super::*;
+    use crate::{heightmap::HeightmapType, registry::BlockStateId};
+    use horizon_core::random::LegacyRandom;
+    use std::collections::BTreeMap;
+
+    /// Air everywhere.
+    struct Air;
+    impl FeatureWorld for Air {
+        type Error = std::convert::Infallible;
+        fn block(&mut self, _: [i32; 3]) -> Result<BlockStateId, Self::Error> {
+            Ok(BlockStateId(0))
+        }
+        fn set_block(&mut self, _: [i32; 3], _: BlockStateId, _: i32) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+    impl PlacementContext for Air {
+        fn world_seed(&mut self) -> Result<i64, PlacementQueryError> {
+            Ok(0)
+        }
+        fn block_state(&mut self, _: [i32; 3]) -> Result<BlockStateId, PlacementQueryError> {
+            Ok(BlockStateId(0))
+        }
+        fn generation(&self) -> WorldGenerationContext {
+            WorldGenerationContext::new(-64, 384, 63)
+        }
+        fn min_y(&mut self) -> Result<i32, PlacementQueryError> {
+            Ok(-64)
+        }
+        fn height(&mut self, _: HeightmapType, _: i32, _: i32) -> Result<i32, PlacementQueryError> {
+            Err(PlacementQueryError::Unavailable)
+        }
+    }
+
+    #[test]
+    fn legacy_random_patch_draws_its_offsets_then_runs_its_feature_per_try() {
+        let leaf = r#"{"feature":{"type":"minecraft:no_op","config":{}},"placement":[]}"#;
+        let placed = BTreeMap::from([("horizon:leaf".to_owned(), leaf.to_owned())]);
+        let catalog =
+            FeatureCatalog::from_resources(&BTreeMap::new(), &placed, &TagDefinitions::default())
+                .unwrap();
+        let blocks = FeatureBlocks {
+            air: BlockStateId(0),
+            stone: BlockStateId(0),
+            cobblestone: BlockStateId(0),
+            end_stone: BlockStateId(0),
+            obsidian: BlockStateId(0),
+        };
+        // 1.20.1 writes the settings under `config`; the feature may be named.
+        let patch = catalog
+            .feature(r#"{"type":"minecraft:random_patch","config":{"tries":5,"xz_spread":3,"y_spread":0,"feature":"horizon:leaf"}}"#)
+            .unwrap();
+        assert!(matches!(
+            patch,
+            FeatureDefinition::RandomPatch {
+                tries: 5,
+                xz_spread: 3,
+                y_spread: 0,
+                ..
+            }
+        ));
+        let mut random = LegacyRandom::new(7);
+        assert!(
+            patch
+                .place(&mut Air, &mut random, [0, 64, 0], blocks)
+                .unwrap()
+        );
+        // nextInt(xz+1) - nextInt(xz+1) for x, y and z on every try.
+        let mut expected = LegacyRandom::new(7);
+        for _ in 0..5 {
+            for bound in [4, 4, 1, 1, 4, 4] {
+                expected.next_int_bound(bound).unwrap();
+            }
+        }
+        assert_eq!(random.next_long(), expected.next_long());
+        // The codec's defaults; a patch whose feature never places fails.
+        let patch = catalog
+            .feature(r#"{"type":"minecraft:random_patch","feature":{"feature":{"type":"minecraft:no_op"},"placement":[{"type":"minecraft:block_predicate_filter","predicate":{"type":"minecraft:not","predicate":{"type":"minecraft:true"}}}]}}"#)
+            .unwrap();
+        assert!(matches!(
+            patch,
+            FeatureDefinition::RandomPatch {
+                tries: 128,
+                xz_spread: 7,
+                y_spread: 3,
+                ..
+            }
+        ));
+        assert!(
+            !patch
+                .place(&mut Air, &mut LegacyRandom::new(7), [0, 64, 0], blocks)
+                .unwrap()
+        );
+        for json in [
+            r#"{"type":"minecraft:random_patch","tries":0,"feature":"horizon:leaf"}"#,
+            r#"{"type":"minecraft:random_patch","xz_spread":-1,"feature":"horizon:leaf"}"#,
+            r#"{"type":"minecraft:random_patch","tries":4}"#,
+        ] {
+            assert!(catalog.feature(json).is_err(), "{json}");
         }
     }
 }

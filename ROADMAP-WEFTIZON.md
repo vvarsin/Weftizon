@@ -37,8 +37,9 @@ Done / substantially done:
 - auto names for items, blocks, entities and spawn eggs
 - events/questions/damage chains API 18 (Warsin finished and pushed)
 - TheAfterdark content port loads, custom dimension enters, legacy carver bug fixed
-- custom TheAfterdark worldgen feature types partially implemented; skipped placed features
-  reduced from 62 to 8; legacy 1.20.1 block-state/provider/placement aliases accepted
+- custom TheAfterdark worldgen feature types implemented; skipped placed features reduced from
+  62 to 0; legacy 1.20.1 block-state (DataFixer), provider, placement, `random_patch` and removed
+  vanilla feature (`seagrass_simple`) support
 - modder docs and porting-gotchas docs
 
 Still missing for full Weft power:
@@ -98,8 +99,9 @@ Not done:
   can stay decorative unless gameplay parity is wanted
 - fire/lava/dripstone/grass-burn mixins
 - catalyst loot modification
-- 8 custom/legacy placed features still skipped (`amethyst_spiral`, coral patches, two
-  state-provider edge cases, a missing legacy seagrass feature reference)
+- the custom feature types (`spiral`, blobs, pillars, ponds, falls, cave plants) are clean-room
+  approximations of TheAfterdark's Java generators, not exact ports; every placed feature its
+  biomes list now decodes (0 skipped at load, from 8)
 - config behavior
 - full terrain/biome visual parity in the custom dimension
 

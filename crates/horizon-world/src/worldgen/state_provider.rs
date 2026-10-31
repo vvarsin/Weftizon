@@ -127,9 +127,7 @@ impl<'r> StateProviderBindings<'r> {
         })
     }
     fn state(&self, json: &str, full: bool) -> Result<BlockStateId, DecodeError> {
-        self.codec
-            .decode(json, full)
-            .map_err(|e| DecodeError::Registry(e.to_string()))
+        decode_state(&self.codec, json, full)
     }
     fn rotations(&self) -> Result<Rotations, DecodeError> {
         self.rotations
@@ -353,6 +351,15 @@ impl BlockStateProvider {
         } else {
             return Err(DecodeError::Field("block state provider type"));
         };
+        // 1.20.1's BlockStateProviderType names, same fields as 26.3's.
+        let kind = match kind.as_str() {
+            "minecraft:noise_provider" => "minecraft:noise".to_owned(),
+            "minecraft:noise_threshold_provider" => "minecraft:noise_threshold".to_owned(),
+            "minecraft:dual_noise_provider" => "minecraft:dual_noise".to_owned(),
+            "minecraft:rotated_block_provider" => "minecraft:rotated".to_owned(),
+            "minecraft:randomized_int_state_provider" => "minecraft:randomized_int".to_owned(),
+            _ => kind,
+        };
         Ok(Self(match kind.as_str() {
             "minecraft:rule_based" | "minecraft:rule_based_state_provider" => {
                 let fallback = optional(&object, "fallback")
@@ -546,6 +553,69 @@ impl BlockStateProvider {
     }
 }
 
+/// 1.20.1's DataVersion: the version the legacy data-pack aliases read.
+const LEGACY_DATA_VERSION: i32 = 3465;
+
+/// A block state, or, when the pinned registry has no such state, the same state
+/// as 1.20.1 data writes it, brought to 26.3 by the DataFixer's block-state fixes
+/// (`grass` became `short_grass`, `chain` `iron_chain`). The 26.3 reading wins.
+pub(crate) fn decode_state(
+    codec: &BlockStateJsonCodec<'_>,
+    json: &str,
+    full: bool,
+) -> Result<BlockStateId, DecodeError> {
+    codec.decode(json, full).or_else(|error| {
+        legacy_state(json, full)
+            .and_then(|fixed| codec.decode(&fixed, full).ok())
+            .ok_or_else(|| DecodeError::Registry(error.to_string()))
+    })
+}
+
+fn legacy_state(json: &str, full: bool) -> Option<String> {
+    use crate::datafix::dynamic::{as_str, empty_map, get, map, set, string};
+    use serde_json::Value;
+    let value: Value = serde_json::from_str(json).ok()?;
+    let (name, properties) = match &value {
+        Value::String(name) if !full => (name.as_str(), None),
+        Value::Object(o) => (
+            o.get("id").or_else(|| o.get("Name"))?.as_str()?,
+            o.get("properties")
+                .or_else(|| o.get("Properties"))
+                .and_then(Value::as_object),
+        ),
+        _ => return None,
+    };
+    let mut tag = empty_map();
+    set(&mut tag, "Name", string(name));
+    if let Some(properties) = properties {
+        let mut values = empty_map();
+        for (key, value) in properties {
+            if let Some(value) = value.as_str() {
+                set(&mut values, key, string(value));
+            }
+        }
+        set(&mut tag, "Properties", values);
+    }
+    crate::datafix::update(
+        crate::datafix::schema::Ty::BlockState,
+        &mut tag,
+        LEGACY_DATA_VERSION,
+        crate::datafix::CURRENT,
+    );
+    // The 26.x fixes also rename the fields to `id` and `properties`.
+    let field = |current, old| get(&tag, current).or_else(|| get(&tag, old));
+    let mut fixed = serde_json::Map::new();
+    fixed.insert("id".into(), Value::String(as_str(field("id", "Name"))?));
+    if let Some(values) = field("properties", "Properties").and_then(map) {
+        let mut properties = serde_json::Map::new();
+        for (key, value) in values {
+            properties.insert(key.to_string().ok()?, Value::String(as_str(Some(value))?));
+        }
+        fixed.insert("properties".into(), Value::Object(properties));
+    }
+    Some(Value::Object(fixed).to_string())
+}
+
 /// Blocks a bound block tag may list (8,192 before content mods, vanilla's
 /// tags fit well within it): content mods' blocks join the shared tags
 /// (`mineable/pickaxe` takes every stone block of a pack).
@@ -594,4 +664,92 @@ fn rotation_table(registry: &BlockRegistry) -> Result<Rotations, String> {
         result.push(rotated);
     }
     Ok(Arc::new(result))
+}
+
+/// A registry of `blocks`, each with every combination of its property values
+/// (the first combination is the default), for the worldgen unit tests.
+#[cfg(test)]
+pub(crate) fn test_registry(blocks: &[(&str, &[(&str, &[&str])])]) -> BlockRegistry {
+    use serde_json::{Map, Value, json};
+    let mut rows = Vec::new();
+    let mut defaults = Map::new();
+    for (name, properties) in blocks {
+        defaults.insert((*name).into(), rows.len().into());
+        let mut states = vec![Map::new()];
+        for (key, values) in *properties {
+            states = (states.iter())
+                .flat_map(|state| {
+                    values.iter().map(move |value| {
+                        let mut state = state.clone();
+                        state.insert((*key).into(), Value::from(*value));
+                        state
+                    })
+                })
+                .collect();
+        }
+        for state in states {
+            rows.push(
+                json!([name, name.ends_with("air"), false, "", {"id": name, "properties": state}]),
+            );
+        }
+    }
+    let facts = json!({"states": rows, "defaults": defaults});
+    BlockRegistry::from_facts_json(facts.to_string().as_bytes()).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn states_of_1_20_1_data_decode_through_the_datafixer() {
+        let registry = test_registry(&[
+            ("minecraft:stone", &[]),
+            ("minecraft:short_grass", &[]),
+            ("minecraft:iron_chain", &[("axis", &["y", "x", "z"])]),
+        ]);
+        let bindings =
+            StateProviderBindings::new(&registry, BTreeSet::new(), &BTreeMap::new()).unwrap();
+        let state = |json: &str, full| decode_state(&bindings.codec, json, full);
+        let current = |json: &str| bindings.codec.decode(json, true).unwrap();
+        let grass = current(r#"{"id":"minecraft:short_grass"}"#);
+        // 1.20.3 renamed grass, 1.21.9 chain; properties carry over.
+        assert_eq!(state(r#"{"Name":"minecraft:grass"}"#, true).unwrap(), grass);
+        assert_eq!(state(r#""minecraft:grass""#, false).unwrap(), grass);
+        assert_eq!(
+            state(
+                r#"{"Name":"minecraft:chain","Properties":{"axis":"x"}}"#,
+                true
+            )
+            .unwrap(),
+            current(r#"{"id":"minecraft:iron_chain","properties":{"axis":"x"}}"#)
+        );
+        assert!(state(r#"{"Name":"minecraft:not_a_block"}"#, true).is_err());
+        // A bare name is not a full state, whatever its version.
+        assert!(state(r#""minecraft:grass""#, true).is_err());
+        assert!(state(r#""minecraft:stone""#, true).is_err());
+    }
+
+    #[test]
+    fn provider_types_of_1_20_1_decode_under_their_26_3_names() {
+        let registry = test_registry(&[
+            ("minecraft:stone", &[]),
+            ("minecraft:short_grass", &[]),
+            ("minecraft:iron_chain", &[("axis", &["y", "x", "z"])]),
+        ]);
+        let bindings =
+            StateProviderBindings::new(&registry, BTreeSet::new(), &BTreeMap::new()).unwrap();
+        for json in [
+            r#"{"type":"minecraft:weighted_state_provider","entries":[{"weight":1,"data":{"Name":"minecraft:grass"}}]}"#,
+            r#"{"type":"minecraft:randomized_int_state_provider","property":"age","values":{"type":"minecraft:uniform","value":{"min_inclusive":12,"max_inclusive":25}},"source":{"type":"minecraft:simple_state_provider","state":{"Name":"minecraft:stone"}}}"#,
+            r#"{"type":"minecraft:rotated_block_provider","state":{"Name":"minecraft:chain","Properties":{"axis":"y"}}}"#,
+        ] {
+            assert!(
+                BlockStateProvider::from_json(json, &bindings).is_ok(),
+                "{json}"
+            );
+        }
+        let unknown = r#"{"type":"minecraft:randomized_int_state_provider","property":"age","values":1,"source":{"Name":"minecraft:not_a_block"}}"#;
+        assert!(BlockStateProvider::from_json(unknown, &bindings).is_err());
+    }
 }

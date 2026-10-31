@@ -57,6 +57,11 @@ pub enum PlacementModifier {
     RandomChance(f32),
     Fixed(Vec<[i32; 3]>),
     RandomlySelected(Vec<Self>),
+    /// 1.20.1's `carving_mask` with the `liquid` step (26.3 keeps no carving
+    /// masks). Vanilla stopped shipping liquid carvers in 1.18 and a pack's
+    /// legacy liquid carvers run in the single carving pass here, so the mask
+    /// holds no positions, as it does in 1.20.1 for packs with air carvers only.
+    LegacyLiquidCarvingMask,
 }
 #[derive(Debug)]
 pub enum PlacementError<E> {
@@ -277,6 +282,13 @@ impl PlacementModifier {
                         .map(|v| Self::decode_with_blocks(v.get(), depth + 1, remaining, blocks))
                         .collect::<Result<_, _>>()?,
                 ))
+            }
+            "minecraft:carving_mask" => {
+                let step: String = serde_json::from_str(required(&object, "step")?.get())?;
+                match step.as_str() {
+                    "liquid" => Ok(Self::LegacyLiquidCarvingMask),
+                    _ => Err(DecodeError::Field("carving mask step (only liquid)")),
+                }
             }
             _ => Err(DecodeError::Field("placement modifier type")),
         }
@@ -504,7 +516,43 @@ impl PlacementModifier {
                 let index = random.next_int_bound(placements.len() as i32)? as usize;
                 placements[index].modify_inner(context, random, position, emit, remaining)?;
             }
+            Self::LegacyLiquidCarvingMask => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_liquid_carving_mask_holds_no_positions() {
+        let mask =
+            PlacementModifier::from_json(r#"{"type":"minecraft:carving_mask","step":"liquid"}"#)
+                .unwrap();
+        let mut random = horizon_core::random::LegacyRandom::new(1);
+        let mut emitted = 0;
+        mask.modify(
+            WorldGenerationContext::new(-64, 384, 63),
+            &mut random,
+            [0, 0, 0],
+            |_, _| {
+                emitted += 1;
+                Ok::<(), ()>(())
+            },
+        )
+        .unwrap();
+        assert_eq!(emitted, 0);
+        assert_eq!(
+            random.next_long(),
+            horizon_core::random::LegacyRandom::new(1).next_long()
+        );
+        for json in [
+            r#"{"type":"minecraft:carving_mask","step":"air"}"#,
+            r#"{"type":"minecraft:carving_mask"}"#,
+        ] {
+            assert!(PlacementModifier::from_json(json).is_err(), "{json}");
+        }
     }
 }

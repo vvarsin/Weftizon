@@ -124,9 +124,22 @@ What did not work:
   `waterloggable_random_patch`, and cave plants. The port now loads the 1.20.1
   `worldgen/configured_feature` folder and flattens its `config` object; legacy `Name`/`Properties`
   block states, nested provider `value` objects, and `random_offset` placement modifiers are
-  accepted as aliases. From 62 skipped placed features the count is now 8; the remaining ones are
-  `amethyst_spiral`, two state-provider edge cases, the coral patches, and a missing
-  26.3 feature reference for the legacy `minecraft:seagrass_simple`.
+  accepted as aliases. From 62 skipped placed features the count went to 8, and now to 0:
+  - 1.20.1 block states the 26.3 registry lacks go through the real DataFixer from 1.20.1
+    (DataVersion 3465): `minecraft:grass` becomes `short_grass` (TheAfterdark's `calcite`
+    vegetation names it), `chain` becomes `iron_chain`. Bare block names in mod feature configs
+    (`validBlocks`) are read as names, not as JSON (`amethyst_spiral` failed on that).
+  - 1.20.1 provider type names (`randomized_int_state_provider`, `rotated_block_provider`,
+    `noise_provider`, `noise_threshold_provider`, `dual_noise_provider`) read as their 26.3 types
+    (`lush_cave_vines`' tip layer).
+  - `minecraft:random_patch` is 1.20.1's own algorithm (26.3 removed the type): `tries` positions
+    at `nextInt(spread+1) - nextInt(spread+1)` per axis, each running the nested placed feature,
+    which may be named. The four cave coral patches use it.
+  - Vanilla features 26.3 removed are read from 1.20.1's definitions when a pack names them and
+    defines none: `minecraft:seagrass_simple`. It sits behind 1.20.1's `carving_mask` for the
+    `liquid` step, which is always empty here (vanilla has had no liquid carvers since 1.18, and a
+    pack's legacy `liquid` carvers run in the single 26.3 carving pass), so it places nothing, as in
+    1.20.1 for packs with only `air` carvers. The `air` step is still refused.
 - **Teleport block behaviour.** `TeleportBlockEntity` and the teleport logic are Java code.
   The content block is only a static block; it needs a native block-entity mod.
 - **Old structure path.** The mod uses `data/the_afterdark/structures/` (plural); Horizon's
@@ -135,8 +148,9 @@ What did not work:
 - **1.20.1 item models** need 26.3 item definitions (`assets/<ns>/items/<name>.json`) in
   addition to `models/item/<name>.json`; the port added them.
 
-So the data/assets port is clean, the dimension loads, and most custom terrain features now
-run. What remains is teleport/catalyst behaviour and a handful of special worldgen features.
+So the data/assets port is clean, the dimension loads, and every placed feature its biomes list
+decodes. What remains is teleport/catalyst behaviour and exact parity of TheAfterdark's own
+feature generators, which are clean-room approximations.
 The Teleport Catalyst and Teleport Block are data-only decorative/semantic content: entering the
 dimension already works with `/execute in` and movement with `/tp`. A native teleport block
 entity is optional for gameplay parity, not required for terrain or dimension entry.

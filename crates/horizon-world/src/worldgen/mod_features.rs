@@ -17,41 +17,33 @@ fn value(raw: &RawValue) -> Result<Value, DecodeError> {
     serde_json::from_str(raw.get()).map_err(DecodeError::from)
 }
 
+fn decode_state(
+    json: &str,
+    full: bool,
+    bindings: &FeatureBlockBindings<'_>,
+) -> Result<BlockStateId, DecodeError> {
+    super::state_provider::decode_state(&bindings.codec, json, full)
+}
+
 fn state_value(
     v: &Value,
     bindings: &FeatureBlockBindings<'_>,
 ) -> Result<BlockStateId, DecodeError> {
     match v {
-        Value::String(name) => bindings
-            .codec
-            .decode(name, false)
-            .map_err(|e| DecodeError::Registry(e.to_string())),
+        // The codec reads JSON: a bare name goes in quoted.
+        Value::String(_) => decode_state(&v.to_string(), false, bindings),
         Value::Object(o) => {
-            if let Some(name) = o.get("Name").and_then(Value::as_str) {
-                let mut copy = v.clone();
-                copy["id"] = Value::String(name.to_owned());
-                copy.as_object_mut().unwrap().remove("Name");
-                if let Some(properties) = o.get("Properties").and_then(Value::as_object) {
-                    copy["properties"] = Value::Object(properties.clone());
-                    copy.as_object_mut().unwrap().remove("Properties");
-                }
-                let text = copy.to_string();
-                bindings
-                    .codec
-                    .decode(&text, true)
-                    .map_err(|e| DecodeError::Registry(e.to_string()))
-            } else if o.get("id").and_then(Value::as_str).is_some() {
-                bindings
-                    .codec
-                    .decode(&v.to_string(), true)
-                    .map_err(|e| DecodeError::Registry(e.to_string()))
+            if o.get("Name").and_then(Value::as_str).is_some()
+                || o.get("id").and_then(Value::as_str).is_some()
+            {
+                decode_state(&v.to_string(), true, bindings)
             } else if let Some(fallback) = o.get("fallback") {
                 state_value(fallback, bindings)
             } else if let Some(kind) = o.get("type").and_then(Value::as_str) {
                 match kind {
                     "minecraft:simple_state_provider" => state_value(
                         o.get("state")
-                            .ok_or_else(|| DecodeError::Field("simple provider state"))?,
+                            .ok_or(DecodeError::Field("simple provider state"))?,
                         bindings,
                     ),
                     "minecraft:weighted_state_provider"
@@ -59,31 +51,25 @@ fn state_value(
                         let entries = o
                             .get("entries")
                             .and_then(Value::as_array)
-                            .ok_or_else(|| DecodeError::Field("weighted provider entries"))?;
+                            .ok_or(DecodeError::Field("weighted provider entries"))?;
                         let first = entries
                             .first()
-                            .ok_or_else(|| DecodeError::Field("empty weighted provider"))?;
+                            .ok_or(DecodeError::Field("empty weighted provider"))?;
                         let data = first
                             .get("data")
-                            .ok_or_else(|| DecodeError::Field("weighted provider data"))?;
+                            .ok_or(DecodeError::Field("weighted provider data"))?;
                         state_value(data, bindings)
                     }
                     "minecraft:rule_based_state_provider" => {
                         let fallback = o
                             .get("fallback")
-                            .ok_or_else(|| DecodeError::Field("rule provider fallback"))?;
+                            .ok_or(DecodeError::Field("rule provider fallback"))?;
                         state_value(fallback, bindings)
                     }
-                    _ => bindings
-                        .codec
-                        .decode(&v.to_string(), true)
-                        .map_err(|e| DecodeError::Registry(e.to_string())),
+                    _ => decode_state(&v.to_string(), true, bindings),
                 }
             } else {
-                bindings
-                    .codec
-                    .decode(&v.to_string(), true)
-                    .map_err(|e| DecodeError::Registry(e.to_string()))
+                decode_state(&v.to_string(), true, bindings)
             }
         }
         _ => Err(DecodeError::Field("block state")),
@@ -130,7 +116,10 @@ fn sample_int(provider: &IntProvider, random: &mut impl RandomSource) -> Result<
     provider.sample(random)
 }
 
-fn nested_to_place(raw: &RawValue, bindings: &FeatureBlockBindings<'_>) -> Result<BlockStateId, DecodeError> {
+fn nested_to_place(
+    raw: &RawValue,
+    bindings: &FeatureBlockBindings<'_>,
+) -> Result<BlockStateId, DecodeError> {
     let mut value = value(raw)?;
     for _ in 0..8 {
         if let Some(to_place) = value.get("to_place") {
@@ -193,15 +182,15 @@ impl ModBlobFeature {
         let material_raw = super::optional(&object, "blobMaterial")
             .or_else(|| super::optional(&object, "stemMaterial"))
             .or_else(|| super::optional(&object, "material"))
-            .ok_or_else(|| DecodeError::Field("mod blob material"))?;
+            .ok_or(DecodeError::Field("mod blob material"))?;
         let material = block_state(material_raw, bindings)?;
         let supports = supports_from(&object, bindings)?;
         let width_raw = super::optional(&object, "blobWidth")
             .or_else(|| super::optional(&object, "radius"))
-            .ok_or_else(|| DecodeError::Field("mod blob width"))?;
+            .ok_or(DecodeError::Field("mod blob width"))?;
         let height_raw = super::optional(&object, "blobHeight")
             .or_else(|| super::optional(&object, "height"))
-            .ok_or_else(|| DecodeError::Field("mod blob height"))?;
+            .ok_or(DecodeError::Field("mod blob height"))?;
         let mass = super::optional(&object, "blobMass")
             .or_else(|| super::optional(&object, "blob_mass"))
             .map(int_provider)
@@ -243,7 +232,7 @@ impl ModBlobFeature {
             for _ in 0..16 {
                 let below = [base[0], base[1].wrapping_sub(1), base[2]];
                 let state = block(world, below)?;
-                if self.supports.iter().any(|s| *s == state) {
+                if self.supports.contains(&state) {
                     found = true;
                     break;
                 }
@@ -512,7 +501,7 @@ impl ModPatchFeature {
     ) -> Result<bool, FeatureExecutionError<W::Error>> {
         let tries = sample_int(&self.tries, random).map_err(FeatureExecutionError::Random)?;
         let mut remaining = 1_048_576;
-        for _ in 0..tries.max(0).min(1024) {
+        for _ in 0..tries.clamp(0, 1024) {
             if remaining == 0 {
                 return Err(FeatureExecutionError::WorkLimit);
             }
@@ -608,4 +597,53 @@ pub fn pillar_material(kind: &str) -> Result<&'static str, DecodeError> {
         }
     };
     Ok(material)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        feature_catalog::FeatureCatalog, feature_graph::FeatureDefinition,
+        state_provider::test_registry, tags::TagDefinitions,
+    };
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn blob_materials_and_supports_read_bare_names_and_legacy_states() {
+        let registry = test_registry(&[
+            ("minecraft:air", &[]),
+            ("minecraft:cave_air", &[]),
+            ("minecraft:void_air", &[]),
+            ("minecraft:smooth_basalt", &[]),
+            ("minecraft:deepslate", &[]),
+            ("minecraft:amethyst_block", &[]),
+            ("minecraft:short_grass", &[]),
+        ]);
+        let bindings = FeatureBlockBindings::new(&registry, BTreeSet::new()).unwrap();
+        let catalog = FeatureCatalog::from_resources(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &TagDefinitions::default(),
+        )
+        .unwrap();
+        let state = |name: &str| registry.default_state(name).unwrap();
+        // TheAfterdark's amethyst_spiral, as its 1.20.1 data writes it.
+        let spiral = r#"{"type":"the_afterdark:spiral","config":{"validBlocks":["minecraft:smooth_basalt","minecraft:deepslate"],"stemMaterial":{"Name":"minecraft:amethyst_block"},"leafMaterial":{"Name":"minecraft:air"},"blobMass":{"type":"minecraft:uniform","value":{"min_inclusive":26,"max_inclusive":38}},"blobWidth":{"type":"minecraft:uniform","value":{"min_inclusive":12,"max_inclusive":18}},"blobHeight":{"type":"minecraft:uniform","value":{"min_inclusive":2,"max_inclusive":3}}}}"#;
+        let FeatureDefinition::ModBlob(blob) =
+            catalog.feature_with_blocks(spiral, &bindings).unwrap()
+        else {
+            panic!("spiral is a blob");
+        };
+        assert_eq!(blob.material, state("minecraft:amethyst_block"));
+        assert_eq!(
+            blob.supports,
+            [
+                state("minecraft:smooth_basalt"),
+                state("minecraft:deepslate")
+            ]
+        );
+        let grass = state_value(&serde_json::json!("minecraft:grass"), &bindings).unwrap();
+        assert_eq!(grass, state("minecraft:short_grass"));
+        assert!(state_value(&serde_json::json!("minecraft:not_a_block"), &bindings).is_err());
+    }
 }
