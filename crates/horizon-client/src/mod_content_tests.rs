@@ -1362,6 +1362,164 @@ fn loot_additions_append_to_named_table() {
     fs::remove_dir_all(scratch).unwrap();
 }
 
+/// Tools, tiers, tags and drops a declaration sets reach the game's tags,
+/// tool checks and loot as vanilla's own blocks' do.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn declared_tools_tags_and_drops_reach_the_game() {
+    use horizon_core::random::LegacyRandom;
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch =
+        std::env::temp_dir().join(format!("horizon-content-drops-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("gems"),
+        &[
+            ("horizon-mod.toml", &manifest("gems", "")),
+            (
+                "data/gems/horizon/block/ruby_ore.json",
+                r#"{"template": "minecraft:dirt", "mineable": "pickaxe", "tool_tier": "iron",
+                    "tags": ["c:ores/ruby"],
+                    "drops": {"item": "gems:ruby", "count": [2, 3], "silk_touch": true}}"#,
+            ),
+            (
+                "data/gems/horizon/block/ruby_log.json",
+                r#"{"template": "minecraft:oak_log", "template_tags": true, "drops": "self",
+                    "properties": {"replaceable": true}}"#,
+            ),
+            (
+                "data/gems/horizon/block/ghost_glass.json",
+                r#"{"template": "minecraft:glass", "drops": "nothing"}"#,
+            ),
+            (
+                "data/gems/horizon/item/ruby.json",
+                r#"{"template": "minecraft:diamond", "tags": ["c:gems/ruby", "gems:shiny"]}"#,
+            ),
+            (
+                "data/gems/horizon/item/ruby_sword.json",
+                r#"{"template": "minecraft:iron_sword", "template_tags": true}"#,
+            ),
+            // The mod's own tag file and a declaration add to the same tag.
+            (
+                "data/c/tags/item/gems/ruby.json",
+                r#"{"values": ["minecraft:emerald"]}"#,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let assets = Assets::load(&root).unwrap();
+    let registry = assets.registry;
+    let facts = BlockFacts::load(&root, registry).unwrap();
+    let items = Items::load(&root, registry, &facts, &PackOverlay::NONE).unwrap();
+    let in_block_tag =
+        |tag: &str, id: &str| items.block_tags.get(tag).is_some_and(|t| t.contains(id));
+    let in_item_tag =
+        |tag: &str, id: &str| items.item_tags.get(tag).is_some_and(|t| t.contains(id));
+
+    // Tools and tiers are vanilla's tags, and a tier needs the tool for drops.
+    assert!(in_block_tag("minecraft:mineable/pickaxe", "gems:ruby_ore"));
+    assert!(in_block_tag("minecraft:needs_iron_tool", "gems:ruby_ore"));
+    assert!(in_block_tag(
+        "minecraft:incorrect_for_stone_tool",
+        "gems:ruby_ore"
+    ));
+    assert!(in_block_tag("c:ores/ruby", "gems:ruby_ore"));
+    let ore = registry.default_state("gems:ruby_ore").unwrap();
+    let dirt = registry.default_state("minecraft:dirt").unwrap();
+    assert!(facts.get(ore).requires_tool && !facts.get(dirt).requires_tool);
+    let pick = |name: &str| crate::items::ItemStack::new(name, 1);
+    let (iron, stone_pick) = (
+        pick("minecraft:iron_pickaxe"),
+        pick("minecraft:stone_pickaxe"),
+    );
+    assert!(items.correct_for_drops(Some(&iron), "gems:ruby_ore"));
+    assert!(!items.correct_for_drops(Some(&stone_pick), "gems:ruby_ore"));
+    assert!(items.mining_speed(Some(&iron), "gems:ruby_ore") > 1.0);
+    // Template tags: the log is an oak log for blocks and as an item.
+    assert!(in_block_tag("minecraft:oak_logs", "gems:ruby_log"));
+    assert!(in_block_tag("minecraft:logs", "gems:ruby_log"));
+    assert!(in_item_tag("minecraft:oak_logs", "gems:ruby_log"));
+    assert!(in_item_tag("minecraft:swords", "gems:ruby_sword"));
+    assert!(!in_item_tag("minecraft:swords", "gems:ruby"));
+    let log = registry.default_state("gems:ruby_log").unwrap();
+    assert!(facts.get(log).replaceable);
+    assert!(!in_block_tag("minecraft:oak_logs", "gems:ruby_ore"));
+    // Item tags merge with the mod's own file for the same tag.
+    assert_eq!(
+        items.item_tag_order["c:gems/ruby"],
+        ["minecraft:emerald", "gems:ruby"]
+    );
+    assert!(in_item_tag("gems:shiny", "gems:ruby"));
+
+    // Drops: the generated tables, evaluated by the game's loot.
+    let mut random = LegacyRandom::new(7);
+    for _ in 0..20 {
+        let drops = items.block_drops(registry, ore, Some(&iron), &mut random);
+        let [d] = &drops[..] else { panic!("{drops:?}") };
+        assert_eq!(&*d.item, "gems:ruby");
+        assert!((2..=3).contains(&d.count), "{}", d.count);
+    }
+    let drops = items.block_drops(registry, log, None, &mut random);
+    assert_eq!(
+        drops
+            .iter()
+            .map(|d| (&*d.item, d.count))
+            .collect::<Vec<_>>(),
+        [("gems:ruby_log", 1)]
+    );
+    let glass = registry.default_state("gems:ghost_glass").unwrap();
+    assert!(
+        items
+            .block_drops(registry, glass, None, &mut random)
+            .is_empty()
+    );
+    // With no `drops`, vanilla's rule holds: no table, no drops.
+    assert!(
+        !root
+            .join("data/gems/loot_table/blocks/ruby_block.json")
+            .exists()
+    );
+
+    // Vanilla's own tags and tables keep their entries.
+    assert!(in_block_tag(
+        "minecraft:mineable/pickaxe",
+        "minecraft:stone"
+    ));
+    assert_eq!(
+        fs::read(root.join("data/minecraft/loot_table/blocks/stone.json")).unwrap(),
+        fs::read(base.join("data/minecraft/loot_table/blocks/stone.json")).unwrap()
+    );
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
+/// A drop naming an item nobody registers fails the root with the reason.
+#[test]
+fn declared_drops_name_a_known_item() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch =
+        std::env::temp_dir().join(format!("horizon-content-bad-drop-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("gems"),
+        &[
+            ("horizon-mod.toml", &manifest("gems", "")),
+            (
+                "data/gems/horizon/block/ruby_ore.json",
+                r#"{"template": "minecraft:stone", "drops": {"item": "gems:rubyy"}}"#,
+            ),
+        ],
+    );
+    let e = build(&base, &[m], &scratch.join("root"))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("drops item gems:rubyy is no item"), "{e}");
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
 /// A Weft-style entity mod: files found by the entity's name, a Blockbench
 /// model and animations, a glow mask, a variant, sounds and spawns.
 fn ghost_mod(dir: &Path) -> ContentMod {

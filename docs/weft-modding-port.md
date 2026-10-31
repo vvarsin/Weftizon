@@ -39,10 +39,10 @@ behaviour; do not copy Weft source.
 | Names / handles | `namespace:path` names, handles with ids, generated names | content namespaces; network ids after vanilla's | Foundation (exists) |
 | **Entities** | size, health, speed, category, texture, model, animations, sounds, spawns | **done (phase 1)**: declarations from vanilla templates, Bedrock models and animations, skins, variants, glow, sounds, spawns, loot | 1 ✅ |
 | Entity behaviour | AI goals, attack damage, tick/hurt/death/interact, components, kinematic platforms | goals, animations, hooks, components, solid/kinematic/carry_height done; block decks later | 2 |
-| Blocks | hardness, tool tier, drops, light, render layers, model boxes, collision, states, events, particles | template copies with properties and shapes; native hooks for behaviour | 3 |
+| Blocks | hardness, tool tier, drops, light, render layers, model boxes, collision, states, events, particles | template copies with properties and shapes; tools, tiers, tags and drops as data; native hooks for behaviour | 3 |
 | Items | texture, stack, durability, tools, damage, placed block, wearable, use | template copies with component patches | 3 |
 | Recipes / loot | shaped/shapeless, recipe kinds, loot pools, loot modification | 26.3 data-pack recipes and loot; no loot modifiers | 3 |
-| Components / tags | typed components, per-entity components, tags | vanilla components and tags | 3 |
+| Components / tags | typed components, per-entity components, tags | vanilla components and tags; declarations join tags (`tags`, `template_tags`) | 3 |
 | Events / questions / chains / attributes | batched events, intercepts, value chains, timed attributes | native hooks only | 3 |
 | Commands / World API | typed command builders; blocks, entities, inventories, particles, sounds | native command hooks (API 8) | 3 |
 | Machines | block + block entity + inventory + menu + screen; systems; `core:energy` | block entities (API 15), menus (API 10) | 4 |
@@ -111,8 +111,16 @@ clients without the same mods (they need the same content, as for blocks).
 
 ## 3. Blocks, items and inter-mod behaviour
 
-- Block/item behaviour callbacks: use, place, break, neighbour change, scheduled tick, as hook points
-  with data-driven forms for the common ones (drop table, light, replaceable, tool tier).
+- ✅ Data forms of Weft's block builder (`horizon_mods::content`, `mod_content_tags_drops.rs`):
+  `mineable` and `tool_tier` (vanilla's `mineable/<tool>` and `needs_<tier>_tool` tags, tier turns
+  `requires_tool` on), `tags` on blocks and items, `template_tags` (every vanilla tag the template is in),
+  `drops` (`self`, `nothing`, an item with count, fortune and silk touch, written as vanilla's generated
+  loot tables) and `properties.replaceable`. Players' docs: [mods.md#tools-tags-and-drops](mods.md#tools-tags-and-drops).
+  Tests: `content.rs::blocks_declare_tools_tags_and_drops`, `mod_content_tags_drops.rs` (tables match
+  vanilla's lapis and iron block forms), `mod_content_tests.rs::declared_tools_tags_and_drops_reach_the_game`
+  (tags, tool checks and loot through the game's loaders). Unlike Weft, a block without `drops` or a table
+  drops nothing, so ported mods keep their own tables' meaning.
+- Block/item behaviour callbacks: use, place, break, neighbour change, scheduled tick, as hook points.
 - Spawn eggs for declared entities (`"spawn_egg": {"colors": [..]}` → an item copying a vanilla egg with
   `minecraft:entity_data`). **Done early**: the content root generates `<id>_spawn_egg`, plus a simple
   two-colour egg model/texture from the colours; a custom `item_model` names the mod's own model and texture.

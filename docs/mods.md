@@ -100,6 +100,40 @@ the load instead of doing nothing. Behaviour the game ties to a vanilla
 item's id doesn't come along yet: a copy of the trident doesn't throw
 ([#3305](https://github.com/horizon-rust/horizon/issues/3305)).
 
+#### Tools, tags and drops
+
+A block declaration can say what Weft's block builder says with `mineable`, `needs_tool`, `tag` and `drops`:
+
+```json
+{ "template": "minecraft:stone",
+  "mineable": "pickaxe",
+  "tool_tier": "iron",
+  "tags": ["c:ores/ruby"],
+  "drops": { "item": "ruby:ruby", "count": [1, 2], "fortune": true, "silk_touch": true } }
+```
+
+- `mineable`: `pickaxe`, `axe`, `shovel` or `hoe`, or a list of them. The block joins
+  `minecraft:mineable/<tool>`, so those tools mine it at their speed.
+- `tool_tier`: `stone`, `iron` or `diamond`, the lowest tier that harvests it
+  (`minecraft:needs_<tier>_tool`). It turns `requires_tool` on, as vanilla's blocks of a tier all have it,
+  unless `properties` sets `requires_tool` itself.
+- `tags`: block tags it joins, `<namespace>:<path>` with no `#`, in the mod's namespaces, `minecraft` or `c`.
+  An item declaration has `tags` too, for item tags.
+- `template_tags: true`: it joins every vanilla tag its template is in (an oak log copy is in
+  `minecraft:oak_logs`, so it burns, makes planks and counts as a log; a fence copy connects to fences), and
+  its item every item tag of the template's item. An item declaration has it too (a sword copy is in
+  `minecraft:swords`, so it takes sword enchantments). Off by default: a port's tags come from its own files.
+- `drops`: `"self"` (its item, unless an explosion destroys it), `"nothing"`, or another item:
+  `item`, `count` (a number or `[min, max]`, 1 to 64), `fortune` (Fortune adds to it as for ores) and
+  `silk_touch` (Silk Touch drops the block itself). The game writes it as the block's loot table,
+  `data/<id>/loot_table/blocks/<name>.json`, in the form vanilla's own blocks have, so a mod's table and
+  `drops` for the same block are refused. Without either, the block drops nothing, as a vanilla data pack's
+  block with no table does (Weft's blocks drop themselves by default: write `"drops": "self"`).
+- `properties.replaceable`: placing a block into it replaces it, as for grass and snow layers.
+
+Tags and tiers are entries in the vanilla tags the game already reads, merged after the mod's own tag files;
+vanilla's entries and tables are never changed.
+
 The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods

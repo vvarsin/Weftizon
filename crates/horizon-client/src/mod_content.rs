@@ -688,8 +688,13 @@ impl<'a> Plan<'a> {
         if let Some(v) = p.light {
             row.set("emission", J::Num(v.into()));
         }
-        if let Some(v) = p.requires_tool {
+        // A tool tier means the right tool is needed for drops, as vanilla's
+        // needs_*_tool blocks all are, unless the declaration says otherwise.
+        if let Some(v) = p.requires_tool.or(b.decl.tool_tier.map(|_| true)) {
             row.set("requires_tool", J::Bool(v));
+        }
+        if let Some(v) = p.replaceable {
+            row.set("replaceable", J::Bool(v));
         }
         if let Some(v) = p.friction {
             row.set("friction", J::f64(v as f64));
@@ -1520,6 +1525,18 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     let mut worldgen: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
     let mut additions: BTreeMap<&str, Vec<Addition>> = BTreeMap::new();
     let mut loot_additions: BTreeMap<String, Vec<J>> = BTreeMap::new();
+    // Declarations that join their template's tags need vanilla's tag lists.
+    let wanted = mods.iter().any(|m| {
+        m.content.blocks.iter().any(|b| b.template_tags)
+            || m.content.items.iter().any(|i| i.template_tags)
+    });
+    let block_tags = tags_drops::TemplateTags::read(base, "block", wanted)?;
+    let item_tags = tags_drops::TemplateTags::read(base, "item", wanted)?;
+    let template_items: BTreeMap<&str, &str> = plan
+        .blocks
+        .iter()
+        .filter_map(|b| Some((b.decl.id.as_str(), b.item.as_deref()?)))
+        .collect();
     for m in mods {
         let declarations = format!("data/{}/horizon/", m.id);
         let mut reader = m.content.reader()?;
@@ -1574,6 +1591,14 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 }
             }
         }
+        tags_drops::add_tags(
+            &m.id,
+            &m.content,
+            &block_tags,
+            &item_tags,
+            &template_items,
+            &mut tags,
+        );
     }
     // Spawn eggs with colours: a simple egg texture and generated item model.
     for m in mods {
@@ -1648,6 +1673,12 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     let known = Known::new(base, &plan, &tags)?;
     for (file, merge) in &mut tags {
         merge.values.retain(|v| known.keeps(file, v));
+    }
+    // Declared drops, before other mods' loot additions reach them.
+    for m in mods {
+        for (file, bytes) in tags_drops::drop_tables(&m.content, |i| known.items.contains(i))? {
+            overlay.write(&file, &bytes)?;
+        }
     }
     let mut bundles: Vec<(&str, J)> = Vec::new();
     for name in TAG_BUNDLES {
@@ -1871,6 +1902,8 @@ fn stamp(base: &Path, mods: &[ContentMod]) -> Result<String> {
 
 #[path = "mod_content_entities.rs"]
 mod entities;
+#[path = "mod_content_tags_drops.rs"]
+mod tags_drops;
 
 #[cfg(test)]
 #[path = "mod_content_tests.rs"]

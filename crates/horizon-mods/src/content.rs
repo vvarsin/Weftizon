@@ -73,6 +73,117 @@ pub struct BlockProperties {
     pub map_color: Option<u8>,
     /// A vanilla block whose sounds this block uses.
     pub sounds: Option<String>,
+    /// Placing a block or a fluid into it replaces it (grass, snow layers).
+    pub replaceable: Option<bool>,
+}
+
+/// A tool kind that mines blocks at its speed: `minecraft:mineable/<tool>`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum Tool {
+    Pickaxe,
+    Axe,
+    Shovel,
+    Hoe,
+}
+impl Tool {
+    pub fn name(self) -> &'static str {
+        match self {
+            Tool::Pickaxe => "pickaxe",
+            Tool::Axe => "axe",
+            Tool::Shovel => "shovel",
+            Tool::Hoe => "hoe",
+        }
+    }
+}
+
+/// The lowest tool tier that harvests a block: `minecraft:needs_<tier>_tool`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolTier {
+    Stone,
+    Iron,
+    Diamond,
+}
+impl ToolTier {
+    pub fn name(self) -> &'static str {
+        match self {
+            ToolTier::Stone => "stone",
+            ToolTier::Iron => "iron",
+            ToolTier::Diamond => "diamond",
+        }
+    }
+}
+
+/// A count of dropped items: a number, or `[min, max]` drawn evenly.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Count {
+    Exactly(u8),
+    Between([u8; 2]),
+}
+
+/// What a declared block drops when the mod has no loot table of its own
+/// for it: written as `data/<id>/loot_table/blocks/<name>.json`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Drops {
+    /// Its own item, unless an explosion destroys it (vanilla's `dropSelf`).
+    Itself,
+    /// No drops at all.
+    Nothing,
+    /// Another item, as vanilla's ores and clay drop theirs.
+    Item(DropItem),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DropItem {
+    /// The item, `<namespace>:<path>`.
+    pub item: String,
+    #[serde(default = "one")]
+    pub count: Count,
+    /// Fortune adds to the count as it does for ores (`ore_drops`).
+    #[serde(default)]
+    pub fortune: bool,
+    /// A tool with Silk Touch drops the block itself instead.
+    #[serde(default)]
+    pub silk_touch: bool,
+}
+fn one() -> Count {
+    Count::Exactly(1)
+}
+
+impl<'de> Deserialize<'de> for Drops {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Word(String),
+            Item(DropItem),
+        }
+        match Form::deserialize(d)? {
+            Form::Word(w) if w == "self" => Ok(Drops::Itself),
+            Form::Word(w) if w == "nothing" => Ok(Drops::Nothing),
+            Form::Word(w) => Err(serde::de::Error::custom(format!(
+                "drops is \"self\", \"nothing\" or {{\"item\": ..}}, not {w:?}"
+            ))),
+            Form::Item(item) => Ok(Drops::Item(item)),
+        }
+    }
+}
+
+/// One value or a list of them, with the value's own error when it is wrong.
+fn one_or_many<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    use serde::de::Error;
+    match serde_json::Value::deserialize(d)? {
+        v @ serde_json::Value::Array(_) => serde_json::from_value(v),
+        v => serde_json::from_value(v).map(|one| vec![one]),
+    }
+    .map_err(D::Error::custom)
 }
 
 /// Per-state outline and collision boxes, selected by one state property.
@@ -94,6 +205,14 @@ struct BlockFile {
     default_state: BTreeMap<String, String>,
     #[serde(default = "yes")]
     item: bool,
+    #[serde(default, deserialize_with = "one_or_many")]
+    mineable: Vec<Tool>,
+    tool_tier: Option<ToolTier>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    template_tags: bool,
+    drops: Option<Drops>,
 }
 fn yes() -> bool {
     true
@@ -113,6 +232,18 @@ pub struct Block {
     pub default_state: BTreeMap<String, String>,
     /// Also add a block item with the same id.
     pub item: bool,
+    /// The tools that mine it at their speed (Weft's `mineable`).
+    pub mineable: Vec<Tool>,
+    /// The lowest tier that harvests it (Weft's `needs_tool`); it also
+    /// turns `requires_tool` on unless the properties set it.
+    pub tool_tier: Option<ToolTier>,
+    /// Block tags it joins, `<namespace>:<path>` (Weft's `tag`).
+    pub tags: Vec<String>,
+    /// It also joins every vanilla block tag its template is in (and its
+    /// item every item tag of the template's item).
+    pub template_tags: bool,
+    /// What it drops, when the mod ships no loot table for it.
+    pub drops: Option<Drops>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -132,6 +263,10 @@ struct ItemFile {
     rarity: Option<Rarity>,
     #[serde(default)]
     components: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    template_tags: bool,
 }
 
 /// An item the mod adds: a vanilla template item's components under a new
@@ -145,6 +280,10 @@ pub struct Item {
     pub rarity: Option<Rarity>,
     /// A 26.3 data component patch over the template's: `!minecraft:<type>` removes one.
     pub components: BTreeMap<String, serde_json::Value>,
+    /// Item tags it joins, `<namespace>:<path>` (Weft's `tag`).
+    pub tags: Vec<String>,
+    /// It also joins every vanilla item tag its template is in.
+    pub template_tags: bool,
 }
 
 #[derive(Debug)]
@@ -345,9 +484,23 @@ impl Content {
             let file: BlockFile =
                 serde_json::from_slice(&self.file(&name)?).map_err(|e| format!("{name}: {e}"))?;
             check_block(&file).map_err(|e| format!("{name}: {e}"))?;
+            check_tags(&file.tags, &self.namespaces).map_err(|e| format!("{name}: {e}"))?;
+            if let Some(drops) = &file.drops {
+                let path = block.split_once(':').map_or("", |(_, p)| p);
+                let table = format!("data/{id}/loot_table/blocks/{path}.json");
+                if self.files.contains(&table) {
+                    return Err(format!(
+                        "{name}: drops and {table} both say what it drops; keep one"
+                    ));
+                }
+                check_drops(drops, file.item).map_err(|e| format!("{name}: {e}"))?;
+            }
             if file.item {
                 ids.insert(block.clone());
             }
+            let mut mineable = file.mineable;
+            mineable.sort();
+            mineable.dedup();
             self.blocks.push(Block {
                 id: block,
                 template: file.template,
@@ -355,6 +508,11 @@ impl Content {
                 shapes: file.shapes,
                 default_state: file.default_state,
                 item: file.item,
+                mineable,
+                tool_tier: file.tool_tier,
+                tags: file.tags,
+                template_tags: file.template_tags,
+                drops: file.drops,
             });
         }
         for (item, name) in items {
@@ -370,6 +528,7 @@ impl Content {
                 return Err(format!("{name}: max_stack_size is 1 to 99"));
             }
             check_components(&file.components).map_err(|e| format!("{name}: {e}"))?;
+            check_tags(&file.tags, &self.namespaces).map_err(|e| format!("{name}: {e}"))?;
             if !ids.insert(item.clone()) {
                 return Err(format!("{name}: {item} is also a block's item"));
             }
@@ -379,6 +538,8 @@ impl Content {
                 max_stack_size: file.max_stack_size,
                 rarity: file.rarity,
                 components: file.components,
+                tags: file.tags,
+                template_tags: file.template_tags,
             });
         }
         for (entity, name) in entities {
@@ -436,6 +597,8 @@ impl Content {
                 max_stack_size: None,
                 rarity: None,
                 components,
+                tags: Vec::new(),
+                template_tags: false,
             });
         }
         Ok(())
@@ -462,6 +625,57 @@ fn check_components(components: &BTreeMap<String, serde_json::Value>) -> Result<
         }
     }
     Ok(())
+}
+
+/// An identifier, `<namespace>:<path>`, in resource-location characters.
+fn resource_id(id: &str) -> bool {
+    id.split_once(':').is_some_and(|(ns, path)| {
+        let ok = |s: &str, extra: &[u8]| {
+            !s.is_empty()
+                && s.bytes().all(|b| {
+                    b.is_ascii_lowercase()
+                        || b.is_ascii_digit()
+                        || b"_.-".contains(&b)
+                        || extra.contains(&b)
+                })
+        };
+        ok(ns, b"") && ok(path, b"/")
+    })
+}
+
+/// Tags a declaration joins: ids in the mod's namespaces, vanilla's or the
+/// convention `c`, as the tag files a mod may hold.
+fn check_tags(tags: &[String], namespaces: &[String]) -> Result<(), String> {
+    for tag in tags {
+        let ns = tag.split_once(':').map_or("", |(ns, _)| ns);
+        let fenced = matches!(ns, "minecraft" | "c") || namespaces.iter().any(|n| n == ns);
+        if !resource_id(tag) || !fenced {
+            return Err(format!(
+                "tag {tag:?} is not a tag of the mod's namespaces, minecraft or c (<namespace>:<path>, no #)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_drops(drops: &Drops, item: bool) -> Result<(), String> {
+    let Drops::Item(drop) = drops else {
+        if *drops == Drops::Itself && !item {
+            return Err("drops \"self\" needs the block's item (item: true)".into());
+        }
+        return Ok(());
+    };
+    if !resource_id(&drop.item) {
+        return Err(format!("drops item {:?} is not an item id", drop.item));
+    }
+    if drop.silk_touch && !item {
+        return Err("drops silk_touch needs the block's item (item: true)".into());
+    }
+    match drop.count {
+        Count::Exactly(n) if (1..=64).contains(&n) => Ok(()),
+        Count::Between([lo, hi]) if lo <= hi && hi <= 64 && hi > 0 => Ok(()),
+        _ => Err("drops count is 1 to 64, or [min, max] with min <= max <= 64".into()),
+    }
 }
 
 fn check_block(file: &BlockFile) -> Result<(), String> {
@@ -580,6 +794,132 @@ capabilities = ["registries"]
                   {"name": "head", "parent": "body", "pivot": [0, 16, 0]}]}]}"#;
     const GHOST_ANIM: &[u8] = br#"{"animations": {"animation.ghost.idle": {"loop": true,
         "bones": {"head": {"rotation": {"0": [0, 0, 0], "1": [0, 20, 0]}}}}}}"#;
+
+    /// Tools, tiers, tags and drops read as Weft's block builder sets them,
+    /// and what the game could not use is refused with the reason.
+    #[test]
+    fn blocks_declare_tools_tags_and_drops() {
+        let ore =
+            br#"{"template": "minecraft:iron_ore", "mineable": "pickaxe", "tool_tier": "iron",
+            "tags": ["c:ores/ruby", "ruby:gems"], "template_tags": true,
+            "properties": {"replaceable": false},
+            "drops": {"item": "ruby:ruby", "count": [1, 3], "fortune": true, "silk_touch": true}}"#;
+        let log = br#"{"template": "minecraft:oak_log", "mineable": ["axe", "pickaxe", "axe"],
+            "drops": "self"}"#;
+        let ghost = br#"{"template": "minecraft:glass", "item": false, "drops": "nothing"}"#;
+        let content = hmod(
+            "block-drops",
+            MANIFEST_TEXT,
+            &[
+                ("data/ruby/horizon/block/ruby_ore.json", ore),
+                ("data/ruby/horizon/block/ruby_log.json", log),
+                ("data/ruby/horizon/block/ghost_glass.json", ghost),
+                (
+                    "data/ruby/horizon/item/ruby.json",
+                    br#"{"template": "minecraft:diamond", "tags": ["minecraft:beacon_payment_items"],
+                        "template_tags": true}"#,
+                ),
+            ],
+        )
+        .unwrap();
+        let by = |id: &str| content.blocks.iter().find(|b| b.id == id).unwrap();
+        let ore = by("ruby:ruby_ore");
+        assert_eq!(ore.mineable, [Tool::Pickaxe]);
+        assert_eq!(ore.tool_tier, Some(ToolTier::Iron));
+        assert_eq!(ore.tags, ["c:ores/ruby", "ruby:gems"]);
+        assert!(ore.template_tags);
+        assert_eq!(ore.properties.replaceable, Some(false));
+        let Some(Drops::Item(drop)) = &ore.drops else {
+            panic!("{:?}", ore.drops)
+        };
+        assert_eq!(
+            (
+                drop.item.as_str(),
+                drop.count,
+                drop.fortune,
+                drop.silk_touch
+            ),
+            ("ruby:ruby", Count::Between([1, 3]), true, true)
+        );
+        assert_eq!(by("ruby:ruby_log").mineable, [Tool::Pickaxe, Tool::Axe]);
+        assert_eq!(by("ruby:ruby_log").drops, Some(Drops::Itself));
+        assert_eq!(by("ruby:ghost_glass").drops, Some(Drops::Nothing));
+        let gem = &content.items[0];
+        assert_eq!(gem.tags, ["minecraft:beacon_payment_items"]);
+        assert!(gem.template_tags);
+        // Defaults: no tools, no tags, the mod's own loot table or nothing.
+        let plain = hmod(
+            "block-plain",
+            MANIFEST_TEXT,
+            &[("data/ruby/horizon/block/ruby_block.json", BLOCK)],
+        )
+        .unwrap();
+        let b = &plain.blocks[0];
+        assert!(b.mineable.is_empty() && b.tags.is_empty() && !b.template_tags);
+        assert_eq!((b.tool_tier, &b.drops), (None, &None));
+
+        let refused = |name: &str, decl: &[u8], more: &[(&str, &[u8])]| {
+            let mut files = vec![("data/ruby/horizon/block/x.json", decl)];
+            files.extend_from_slice(more);
+            hmod(name, MANIFEST_TEXT, &files).unwrap_err()
+        };
+        let table: &[(&str, &[u8])] = &[("data/ruby/loot_table/blocks/x.json", b"{}")];
+        for (decl, more, why) in [
+            (
+                &br#"{"template": "minecraft:stone", "drops": "self"}"#[..],
+                table,
+                "both say",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "drops": "all"}"#,
+                &[],
+                "drops is",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "item": false, "drops": "self"}"#,
+                &[],
+                "needs the block's item",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "drops": {"item": "ruby", "count": 1}}"#,
+                &[],
+                "not an item id",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "drops": {"item": "ruby:a", "count": 65}}"#,
+                &[],
+                "count is",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "drops": {"item": "ruby:a", "count": [3, 2]}}"#,
+                &[],
+                "count is",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "mineable": "sword"}"#,
+                &[],
+                "unknown variant",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "tool_tier": "gold"}"#,
+                &[],
+                "unknown variant",
+            ),
+            (
+                br##"{"template": "minecraft:stone", "tags": ["#minecraft:logs"]}"##,
+                &[],
+                "is not a tag",
+            ),
+            (
+                br#"{"template": "minecraft:stone", "tags": ["othermod:logs"]}"#,
+                &[],
+                "is not a tag",
+            ),
+        ] {
+            let e = refused("block-refused", decl, more);
+            assert!(e.contains(why), "{e}");
+        }
+    }
 
     /// The files a declaration doesn't name are found by the entity's name.
     #[test]
@@ -924,6 +1264,11 @@ capabilities = ["registries"]
                     ..BlockProperties::default()
                 },
                 item: true,
+                mineable: Vec::new(),
+                tool_tier: None,
+                tags: Vec::new(),
+                template_tags: false,
+                drops: None,
             }]
         );
         assert_eq!(content.items[0].id, "ruby:ruby");
