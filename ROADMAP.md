@@ -74,13 +74,37 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
 2. **InvasionV2 support** (API 68, done 2026-10-31): spawning with gear from saved data, potion effects on mobs and
    players, fire, lightning, weather, projectiles, block search. Creaking variants by wood (API 69, done
    2026-10-31): a content mod's `creaking` block with Grafted Creaking's abilities, `overlay` texture layers, hearts
-   that grow a variant between its logs, and `native_plant_creaking_heart` to put hearts in trees. Next, for
-   InvasionV2's phases 7 and 8 (Herobrine): setting what a mob spawner spawns (his hidden wither spawners);
-   priming TNT where a mod wants it; changing a mob's attributes after it spawns (bone blocks that make the mob
-   that eats them stronger, faster and bigger); a short-lived charged aura and a tint on any mob; coloured
-   lightning and particles (blue soul lightning, soul sparks); a sword hit that disables a shield; reflecting an
-   arrow back at its shooter (the hurt question plus `native_shoot`); giant mobs (the `scale` attribute through
-   `native_summon_snbt`).
+   that grow a variant between its logs, and `native_plant_creaking_heart` to put hearts in trees.
+
+   **InvasionV2 checklist**: everything the user's InvasionV2 design (phases 1 to 8 and the Nether Reactor nexus)
+   needs from the engine. The mod is being built as the stress test of this API (2026-10-31: "stress test my fork
+   by building this mod and if you find a place where my forks modding api is too weak then build it"). Tick an
+   item only when it is tested in a game.
+   - [x] Waves, spawning, paths, digging, boss bars (API 67); gear, effects, fire, lightning, weather, projectiles,
+     block search (API 68); creaking variants and hearts in trees (API 69).
+   - [x] Custom skins, sizes and templates for invaders (content mod entities): darker T2 zombies, Ravager brute,
+     dark burning husk, jumping spider and decaying phantom skins, Herobrine's skin, giant and tall mobs (`scale`).
+   - [ ] Mob spawners a mod sets up: what they spawn (Herobrine's hidden wither spawners).
+   - [ ] Explosions where a mod wants them (creepers clearing paths; TNT is `native_summon_snbt("tnt", ..)`).
+   - [ ] A mob's attributes read and changed after it spawns (bone blocks that make the mob that eats them
+     stronger, faster and bigger; the skeleton king's army).
+   - [ ] A mob's equipment changed after it spawns (the skeleton king arming his skeletons).
+   - [ ] A mob turned to look at a place (Herobrine's eye contact).
+   - [ ] A player's shield disabled by a hit (Herobrine's sword), and a player's look direction for the helpers
+     (teleporting behind a player).
+   - [ ] The attacking mob of a hit on a player (Herobrine's hits apply Darkness, Weakness and Wither).
+   - [ ] Block light at a place (glowstone highlighting monsters in its light).
+   - [ ] Egg blocks that hatch a mod's mob (turtle eggs reused as spider eggs; the mother spider's eggs).
+   - [ ] A mob's skin changed while it lives (the light blue skin of a mob that ate a bone block).
+   - [ ] A charged-creeper aura on any mob for a while (the soul army's spawn boost).
+   - [ ] Soul fire on mobs and the players they hit (the soul army sets what it hits on soul fire).
+   - [ ] Coloured lightning (Herobrine's blue soul lightning).
+   - [ ] A tint over the world and its lava (phase 6's purple hue and purple glowing lava).
+   - [ ] The Ender Dragon circling and charging around a place a mod picks (the nexus), outside the End.
+   - [ ] Flying mobs walking a path (blazes following the piglin engineers).
+   - [ ] The Nether Reactor nexus: a crafted reactor block, right-clicked to hurt the player and start; it turns
+     red, its cobblestone shell turns to glowing red obsidian top down, then its gold to obsidian; a wrong build
+     turns the blocks around it to lava and the core to a diamond block; a right build starts the invasion.
 3. **Weft's own events** (`w.emit`) and timed attributes (part 3).
 4. **Screen and HUD builders** (part 6).
 5. **Energy and systems** for machines (part 4).
