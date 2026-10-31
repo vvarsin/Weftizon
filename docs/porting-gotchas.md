@@ -148,6 +148,14 @@ What did not work:
 - **1.20.1 item models** need 26.3 item definitions (`assets/<ns>/items/<name>.json`) in
   addition to `models/item/<name>.json`; the port added them.
 
+## Follow-up bug after the 0-skip fix
+
+`ModPatchFeature` (used by `the_afterdark:waterloggable_random_patch`, e.g. cave ceiling
+shrubbery) samples `xz_spread`/`y_spread` as the offset itself instead of an offset in
+`[-spread, spread]`. All 96 tries therefore hit the same block. Fix it by sampling
+`nextInt(spread + 1) - nextInt(spread + 1)` (1.20.1 RandomPatch) for x, z and y before the
+feature fix is considered exact.
+
 So the data/assets port is clean, the dimension loads, and every placed feature its biomes list
 decodes. What remains is teleport/catalyst behaviour and exact parity of TheAfterdark's own
 feature generators, which are clean-room approximations.
