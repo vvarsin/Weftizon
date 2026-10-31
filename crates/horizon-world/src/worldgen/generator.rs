@@ -359,18 +359,22 @@ impl GeneratorData {
     ) -> Result<Arc<Self>, GeneratorError> {
         let mut warnings = Vec::new();
         let flags: Vec<(bool, bool)> =
-            serde_json::from_str(&fs::read_to_string(dir.join("block_flags.json"))?)?;
+            serde_json::from_str(&fs::read_to_string(dir.join("block_flags.json"))?)
+                .map_err(stage("block flags"))?;
         if flags.len() != registry.len() {
             return Err(resource("block_flags.json does not match the registry"));
         }
         let block_tags = build_tags(
-            &read_bundle(dir, ov, "block_tags")?,
+            &read_bundle(dir, ov, "block_tags").map_err(stage("block tags bundle"))?,
             ov,
             "block_tags",
             &mut warnings,
             |id| registry.default_state(id).is_some(),
-        )?;
-        let fluid_tags = match read_optional_bundle(dir, ov, "fluid_tags")? {
+        )
+        .map_err(stage("block tags"))?;
+        let fluid_tags = match read_optional_bundle(dir, ov, "fluid_tags")
+            .map_err(stage("fluid tags bundle"))?
+        {
             Some(raw) => build_tags(&raw, ov, "fluid_tags", &mut warnings, |id| {
                 matches!(
                     id,
@@ -390,7 +394,8 @@ impl GeneratorData {
         let blocks = loading({
             let (dir, tags, fluids) = (dir.join("blocks"), block_tags.clone(), fluid_tags.clone());
             move || super::generator_blocks::BlockBehavior::load(&dir, registry, &tags, &fluids)
-        })?;
+        })
+        .map_err(stage("block behaviour"))?;
         let structures = loading({
             let (dir, tags, ov) = (dir.to_owned(), block_tags.clone(), ov.clone());
             move || -> Result<_, GeneratorError> {
@@ -405,7 +410,8 @@ impl GeneratorData {
                     &tags,
                 ))))
             }
-        })?;
+        })
+        .map_err(stage("structure loading"))?;
         let behaviours = loading({
             let root = dir.parent().map(Path::to_owned);
             move || {
@@ -413,7 +419,8 @@ impl GeneratorData {
                     .and_then(|root| crate::level::Behaviours::load(registry, &root).ok())
                     .map(Arc::new)
             }
-        })?;
+        })
+        .map_err(stage("behaviours loading"))?;
         let tag_set = |name: &str| -> Result<BTreeSet<&str>, GeneratorError> {
             Ok(block_tags
                 .get(name)
@@ -451,9 +458,9 @@ impl GeneratorData {
             .into_iter()
             .filter_map(|(key, integer)| integer.then_some(key))
             .collect();
-        let biomes = read_bundle(dir, ov, "biomes")?;
+        let biomes = read_bundle(dir, ov, "biomes").map_err(stage("biomes bundle"))?;
         let biome_tags = build_tags(
-            &read_bundle(dir, ov, "biome_tags")?,
+            &read_bundle(dir, ov, "biome_tags").map_err(stage("biome tags"))?,
             ov,
             "biome_tags",
             &mut warnings,
@@ -461,11 +468,14 @@ impl GeneratorData {
         )?;
         let biome_set = biomes.keys().cloned().collect::<BTreeSet<_>>();
         let conditions = MaterialConditionRegistry::from_json_with_biome_tags(
-            &read_bundle(dir, ov, "conditions")?,
+            &read_bundle(dir, ov, "conditions").map_err(stage("conditions bundle"))?,
             &biome_set,
             &biome_tags,
-        )?;
-        let mut presets = read_optional_bundle(dir, ov, "presets")?.unwrap_or_default();
+        )
+        .map_err(stage("conditions"))?;
+        let mut presets = read_optional_bundle(dir, ov, "presets")
+            .map_err(stage("presets bundle"))?
+            .unwrap_or_default();
         let reports = dir.join("biome_parameters");
         if reports.is_dir() {
             for entry in fs::read_dir(&reports)? {
@@ -483,8 +493,12 @@ impl GeneratorData {
             }
         }
         let source_catalog =
-            BiomeSourceCatalog::new(&biome_set, &biome_tags, &presets.keys().cloned().collect())?;
-        let carvers = CarverCatalog::from_json(&read_bundle(dir, ov, "carvers")?)?;
+            BiomeSourceCatalog::new(&biome_set, &biome_tags, &presets.keys().cloned().collect())
+                .map_err(stage("biome source"))?;
+        let carvers = CarverCatalog::from_json(
+            &read_bundle(dir, ov, "carvers").map_err(stage("carvers bundle"))?,
+        )
+        .map_err(stage("carvers"))?;
         let mut biome_names = Vec::new();
         let mut biome_ids = BTreeMap::new();
         let mut biome_json = Vec::new();
@@ -493,7 +507,9 @@ impl GeneratorData {
         for (name, json) in &biomes {
             biome_ids.insert(name.clone(), BiomeId(biome_names.len() as u32));
             biome_names.push(Arc::<str>::from(name.as_str()));
-            temperatures.push(BiomeTemperatureSettings::from_json(json)?);
+            temperatures.push(
+                BiomeTemperatureSettings::from_json(json).map_err(stage("biome temperature"))?,
+            );
             let value: Value = serde_json::from_str(json)?;
             biome_carvers.push(carvers.decode_set(&value["carvers"].to_string())?);
             biome_json.push(json.clone());
@@ -507,25 +523,31 @@ impl GeneratorData {
         )
         .map_err(|e| resource(format!("carving blocks: {e}")))?;
         let feature_resources = match (
-            read_optional_bundle(dir, ov, "features")?,
-            read_optional_bundle(dir, ov, "placed_features")?,
+            read_optional_bundle(dir, ov, "features").map_err(stage("features bundle"))?,
+            read_optional_bundle(dir, ov, "placed_features")
+                .map_err(stage("placed features bundle"))?,
         ) {
             (Some(features), Some(placed)) => Some(FeatureResources {
                 features,
                 placed,
-                feature_tags: read_optional_bundle(dir, ov, "feature_tags")?.unwrap_or_default(),
-                blocks: joined(blocks)?,
+                feature_tags: read_optional_bundle(dir, ov, "feature_tags")
+                    .map_err(stage("feature tags"))?
+                    .unwrap_or_default(),
+                blocks: joined(blocks).map_err(stage("feature blocks"))?,
                 fluid_tags,
-                state_providers: read_optional_bundle(dir, ov, "state_providers")?
+                state_providers: read_optional_bundle(dir, ov, "state_providers")
+                    .map_err(stage("state providers"))?
                     .unwrap_or_default(),
             }),
             _ => None,
         };
         let structures = joined(structures)?;
         let structure_resources = match (
-            read_optional_bundle(dir, ov, "structures")?,
-            read_optional_bundle(dir, ov, "structure_sets")?,
-            read_optional_bundle(dir, ov, "template_pools")?,
+            read_optional_bundle(dir, ov, "structures").map_err(stage("structures bundle"))?,
+            read_optional_bundle(dir, ov, "structure_sets")
+                .map_err(stage("structure sets bundle"))?,
+            read_optional_bundle(dir, ov, "template_pools")
+                .map_err(stage("template pools bundle"))?,
         ) {
             (Some(structures), Some(sets), Some(pools)) => Some(StructureBundles {
                 structures,
@@ -923,14 +945,17 @@ where
         let root = random.fork_positional();
         let codec = crate::registry::BlockStateJsonCodec::new(registry, data.integers.clone())
             .map_err(|e| resource(e.to_string()))?;
-        let mut densities = DensityRegistry::from_json(&data.noises, &data.densities)?;
+        let mut densities =
+            DensityRegistry::from_json(&data.noises, &data.densities).map_err(stage("density"))?;
         let router =
-            NoiseRouter::from_json(&settings_json["noise_router"].to_string(), &mut densities)?;
+            NoiseRouter::from_json(&settings_json["noise_router"].to_string(), &mut densities)
+                .map_err(stage("router"))?;
         let aquifers = settings_json
             .get("aquifers")
             .filter(|v| !v.is_null())
             .map(|v| AquiferConfig::from_json(&v.to_string(), &mut densities))
-            .transpose()?;
+            .transpose()
+            .map_err(stage("aquifer"))?;
         let mut library = MaterialRuleLibrary::from_json(
             &data.rules,
             &data.conditions,
@@ -938,7 +963,8 @@ where
             densities,
             seed,
             settings.legacy,
-        )?;
+        )
+        .map_err(stage("material library"))?;
         let router = library.compile_router(router)?;
         let aquifer = aquifers
             .map(|config| library.compile_aquifer(config))
@@ -947,7 +973,7 @@ where
         let rule_name = settings_json["material_rule"]
             .as_str()
             .ok_or_else(|| resource("material_rule"))?;
-        let rule = library.rule(rule_name)?;
+        let rule = library.rule(rule_name).map_err(stage("material rule"))?;
         let preliminary = router.get(RouterField::ChunkSurfaceLevel).clone();
         let spawn_target = match settings_json.get("spawn_target") {
             Some(Value::Array(points)) => points

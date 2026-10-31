@@ -113,11 +113,11 @@ What did not work:
 - **Custom dimension.** This was originally a hole: Horizon's game dimensions were only
   Overworld, Nether and End. We now support content-mod dimensions generally:
   `dimension/` + `dimension_type/` data register the dimension, custom biomes load, and a
-  synthetic `testdim:test` dimension was entered with `/execute in`. TheAfterdark still fails
-  later, because its 1.20.1 worldgen schema is not 26.3: old noise-router/density fields,
-  `surface_rule` instead of `material_rule`, and old block-state objects. Compatibility for
-  `argument1/2`, `y_clamped_gradient` and string block states was added, but one
-  `invalid world generation field: type` remains.
+  synthetic `testdim:test` dimension was entered with `/execute in`. TheAfterdark now loads
+  after fixing its legacy 1.20.1 biome `carvers` form: `{"air": [...]}` is converted to the
+  26.3 carver list. Compatibility for `argument1/2`, `y_clamped_gradient`, legacy
+  `surface_rule` and old block-state objects was also added. The full TheAfterdark port now
+  starts the game and `/execute in the_afterdark:afterdark` enters its dimension.
 - **Custom worldgen feature types.** The configured features use Java feature types
   (`the_afterdark:*`). Data files alone do not register them; a native mod or generator support
   is needed once the dimension is playable.

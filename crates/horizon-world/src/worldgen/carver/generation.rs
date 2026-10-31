@@ -77,6 +77,24 @@ impl CarverCatalog {
         let raw: Box<RawValue> = serde_json::from_str(json)?;
         let entries: Vec<Box<RawValue>> = if raw.get().starts_with('[') {
             serde_json::from_str(raw.get())?
+        } else if raw.get().starts_with('{') {
+            // 1.20.1 biome JSON wrote carvers as {"air": [...], "liquid": [...]};
+            // 26.3 writes the combined list.
+            let value: serde_json::Value = serde_json::from_str(raw.get())?;
+            let legacy = value.get("air").is_some() || value.get("liquid").is_some();
+            if legacy {
+                let mut entries = Vec::new();
+                for name in ["air", "liquid"] {
+                    if let Some(list) = value.get(name) {
+                        entries.extend(serde_json::from_str::<Vec<Box<RawValue>>>(
+                            &list.to_string(),
+                        )?);
+                    }
+                }
+                entries
+            } else {
+                vec![raw]
+            }
         } else {
             vec![raw]
         };
