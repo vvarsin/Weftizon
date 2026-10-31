@@ -3541,6 +3541,8 @@ impl Level {
             ..Self::default()
         };
         // 26.3: spawn {pos: [I; x, y, z], dimension, yaw, pitch}; older: SpawnX/Y/Z.
+        level.dimension = text(data.get("spawn").and_then(|s| s.get("dimension")))
+            .unwrap_or_else(|| "minecraft:overworld".into());
         level.world_spawn = match data.get("spawn").and_then(|s| s.get("pos")) {
             Some(Tag::IntArray(p)) if p.len() == 3 => Some([p[0], p[1], p[2]]),
             _ => data.get("SpawnX").map(|_| {
@@ -3966,6 +3968,9 @@ impl Level {
                 entries.push((
                     "respawn",
                     Tag::compound([
+                        // `spawn` is only ever an Overworld point (the
+                        // reader puts any other dimension's in
+                        // `respawn_elsewhere`), wherever the player is now.
                         ("dimension", string("minecraft:overworld")),
                         ("pos", Tag::IntArray(block.to_vec())),
                         ("yaw", Tag::Float(0f32.to_bits())),
@@ -6396,6 +6401,26 @@ mod tests {
         assert_eq!(reopened.day_time, 12345);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_player_starts_in_the_world_spawns_dimension() {
+        let dir = std::env::temp_dir().join(format!("horizon-spawn-dim-{}", std::process::id()));
+        let root = horizon_world::nbt::parse_snbt(
+            r#"{Data:{spawn:{dimension:"the_afterdark:afterdark",pos:[I;4,80,-6]}}}"#,
+        )
+        .unwrap()
+        .0;
+        let level = Level::read_root(&dir, root).unwrap();
+        assert_eq!(level.dimension, "the_afterdark:afterdark");
+        assert_eq!(level.world_spawn, Some([4, 80, -6]));
+        let plain = horizon_world::nbt::parse_snbt("{Data:{SpawnX:1,SpawnY:64,SpawnZ:1}}")
+            .unwrap()
+            .0;
+        assert_eq!(
+            Level::read_root(&dir, plain).unwrap().dimension,
+            "minecraft:overworld"
+        );
     }
 
     #[test]
