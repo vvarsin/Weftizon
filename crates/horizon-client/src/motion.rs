@@ -606,6 +606,7 @@ impl PlayerMotion {
             leather_boots: self.leather_boots,
             walkable_type: false,
             lava_walker: false,
+            water_walker: false,
         }
     }
     /// `LivingEntity.tryAddFrost`: the frozen slowdown, on anything but air.

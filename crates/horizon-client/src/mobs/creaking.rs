@@ -211,6 +211,13 @@ pub fn update(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
                     by_player,
                     id: m.id,
                 });
+                // A variant that multiplies when hurt (Grafted's bamboo).
+                if by_player
+                    && variant(m).is_some_and(|c| c.multiply_when_hurt)
+                    && let Some(c) = &m.kind.custom
+                {
+                    events.push(MobEvent::CreakingMultiply { kind: c.id, home });
+                }
             }
             sway(m, events);
         }
@@ -219,6 +226,7 @@ pub fn update(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
     if !m.alive() {
         return;
     }
+    variant_tick(m, events);
     let now = check_can_move(m, w, events);
     if now != can_move(m) {
         if now {
@@ -280,27 +288,33 @@ fn deactivate(m: &mut Mob, events: &mut Vec<MobEvent>) {
 /// `LivingEntity.isLookingAtMe(player, 0.5, false, true, eyeY, y + 0.5,
 /// (eyeY + y) / 2)`: within the player's view cone and seen through
 /// transparent blocks.
-fn looked_at_by(m: &Mob, w: &MobWorld) -> bool {
+/// With `strict`, the narrow gaze Grafted Creaking's
+/// jungle variant needs once awake (`isLookingAtMe(player, 0.025, true,
+/// false, eyeY)`: straight at its eyes).
+fn looked_at(m: &Mob, w: &MobWorld, strict: bool) -> bool {
     let Some(p) = &w.player else { return false };
     let look = normalize(p.look);
     let eye = m.eye_y();
-    [eye, m.position.y + 0.5, (eye + m.position.y) / 2.0]
-        .into_iter()
-        .any(|y| {
-            let d = normalize([
-                m.position.x - p.position.x,
-                y - p.eye[1],
-                m.position.z - p.position.z,
-            ]);
-            let dot = look[0] * d[0] + look[1] * d[1] + look[2] * d[2];
-            if dot <= 0.5 {
-                return false;
-            }
-            // Player.hasLineOfSight(this, VISUAL, NONE, y).
-            let from = Vec3::new(p.position.x, p.eye[1], p.position.z);
-            let to = Vec3::new(m.position.x, y, m.position.z);
-            to.distance(from) <= 128.0 && w.visual_clear_between(from, to)
-        })
+    let (heights, threshold): (&[f64], f64) = if strict {
+        (&[eye], 1.0 - 0.025)
+    } else {
+        (&[eye, m.position.y + 0.5, (eye + m.position.y) / 2.0], 0.5)
+    };
+    heights.iter().copied().any(|y| {
+        let d = normalize([
+            m.position.x - p.position.x,
+            y - p.eye[1],
+            m.position.z - p.position.z,
+        ]);
+        let dot = look[0] * d[0] + look[1] * d[1] + look[2] * d[2];
+        if dot <= threshold {
+            return false;
+        }
+        // Player.hasLineOfSight(this, VISUAL, NONE, y).
+        let from = Vec3::new(p.position.x, p.eye[1], p.position.z);
+        let to = Vec3::new(m.position.x, y, m.position.z);
+        to.distance(from) <= 128.0 && w.visual_clear_between(from, to)
+    })
 }
 /// `Vec3.normalize`.
 fn normalize(v: [f64; 3]) -> [f64; 3] {
@@ -313,9 +327,44 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
 }
 /// `Creaking.checkCanMove`: false while looked at; also wakes and calms it.
 fn check_can_move(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) -> bool {
-    let players = monster_brain::nearest_players(m);
+    use horizon_mods::creaking::{Freeze, Prey};
+    // A mod's variant (Grafted Creaking's woods): what it hunts and how a
+    // gaze holds it. Vanilla's creaking: players, held by any gaze.
+    let (prey, freeze) = variant(m).map_or((Prey::Players, Freeze::Gaze), |c| (c.hunts, c.freeze));
+    // The warped variant moves only while looked at.
+    let inverted = freeze == Freeze::Inverted;
+    let players = if prey == Prey::Nothing {
+        Vec::new()
+    } else {
+        monster_brain::nearest_players(m)
+    };
     let active = is_active(m);
+    // A variant that hunts mobs wakes on one within reach it can see, and
+    // keeps hunting it.
+    let prey_mob = hunts_mobs(m)
+        .then(|| {
+            w.others
+                .iter()
+                .filter(|s| huntable(m, s) && m.distance_sqr(s.position) < ACTIVATION_RANGE_SQ)
+                .min_by(|a, b| {
+                    m.distance_sqr(a.position)
+                        .total_cmp(&m.distance_sqr(b.position))
+                })
+                .map(|s| s.id)
+        })
+        .flatten();
+    let hunting_mob = matches!(
+        monster_brain::attack_target(m),
+        Some(Who::Mob(id)) if w.others.iter().any(|s| s.id == id && s.alive)
+    );
     if players.is_empty() {
+        if hunting_mob {
+            return true;
+        }
+        if let Some(id) = prey_mob {
+            activate_on(m, Who::Mob(id), events);
+            return true;
+        }
         if active {
             deactivate(m, events);
         }
@@ -328,21 +377,35 @@ fn check_can_move(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) -> bool
             potential = true;
             // GAZE_DISGUISE_EQUIPMENT hides the player once the creaking is awake.
             let disguised = p.head.as_deref() == Some("minecraft:carved_pumpkin");
-            if (!active || !disguised) && looked_at_by(m, w) {
+            let strict = freeze == Freeze::StrictGaze && active;
+            if (!active || !disguised) && looked_at(m, w, strict) {
                 if active {
-                    return false;
+                    return inverted;
                 }
                 if m.distance_sqr(p.position) < ACTIVATION_RANGE_SQ {
                     activate(m, events);
-                    return false;
+                    return inverted;
                 }
             }
         }
     }
-    if !potential && active {
-        deactivate(m, events);
+    if !potential {
+        if let Some(id) = prey_mob.filter(|_| !hunting_mob) {
+            activate_on(m, Who::Mob(id), events);
+        } else if active && !hunting_mob {
+            deactivate(m, events);
+        }
     }
-    true
+    // Grafted's warped variant stands still unless a player looks at it.
+    !inverted
+}
+/// `activate` on a mob a variant hunts.
+fn activate_on(m: &mut Mob, target: Who, events: &mut Vec<MobEvent>) {
+    monster_brain::set_attack_target(m, Some(target));
+    if !is_active(m) {
+        m.voice("entity.creaking.activate", events);
+    }
+    m.extra.flag = true;
 }
 /// `Creaking.playerIsStuckInYou`: the player's eyes inside it for more than 4 ticks.
 pub fn player_is_stuck(m: &mut Mob, eye: Option<[f64; 3]>) -> bool {
@@ -390,4 +453,60 @@ pub fn anim(m: &Mob, s: &State, p: &mut Poses, animations: &HashMap<String, Anim
 /// The creaking species exists in the species table.
 pub fn is_creaking(m: &Mob) -> bool {
     m.species() == Species::Creaking
+}
+
+/// A content mod's creaking variant's ways (`creaking` in its declaration);
+/// `None` for vanilla's creaking.
+pub fn variant(m: &Mob) -> Option<&horizon_mods::creaking::Creaking> {
+    m.kind.custom.as_ref()?.creaking.as_ref()
+}
+/// A variant that hunts mobs as well as players (Grafted's mushroom, crimson).
+pub fn hunts_mobs(m: &Mob) -> bool {
+    use horizon_mods::creaking::Prey;
+    variant(m).is_some_and(|c| matches!(c.hunts, Prey::PlayersAndMonsters | Prey::Everything))
+}
+/// A variant that walks on water (Grafted's mangrove).
+pub fn walks_on_water(m: &Mob) -> bool {
+    variant(m).is_some_and(|c| c.water_walk)
+}
+/// What a variant does each tick besides vanilla's: blinding the players
+/// around it (Grafted's birch: Blindness for 6 seconds, renewed within 10
+/// seconds of ending, `MobEffectUtil.addEffectToPlayersAround`).
+pub fn variant_tick(m: &mut Mob, events: &mut Vec<MobEvent>) {
+    // Grafted's mangrove (`floatMangrove`): in water it rises to the top,
+    // where the water holds it up.
+    if walks_on_water(m) && m.fluids.in_water && m.fluids.water > 0.0 {
+        m.velocity = Vec3::new(
+            m.velocity.x * 0.5,
+            m.velocity.y * 0.5 + 0.05,
+            m.velocity.z * 0.5,
+        );
+    }
+    let Some(radius) = variant(m).and_then(|c| c.blinds_players) else {
+        return;
+    };
+    if !m.alive() {
+        return;
+    }
+    events.push(MobEvent::EffectPlayersAround {
+        at: [m.position.x, m.position.y, m.position.z],
+        radius,
+        effect: "minecraft:blindness",
+        ticks: 120,
+        keep: 200,
+    });
+}
+/// A mob the variant may wake on and hunt: not a creaking or a creeper;
+/// a monster for one that hunts monsters, anything for one that hunts
+/// everything.
+fn huntable(m: &Mob, s: &super::Seen) -> bool {
+    use horizon_mods::creaking::Prey;
+    if !s.alive || s.id == m.id || matches!(s.species, Species::Creaking | Species::Creeper) {
+        return false;
+    }
+    match variant(m).map(|c| c.hunts) {
+        Some(Prey::Everything) => true,
+        Some(Prey::PlayersAndMonsters) => s.hostile,
+        _ => false,
+    }
 }

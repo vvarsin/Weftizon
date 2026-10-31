@@ -72,8 +72,15 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
    blocked, dug through the glass, and a boss bar counted them. Not yet built through the launcher as a
    horizon-mixins bundle. Left: the invasion mod itself, as a native mod with its own mob declarations.
 2. **InvasionV2 support** (API 21, done 2026-10-31): spawning with gear from saved data, potion effects on mobs and
-   players, fire, lightning, weather, projectiles, block search. Next: creaking variants by wood type with
-   Grafted-Creaking's textures and abilities, and planting creaking hearts into trees.
+   players, fire, lightning, weather, projectiles, block search. Creaking variants by wood (API 22, done
+   2026-10-31): a content mod's `creaking` block with Grafted Creaking's abilities, `overlay` texture layers, hearts
+   that grow a variant between its logs, and `native_plant_creaking_heart` to put hearts in trees. Next, for
+   InvasionV2's phases 7 and 8 (Herobrine): setting what a mob spawner spawns (his hidden wither spawners);
+   priming TNT where a mod wants it; changing a mob's attributes after it spawns (bone blocks that make the mob
+   that eats them stronger, faster and bigger); a short-lived charged aura and a tint on any mob; coloured
+   lightning and particles (blue soul lightning, soul sparks); a sword hit that disables a shield; reflecting an
+   arrow back at its shooter (the hurt question plus `native_shoot`); giant mobs (the `scale` attribute through
+   `native_summon`).
 3. **Weft's own events** (`w.emit`) and timed attributes (part 3).
 4. **Screen and HUD builders** (part 6).
 5. **Energy and systems** for machines (part 4).

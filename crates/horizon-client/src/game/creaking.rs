@@ -35,8 +35,21 @@ struct Host<'a> {
     added: Vec<Mob>,
     uuids: &'a mut HashMap<u32, [i32; 4]>,
     creaking: Option<Arc<MobType>>,
+    /// Content mods' creaking variants, in id order.
+    variants: Vec<Arc<MobType>>,
     next_entity: &'a mut u32,
     spawning: bool,
+}
+
+/// Content mods' creaking variants (entities with a `creaking` block), in
+/// id order so a log two mods both name always grows the same one.
+pub(super) fn creaking_variants(types: &HashMap<String, Arc<MobType>>) -> Vec<Arc<MobType>> {
+    let mut v: Vec<(&String, &Arc<MobType>)> = types
+        .iter()
+        .filter(|(_, t)| t.custom.as_ref().is_some_and(|c| c.creaking.is_some()))
+        .collect();
+    v.sort_by(|a, b| a.0.cmp(b.0));
+    v.into_iter().map(|(_, t)| t.clone()).collect()
 }
 impl HeartHost for Host<'_> {
     fn mob(&self, id: u32) -> Option<&Mob> {
@@ -80,6 +93,9 @@ impl HeartHost for Host<'_> {
     fn spawning_monsters(&self) -> bool {
         self.spawning
     }
+    fn creaking_variants(&self) -> Vec<Arc<MobType>> {
+        self.variants.clone()
+    }
 }
 
 impl Game<'_> {
@@ -108,12 +124,29 @@ impl Game<'_> {
             &mut Vec<HeartEvent>,
         ),
     ) -> Result<()> {
+        // A server has no player of its own: on the ticks a heart looks for
+        // one (`getNearestPlayer`), it sees the nearest player in the level,
+        // as mobs do (`lan_mobs`).
+        let guest = (others && self.player.is_none())
+            .then(|| {
+                let at = Vec3::new(f64::from(key.0), f64::from(key.1), f64::from(key.2));
+                self.lan_guest_views()
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .filter(|v| v.alive)
+                    .min_by(|a, b| {
+                        at.distance_squared(a.position)
+                            .total_cmp(&at.distance_squared(b.position))
+                    })
+            })
+            .flatten();
         let mut mobs = std::mem::take(&mut self.mobs);
         let mut uuids = std::mem::take(&mut self.persist.uuids);
         let mut next_entity = self.next_entity;
         let mut random = self.world.random.clone();
         let spawning = self.spawning_monsters();
         let creaking = self.res.mob_types().get("minecraft:creaking").cloned();
+        let variants = creaking_variants(self.res.mob_types());
         let player_uuid = self.level.player_uuid;
         let snapshot: Vec<_> = if others {
             mobs.iter().map(|m| seen(m, player_uuid)).collect()
@@ -122,12 +155,19 @@ impl Game<'_> {
         };
         let mut events = Vec::new();
         let added = {
-            let w = self.mob_world_base(&snapshot);
+            let mut w = self.mob_world_base(&snapshot);
+            if w.player.is_none()
+                && let Some(v) = guest
+            {
+                w.nearest_player = (!v.spectator).then_some(v.position);
+                w.player = Some(v);
+            }
             let mut host = Host {
                 mobs: &mut mobs,
                 added: Vec::new(),
                 uuids: &mut uuids,
                 creaking,
+                variants,
                 next_entity: &mut next_entity,
                 spawning,
             };
@@ -181,6 +221,41 @@ impl Game<'_> {
         self.world
             .block_entities
             .put(key, BlockEntity::CreakingHeart(heart));
+    }
+    /// A creaking variant that multiplies when hurt (Grafted Creaking's
+    /// bamboo): another of `kind`, free of the heart, on a block with room
+    /// within 5 of the heart at `home` (`SpawnUtil.trySpawnMob(.., 5, 16,
+    /// 8, ON_TOP_OF_COLLIDER_NO_LEAVES)`), with the poof of its arrival.
+    pub(super) fn creaking_multiply(&mut self, kind: &str, home: [i32; 3]) {
+        for _ in 0..16 {
+            let r = &mut self.world.random;
+            let x = home[0] + r.next_int_between_inclusive(-5, 5).unwrap_or(0);
+            let z = home[2] + r.next_int_between_inclusive(-5, 5).unwrap_or(0);
+            if !self.world.loaded(x, z) {
+                continue;
+            }
+            let found = {
+                let facts = self.res.facts();
+                let world = &self.world;
+                let solid = |y: i32| {
+                    let f = facts.get(world.block(x, y, z));
+                    f.full_collision && !f.name.ends_with("leaves")
+                };
+                let air = |y: i32| facts.is_air(world.block(x, y, z));
+                (home[1] - 8..=home[1] + 8)
+                    .rev()
+                    .find(|&y| solid(y - 1) && air(y) && air(y + 1) && air(y + 2))
+            };
+            let Some(y) = found else {
+                continue;
+            };
+            let at = [f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5];
+            if let Some(id) = self.spawn_mob(kind, at, false) {
+                // `broadcastEntityEvent(creaking, 60)`: the poof.
+                self.lan_entity_event(id as i32, 60, at);
+                return;
+            }
+        }
     }
     /// `Creaking.tearDown`: the crumble particles.
     pub(super) fn creaking_tear_down(&mut self, center: [f64; 3], spread: [f64; 3]) {

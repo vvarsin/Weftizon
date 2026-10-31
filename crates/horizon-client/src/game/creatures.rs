@@ -1398,6 +1398,30 @@ impl Game<'_> {
                     self.mob_hits_player(amount, from, kind);
                 }
                 MobEvent::ElderCurse { at } => self.elder_curse(at),
+                MobEvent::EffectPlayersAround {
+                    at,
+                    radius,
+                    effect,
+                    ticks,
+                    keep,
+                } => self.for_each_player(|g| {
+                    let Some(p) = g.player.as_ref() else {
+                        return;
+                    };
+                    let d = p.position.subtract(Vec3::new(at[0], at[1], at[2]));
+                    if d.x * d.x + d.y * d.y + d.z * d.z >= radius * radius
+                        || p.health.dead_or_dying()
+                    {
+                        return;
+                    }
+                    let short = effect.trim_start_matches("minecraft:");
+                    let lasting = g.potions.effects.get(short);
+                    if lasting.is_some_and(|e| !e.ends_within(keep - 1)) {
+                        return;
+                    }
+                    g.give_player_effect(effect, ticks, 0);
+                }),
+                MobEvent::CreakingMultiply { kind, home } => self.creaking_multiply(kind, home),
                 MobEvent::Push { target, velocity } => {
                     let v = Vec3::new(velocity[0], velocity[1], velocity[2]);
                     match target {

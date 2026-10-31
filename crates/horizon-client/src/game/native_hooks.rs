@@ -6,6 +6,10 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 22 adds creaking hearts in trees for content mods' creaking variants
+//! (`native_plant_creaking_heart`, `native_creaking_for_log` in
+//! `native_world.rs`).
+//!
 //! API 21 adds spawning from saved data, effects, fire, lightning, weather,
 //! projectiles and block search (`native_summon`, `native_mob_effect`,
 //! `native_player_effect`, `native_set_entity_fire`, `native_lightning`,
@@ -114,7 +118,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 21;
+pub(crate) const NATIVE_HOOKS_API: u32 = 22;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

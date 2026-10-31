@@ -127,6 +127,13 @@ pub(super) fn build(
                 solid: e.solid,
                 kinematic: e.kinematic,
                 carry_height: e.carry_height,
+                overlay: e
+                    .overlay
+                    .iter()
+                    .flat_map(|o| o.frames.iter().map(|t| t.atlas.clone()))
+                    .collect(),
+                overlay_ticks: e.overlay.as_ref().map_or(1, |o| o.frame_ticks),
+                creaking: e.creaking.clone(),
             });
         }
     }

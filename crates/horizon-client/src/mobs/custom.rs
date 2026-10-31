@@ -62,9 +62,21 @@ pub struct Entry {
     #[serde(default)]
     pub kinematic: bool,
     pub carry_height: Option<f64>,
+    /// Atlas names of a layer over the body as lit as the skin, shown in
+    /// turn, `overlay_ticks` each; empty for none.
+    #[serde(default)]
+    pub overlay: Vec<String>,
+    #[serde(default = "one_tick")]
+    pub overlay_ticks: u32,
+    /// A creaking variant's heart logs and ways.
+    #[serde(default)]
+    pub creaking: Option<horizon_mods::creaking::Creaking>,
 }
 fn one() -> f32 {
     1.0
+}
+fn one_tick() -> u32 {
+    1
 }
 
 /// The key of an entity's saved compound under which its per-entity
@@ -393,6 +405,11 @@ pub struct Custom {
     pub solid: bool,
     pub kinematic: bool,
     pub carry_height: Option<f64>,
+    /// A layer over the body as lit as the skin, its frames in turn.
+    pub overlay: Vec<String>,
+    pub overlay_ticks: u32,
+    /// A creaking variant's heart logs and ways (`creaking_heart.rs`, `creaking.rs`).
+    pub creaking: Option<horizon_mods::creaking::Creaking>,
 }
 
 /// One copy of each sound event name, kept for the game's life: mob sounds are `&'static str`.
@@ -648,6 +665,17 @@ impl Custom {
             .get(self.skin_index(m))
             .and_then(|g| g.as_deref());
         glow.into_iter().chain(self.emissive.as_deref())
+    }
+    /// The overlay frame shown at `age` ticks (Grafted Creaking's crimson and
+    /// warped layers change every 10).
+    pub fn overlay_at(&self, age: f32) -> Option<&str> {
+        if self.overlay.is_empty() {
+            return None;
+        }
+        let step = (age.max(0.0) as u32) / self.overlay_ticks.max(1);
+        self.overlay
+            .get(step as usize % self.overlay.len())
+            .map(String::as_str)
     }
     /// Adds the keyframe animations over the template's pose: `idle` all
     /// the time, `walk` as much as it walks, or in their place the one a mod

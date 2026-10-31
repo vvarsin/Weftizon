@@ -5,6 +5,7 @@ pub mod api_level;
 pub mod bedrock;
 pub mod behaviour;
 pub mod content;
+pub mod creaking;
 pub mod entity;
 #[cfg(feature = "index")]
 pub mod index;

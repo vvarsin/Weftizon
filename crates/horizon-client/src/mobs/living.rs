@@ -538,12 +538,14 @@ impl Mob {
             self.velocity = Vec3::ZERO;
         }
         let step = self.kind.step_height as f32;
+        let water_walker = super::creaking::walks_on_water(self);
         let mut scene = SceneCollisions {
             world: w.world,
             binding: w.collision,
-            subject: self.kind.flags.lava_walker.then(|| PowderSnowSubject {
+            subject: (self.kind.flags.lava_walker || water_walker).then(|| PowderSnowSubject {
                 fall_distance: self.fall_distance,
-                lava_walker: true,
+                lava_walker: self.kind.flags.lava_walker,
+                water_walker,
                 ..Default::default()
             }),
         };
@@ -1019,7 +1021,8 @@ impl Mob {
             self.position.y.floor() as i32,
             self.position.z.floor() as i32,
         );
-        let stands_on_fluid = self.kind.flags.lava_walker && w.fluid(x, y, z) == Fluid::Lava;
+        let stands_on_fluid = self.kind.flags.lava_walker && w.fluid(x, y, z) == Fluid::Lava
+            || super::creaking::walks_on_water(self) && w.fluid(x, y, z) == Fluid::Water;
         if self.is_in_liquid() && self.affected_by_fluids() && !stands_on_fluid {
             self.travel_in_fluid(w, input, events);
         } else {

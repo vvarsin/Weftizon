@@ -66,12 +66,82 @@ pub trait HeartHost {
     fn add_mob(&mut self, m: Mob);
     /// `ServerLevel.isSpawningMonsters` (rules and difficulty).
     fn spawning_monsters(&self) -> bool;
+    /// Content mods' creaking variants (`creaking.heart_logs` on an entity
+    /// whose template is the creaking), in id order. None: vanilla's pale
+    /// oak rules alone.
+    fn creaking_variants(&self) -> Vec<Arc<MobType>> {
+        Vec::new()
+    }
+}
+
+/// Whether block `name` is one a spec names: a block id or a `#tag`.
+fn names(w: &MobWorld, spec: &str, name: &str) -> bool {
+    match spec.strip_prefix('#') {
+        Some(tag) if tag.contains(':') => w.has_tag(tag, name),
+        Some(tag) => w.has_tag(&format!("minecraft:{tag}"), name),
+        None if spec.contains(':') => spec == name,
+        None => name.strip_prefix("minecraft:") == Some(spec),
+    }
+}
+/// The variant whose heart grows between logs `name`, if a mod declares one.
+fn variant_for_log<'v>(
+    w: &MobWorld,
+    variants: &'v [Arc<MobType>],
+    name: &str,
+) -> Option<&'v Arc<MobType>> {
+    variants.iter().find(|t| {
+        t.custom
+            .as_ref()
+            .and_then(|c| c.creaking.as_ref())
+            .is_some_and(|c| c.heart_logs.iter().any(|spec| names(w, spec, name)))
+    })
+}
+/// The variant a heart at `pos` grows: the one its first log along the axis
+/// (below, west or north) names; None for pale oak's (vanilla's creaking).
+pub fn heart_variant(
+    w: &MobWorld,
+    variants: &[Arc<MobType>],
+    state: BlockStateId,
+    pos: [i32; 3],
+) -> Option<Arc<MobType>> {
+    let axis = w
+        .registry
+        .state(state)
+        .and_then(|s| s.properties.get("axis").cloned())
+        .unwrap_or_else(|| "y".into());
+    let d = match axis.as_str() {
+        "x" => 4,
+        "z" => 2,
+        _ => 0,
+    };
+    let n = [
+        pos[0] + DIRECTIONS[d][0],
+        pos[1] + DIRECTIONS[d][1],
+        pos[2] + DIRECTIONS[d][2],
+    ];
+    let name = &*w.facts.get(w.world.block(n[0], n[1], n[2])).name;
+    variant_for_log(w, variants, name).cloned()
+}
+/// Whether the heart's variant (`None`: vanilla's) is awake now.
+fn variant_active(w: &MobWorld, variant: Option<&Arc<MobType>>) -> bool {
+    use horizon_mods::creaking::Active;
+    let when = variant
+        .and_then(|t| t.custom.as_ref())
+        .and_then(|c| c.creaking.as_ref())
+        .map_or(Active::Night, |c| c.active);
+    match when {
+        Active::Night => creaking_active(w),
+        Active::Day => !w.nether && !w.end && !creaking_active(w),
+        Active::Always => true,
+    }
 }
 
 /// Block reads during a tick see the tick's own changes.
 struct Blocks<'a, 'w> {
     w: &'a MobWorld<'w>,
     changed: Vec<([i32; 3], BlockStateId)>,
+    /// Mods' creaking variants: their logs count as a heart's.
+    variants: &'a [Arc<MobType>],
 }
 impl Blocks<'_, '_> {
     fn get(&self, p: [i32; 3]) -> BlockStateId {
@@ -101,7 +171,13 @@ impl Blocks<'_, '_> {
     }
     fn is_pale_oak_log(&self, p: [i32; 3]) -> bool {
         let s = self.get(p);
-        self.w.has_tag("minecraft:pale_oak_logs", self.name(s))
+        self.is_heart_log(s)
+    }
+    /// Pale oak logs, or a mod's creaking variant's logs.
+    fn is_heart_log(&self, s: BlockStateId) -> bool {
+        let name = self.name(s);
+        self.w.has_tag("minecraft:pale_oak_logs", name)
+            || variant_for_log(self.w, self.variants, name).is_some()
     }
 }
 
@@ -126,8 +202,9 @@ fn has_required_logs(b: &Blocks, state: BlockStateId, pos: [i32; 3]) -> bool {
             pos[2] + DIRECTIONS[d][2],
         ];
         let s = b.get(n);
-        b.w.has_tag("minecraft:pale_oak_logs", b.name(s))
-            && b.prop(s, "axis").as_deref() == Some(axis.as_str())
+        // A log without an axis (a mushroom stem) fits any heart, as Grafted
+        // Creaking reads it; vanilla's pale oak logs all have one.
+        b.is_heart_log(s) && b.prop(s, "axis").is_none_or(|a| a == axis)
     })
 }
 
@@ -327,9 +404,11 @@ pub fn creaking_hurt(
         return;
     }
     emit_particles(heart, pos, 20, false, lr, host, out);
+    let variants = host.creaking_variants();
     let mut b = Blocks {
         w,
         changed: Vec::new(),
+        variants: &variants,
     };
     let state = b.get(pos);
     if b.prop(state, "creaking_heart_state").as_deref() == Some("awake") {
@@ -376,10 +455,16 @@ fn spawn_protector(
     host: &mut impl HeartHost,
     out: &mut Vec<HeartEvent>,
 ) -> Option<u32> {
-    let kind = host.creaking_type()?;
+    // A mod's variant for the heart's logs, else vanilla's creaking.
+    let variants = host.creaking_variants();
+    let kind = match heart_variant(w, &variants, w.world.block(pos[0], pos[1], pos[2]), pos) {
+        Some(t) => t,
+        None => host.creaking_type()?,
+    };
     let b = Blocks {
         w,
         changed: Vec::new(),
+        variants: &variants,
     };
     for _ in 0..5 {
         let dx = lr.next_int_between_inclusive(-16, 16).unwrap_or(0);
@@ -553,13 +638,16 @@ pub fn server_tick(
         return;
     }
     heart.ticker = lr.next_int_bound(5).unwrap_or(0) + 20;
+    let variants = host.creaking_variants();
     let mut b = Blocks {
         w,
         changed: Vec::new(),
+        variants: &variants,
     };
     let state = b.get(pos);
-    // updateCreakingState
-    let active = creaking_active(w);
+    // updateCreakingState: a mod's variant keeps its own hours.
+    let variant = heart_variant(w, &variants, state, pos);
+    let active = variant_active(w, variant.as_ref());
     let wanted = if !has_required_logs(&b, state, pos) && heart.creaking.is_none() {
         "uprooted"
     } else if active {

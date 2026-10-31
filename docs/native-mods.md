@@ -105,6 +105,9 @@ API 21 adds spawning with gear, effects, lightning, weather, projectiles and blo
 ([Gear, effects, weather and projectiles](#gear-effects-weather-and-projectiles)). Bundles that use them need
 `"hooks": 21`.
 
+API 22 plants creaking hearts in trees for content mods' creaking variants
+([Creaking hearts in trees](#creaking-hearts-in-trees)). Bundles that use them need `"hooks": 22`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page. The first one shows a notice once (the first build downloads
@@ -415,6 +418,20 @@ they act on the level in place.
 Tested in a game (2026-10-31): a drowned summoned with a trident killed the player with it, a charged creeper
 glowed through the darkness the player was given, the thunder started, burning arrows flew, and the logs of a
 nearby tree were found.
+
+### Creaking hearts in trees
+
+API 22, `native_world.rs`, for content mods' creaking variants ([mods.md](mods.md#creaking-variants)):
+
+- **`native_plant_creaking_heart(center, radius, creaking)`**: the nearest trunk within `radius` (at most 32) of a
+  tree whose wood grows a creaking, a log with logs of the same wood above and below, becomes a dormant heart that
+  wakes at its creaking's hours. One heart to a tree. `creaking` (`invasion:spruce_creaking`) limits it to trunks
+  that grow that one. Returns the heart's position and the creaking it grows.
+- **`native_creaking_for_log(name)`**: the creaking a log grows: a mod's variant, `minecraft:creaking` for pale oak,
+  or none.
+
+Tested in a game (2026-10-31): in a dark oak forest, 4 hearts went into 4 trees (oak, birch, dark oak) and at
+midnight the oak and birch creakings came out while the dark oak one, active by day, did not.
 
 ### Events and questions
 

@@ -93,6 +93,17 @@ pub(crate) struct EntityFile {
     solid: Option<bool>,
     kinematic: Option<bool>,
     carry_height: Option<f64>,
+    /// A layer drawn over the body as lit as the skin: one texture or frames.
+    overlay: Option<crate::creaking::OverlayFile>,
+    /// A creaking variant's heart logs and ways (template `minecraft:creaking`).
+    creaking: Option<crate::creaking::Creaking>,
+}
+
+/// A layer drawn over the body as the skin is lit: its frames in turn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Overlay {
+    pub frames: Vec<Texture>,
+    pub frame_ticks: u32,
 }
 
 /// Values that replace the template's; unset keeps it.
@@ -165,6 +176,10 @@ pub struct Entity {
     pub kinematic: bool,
     /// How high above its top a player may ride it (Weft's `carry_height`).
     pub carry_height: Option<f64>,
+    /// A layer over the body as lit as the skin (`overlay`).
+    pub overlay: Option<Overlay>,
+    /// A creaking variant's heart logs and ways (`creaking`).
+    pub creaking: Option<crate::creaking::Creaking>,
 }
 
 pub(crate) fn resource_id(s: &str) -> bool {
@@ -306,6 +321,31 @@ impl Entity {
             }
         }
         let emissive = decl.emissive.as_deref().map(texture_of).transpose()?;
+        let overlay = match &decl.overlay {
+            None => None,
+            Some(crate::creaking::OverlayFile::One(t)) => Some(Overlay {
+                frames: vec![texture_of(t)?],
+                frame_ticks: 1,
+            }),
+            Some(crate::creaking::OverlayFile::Frames {
+                frames,
+                frame_ticks,
+            }) => {
+                if frames.is_empty() || *frame_ticks == 0 {
+                    return Err("overlay has 1 frame or more, frame_ticks 1 or more".into());
+                }
+                Some(Overlay {
+                    frames: frames
+                        .iter()
+                        .map(|f| texture_of(f))
+                        .collect::<Result<_, _>>()?,
+                    frame_ticks: *frame_ticks,
+                })
+            }
+        };
+        if let Some(c) = &decl.creaking {
+            c.check(&decl.template)?;
+        }
         let model = match &decl.model {
             Some(m) => resolve(m, "models", ".geo.json", false)?.1,
             None => own("models", ".geo.json"),
@@ -435,6 +475,8 @@ impl Entity {
             solid: decl.solid.unwrap_or(false),
             kinematic: decl.kinematic.unwrap_or(false),
             carry_height: decl.carry_height,
+            overlay,
+            creaking: decl.creaking,
         })
     }
 }

@@ -672,12 +672,17 @@ impl B {
                         *positives_left < 0
                     }
                 } else {
-                    // CreakingAi.isAttackTargetStillReachable
-                    let reachable = target == Who::Player
-                        && mem(m)
+                    // CreakingAi.isAttackTargetStillReachable; a mod's variant
+                    // that hunts mobs keeps one it still sees.
+                    let reachable = match target {
+                        Who::Player => mem(m)
                             .nearest_visible_targetable_players
                             .get()
-                            .is_some_and(|l| l.contains(&Who::Player));
+                            .is_some_and(|l| l.contains(&Who::Player)),
+                        Who::Mob(_) => {
+                            super::creaking::hunts_mobs(m) && visible_contains(m, cx.w, target)
+                        }
+                    };
                     !reachable
                 };
                 if !can_attack(m, cx.w, target) || tired || !alive || stop_when {

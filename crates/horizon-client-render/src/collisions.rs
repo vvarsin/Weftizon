@@ -48,6 +48,9 @@ pub struct PowderSnowSubject {
     /// A strider: lava sources hold it up (`canStandOnFluid`), on its
     /// `getLiquidCollisionShape`.
     pub lava_walker: bool,
+    /// A mob that stands on water as a strider on lava (a content mod's
+    /// creaking variant with `water_walk`, Grafted Creaking's mangrove).
+    pub water_walker: bool,
 }
 /// `Strider.getLiquidCollisionShape`: `Block.column(16.0, 0.0, 8.0)`.
 fn strider_liquid_shape() -> VoxelShape {
@@ -236,7 +239,10 @@ impl SceneCollisions<'_, '_> {
     }
     fn context(&self, bounds: Aabb) -> CollisionContext<'static> {
         let y = bounds.min_position().y;
-        if !self.subject.is_some_and(|s| s.lava_walker) {
+        if !self
+            .subject
+            .is_some_and(|s| s.lava_walker || s.water_walker)
+        {
             return CollisionContext::position(y);
         }
         CollisionContext::for_entity(
@@ -384,11 +390,16 @@ impl LiquidCollisionWorld for SceneCollisions<'_, '_> {
     type Error = io::Error;
     /// Only striders stand on fluids.
     fn entity_liquid_shape(&mut self, _: EntityIdentity) -> io::Result<VoxelShape> {
-        Ok(if self.subject.is_some_and(|s| s.lava_walker) {
-            strider_liquid_shape()
-        } else {
-            VoxelShape::empty()
-        })
+        Ok(
+            if self
+                .subject
+                .is_some_and(|s| s.lava_walker || s.water_walker)
+            {
+                strider_liquid_shape()
+            } else {
+                VoxelShape::empty()
+            },
+        )
     }
     fn fluid(&mut self, p: BlockPos) -> io::Result<FluidState> {
         FluidState::from_block(
@@ -400,8 +411,11 @@ impl LiquidCollisionWorld for SceneCollisions<'_, '_> {
     }
     /// `Strider.canStandOnFluid`: lava.
     fn entity_can_stand(&mut self, _: EntityIdentity, fluid: FluidState) -> io::Result<bool> {
-        Ok(self.subject.is_some_and(|s| s.lava_walker)
-            && matches!(fluid.kind(), FluidKind::Lava | FluidKind::FlowingLava))
+        Ok(self.subject.is_some_and(|s| {
+            s.lava_walker && matches!(fluid.kind(), FluidKind::Lava | FluidKind::FlowingLava)
+                || s.water_walker
+                    && matches!(fluid.kind(), FluidKind::Water | FluidKind::FlowingWater)
+        }))
     }
 }
 impl PowderSnowWorld for SceneCollisions<'_, '_> {

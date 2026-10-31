@@ -1197,6 +1197,7 @@ impl LevelAccess for GameLevel<'_> {
                 leather_boots: player.leather_boots,
                 walkable_type: false,
                 lava_walker: false,
+                water_walker: false,
             }),
         };
         let Ok(shape) = self

@@ -502,6 +502,16 @@ pub fn layers(m: &Mob, age: f32) -> Vec<Layer> {
         template_layers(m, age)
     };
     let (model, _) = body(m);
+    // Its overlay, lit as the skin (Grafted Creaking's `_layer` textures).
+    if let Some(texture) = c.overlay_at(age) {
+        v.push(Layer {
+            model: model.clone(),
+            texture: texture.to_owned(),
+            color: 0xFFFF_FFFF,
+            full_bright: false,
+            scroll: 0.0,
+        });
+    }
     for texture in c.bright_layers(m) {
         v.push(Layer {
             model: model.clone(),

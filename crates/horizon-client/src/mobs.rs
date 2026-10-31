@@ -550,6 +550,9 @@ impl MobTypes {
                 solid: e.solid,
                 kinematic: e.kinematic,
                 carry_height: e.carry_height,
+                overlay: e.overlay.clone(),
+                overlay_ticks: e.overlay_ticks,
+                creaking: e.creaking.clone(),
                 ..Default::default()
             };
             if let Some((model, animations)) = custom::load_model(root, &e) {
@@ -1388,6 +1391,22 @@ pub enum MobEvent {
     /// `ElderGuardian`'s curse on players within 50 blocks.
     ElderCurse {
         at: [f64; 3],
+    },
+    /// `MobEffectUtil.addEffectToPlayersAround`: `effect` for `ticks` on the
+    /// players within `radius` who don't have it for longer than `keep`
+    /// ticks (a creaking variant's blinding).
+    EffectPlayersAround {
+        at: [f64; 3],
+        radius: f64,
+        effect: &'static str,
+        ticks: i32,
+        keep: i32,
+    },
+    /// A creaking variant that multiplies when hurt: another of its kind
+    /// near its heart (`SpawnUtil.trySpawnMob(.., REINFORCEMENT, ..)`).
+    CreakingMultiply {
+        kind: &'static str,
+        home: [i32; 3],
     },
     /// `Entity.push`: add to a target's velocity.
     Push {

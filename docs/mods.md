@@ -355,6 +355,53 @@ Behaviour that needs code (every tick, on a hit, at death, on a right click) is 
 `native_entity_tick`, `native_entity_hurt`, `native_entity_died` and `native_entity_interact` name the declared
 entity's type ([native-mods.md#entities](native-mods.md#entities)).
 
+#### Overlay layers
+
+`overlay` draws a texture over the body, lit as the skin is (an `emissive` texture is full bright): one texture, or
+frames shown in turn.
+
+```json
+"overlay": "creaking/spruce_layer"
+"overlay": {"frames": ["creaking/crimson_layer1", "creaking/crimson_layer2"], "frame_ticks": 10}
+```
+
+#### Creaking variants
+
+An entity whose template is `minecraft:creaking` may carry a `creaking` block: a creaking heart between two logs it
+names grows this creaking instead of vanilla's, in the manner of
+[Grafted Creaking](https://github.com/DialingSpoon527/Grafted-Creaking) (MIT). The log below the heart (or west or
+north, along its axis) picks the variant. With no variant declared, hearts keep vanilla's pale oak rules.
+
+```json
+{
+  "template": "minecraft:creaking",
+  "texture": "creaking/birch",
+  "overlay": "creaking/birch_layer",
+  "creaking": {
+    "heart_logs": ["#minecraft:birch_logs"],
+    "active": "night",
+    "freeze": "gaze",
+    "hunts": "players",
+    "water_walk": false,
+    "multiply_when_hurt": false,
+    "blinds_players": 10
+  }
+}
+```
+
+- `heart_logs`: blocks or `#tags`. A log with no axis (`minecraft:mushroom_stem`) fits any heart.
+- `active`: when its heart is awake and it is out. `night` (vanilla's), `day` (it goes away at night), `always`.
+- `freeze`: `gaze` (vanilla's: it stands still while a player looks its way), `strict_gaze` (once awake only a
+  look straight at its eyes holds it), `inverted` (it moves only while looked at).
+- `hunts`: `players` (vanilla's), `nothing` (never wakes), `players_and_monsters` (monsters but creepers too),
+  `everything` (every living thing but creakings and creepers).
+- `water_walk`: water holds it up, as lava holds a strider. `multiply_when_hurt`: a player's hit while its heart
+  protects it calls another of its kind near the heart. `blinds_players`: Blindness for players in survival within
+  that many blocks.
+- Stats such as `attack_damage` and `speed` work as for any declared entity.
+
+A native mod plants hearts in trees with `native_plant_creaking_heart` ([native-mods.md](native-mods.md#creaking-hearts-in-trees)).
+
 ## Native mods
 
 Behaviour that needs code (a new key, a HUD, a tool that changes how mining works) is a native mod. It is a bundle of

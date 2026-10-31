@@ -308,6 +308,102 @@ impl Game<'_> {
     }
 }
 
+/// Creaking hearts in trees for native mods (API 22).
+#[allow(dead_code)]
+impl Game<'_> {
+    /// The creaking that grows between logs `name`: a content mod's variant
+    /// whose `creaking.heart_logs` names it (`invasion:spruce_creaking`),
+    /// `minecraft:creaking` for pale oak, else None.
+    pub(super) fn native_creaking_for_log(&self, name: &str) -> Option<String> {
+        if self.block_in_tag("minecraft:pale_oak_logs", name) {
+            return Some("minecraft:creaking".into());
+        }
+        let named = |spec: &str| match spec.strip_prefix('#') {
+            Some(t) if t.contains(':') => self.block_in_tag(t, name),
+            Some(t) => self.block_in_tag(&format!("minecraft:{t}"), name),
+            None if spec.contains(':') => spec == name,
+            None => name.strip_prefix("minecraft:") == Some(spec),
+        };
+        super::creaking::creaking_variants(self.res.mob_types())
+            .into_iter()
+            .find(|t| {
+                t.custom
+                    .as_ref()
+                    .and_then(|c| c.creaking.as_ref())
+                    .is_some_and(|c| c.heart_logs.iter().any(|s| named(s)))
+            })
+            .map(|t| t.id.to_string())
+    }
+    /// Plants a creaking heart in the trunk of a tree near `center` (within
+    /// `radius`, at most 32), as a pale oak grows one: a log with logs of the
+    /// same wood above and below, upright, turned into a heart that wakes at
+    /// its creaking's hours and grows the creaking its wood names (a mod's
+    /// variant, Grafted Creaking-style, or vanilla's in pale oak). With
+    /// `creaking`, only a trunk whose wood grows that one (`invasion:spruce_creaking`).
+    /// The heart's position and the creaking it grows, nearest first; None
+    /// when no such trunk is loaded. API 22.
+    pub(super) fn native_plant_creaking_heart(
+        &mut self,
+        center: [i32; 3],
+        radius: i32,
+        creaking: Option<&str>,
+    ) -> Option<([i32; 3], String)> {
+        let logs = self.native_find_blocks(center, radius, "#minecraft:logs", 4096);
+        let name_at = |g: &Self, p: [i32; 3]| {
+            g.res
+                .facts()
+                .get(g.world.block(p[0], p[1], p[2]))
+                .name
+                .clone()
+        };
+        let upright = |g: &Self, p: [i32; 3]| {
+            g.native_block(p)
+                .is_some_and(|b| b.properties.get("axis").is_none_or(|a| a == "y"))
+        };
+        for p in logs {
+            let (below, above) = ([p[0], p[1] - 1, p[2]], [p[0], p[1] + 1, p[2]]);
+            let wood = name_at(self, p);
+            if name_at(self, below) != wood || name_at(self, above) != wood {
+                continue;
+            }
+            if !(upright(self, p) && upright(self, below) && upright(self, above)) {
+                continue;
+            }
+            // One heart to a tree: none within 2 blocks across (a dark oak's
+            // trunk is 2 by 2) or 4 up or down.
+            let hearted = (-2..=2).any(|dx| {
+                (-2..=2).any(|dz| {
+                    (-4..=4).any(|dy| {
+                        name_at(self, [p[0] + dx, p[1] + dy, p[2] + dz]).as_ref()
+                            == "minecraft:creaking_heart"
+                    })
+                })
+            });
+            if hearted {
+                continue;
+            }
+            let Some(grows) = self.native_creaking_for_log(&wood) else {
+                continue;
+            };
+            if creaking.is_some_and(|c| c != grows) {
+                continue;
+            }
+            if self
+                // Dormant, as `getStateForPlacement` makes it between its
+                // logs: its own tick wakes it at its creaking's hours.
+                .native_set_block(
+                    p,
+                    "minecraft:creaking_heart[axis=y,natural=true,creaking_heart_state=dormant]",
+                )
+                .is_ok()
+            {
+                return Some((p, grows));
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::projectile_kind;
