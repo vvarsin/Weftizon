@@ -267,6 +267,83 @@ struct ItemFile {
     tags: Vec<String>,
     #[serde(default)]
     template_tags: bool,
+    fuel: Option<u32>,
+    food: Option<Food>,
+    durability: Option<u32>,
+    attack_damage: Option<f32>,
+    attack_speed: Option<f32>,
+    tool: Option<ItemTool>,
+}
+
+/// What Weft's item builder sets (`durability`, `tool`, `attack_damage`...)
+/// and its `fuel` and `food` components, written over the template's
+/// vanilla components when the content root is built.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemTraits {
+    /// Ticks it burns in a furnace, half that in a smoker or a blast
+    /// furnace, as vanilla's fuels (`minecraft:cooking_fuel`).
+    pub fuel: Option<u32>,
+    /// Eating it (`minecraft:food`, and `minecraft:consumable` when the
+    /// template has none).
+    pub food: Option<Food>,
+    /// Uses before it breaks (`minecraft:max_damage`); it stacks to 1.
+    pub durability: Option<u32>,
+    /// The damage a hit deals, as its tooltip shows it (a hand deals 1).
+    pub attack_damage: Option<f32>,
+    /// Full-strength attacks a second, as its tooltip shows it (a hand: 4).
+    pub attack_speed: Option<f32>,
+    /// Mining as vanilla's tools do (`minecraft:tool`).
+    pub tool: Option<ItemTool>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Food {
+    /// Hunger points it gives back (a drumstick on the bar is 2).
+    pub nutrition: u32,
+    /// Saturation it gives, as `minecraft:food` stores it (an apple: 2.4).
+    pub saturation: f32,
+    /// It can be eaten with a full hunger bar.
+    #[serde(default)]
+    pub always_eat: bool,
+}
+
+/// A tool's material tier: the blocks it can't harvest are
+/// `minecraft:incorrect_for_<tier>_tool`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Material {
+    Wooden,
+    Stone,
+    Copper,
+    Iron,
+    Gold,
+    Diamond,
+    Netherite,
+}
+impl Material {
+    pub fn name(self) -> &'static str {
+        match self {
+            Material::Wooden => "wooden",
+            Material::Stone => "stone",
+            Material::Copper => "copper",
+            Material::Iron => "iron",
+            Material::Gold => "gold",
+            Material::Diamond => "diamond",
+            Material::Netherite => "netherite",
+        }
+    }
+}
+
+/// Weft's `tool(kind)`, `tool_level(tier)` and `mining_speed(speed)`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ItemTool {
+    /// The blocks it mines fast: `minecraft:mineable/<kind>`.
+    pub kind: Tool,
+    pub tier: Material,
+    /// Its mining speed on those blocks (an iron pickaxe: 6).
+    pub speed: f32,
 }
 
 /// An item the mod adds: a vanilla template item's components under a new
@@ -284,6 +361,7 @@ pub struct Item {
     pub tags: Vec<String>,
     /// It also joins every vanilla item tag its template is in.
     pub template_tags: bool,
+    pub traits: ItemTraits,
 }
 
 #[derive(Debug)]
@@ -529,6 +607,16 @@ impl Content {
             }
             check_components(&file.components).map_err(|e| format!("{name}: {e}"))?;
             check_tags(&file.tags, &self.namespaces).map_err(|e| format!("{name}: {e}"))?;
+            let traits = ItemTraits {
+                fuel: file.fuel,
+                food: file.food,
+                durability: file.durability,
+                attack_damage: file.attack_damage,
+                attack_speed: file.attack_speed,
+                tool: file.tool,
+            };
+            check_traits(&traits, &file.components, file.max_stack_size)
+                .map_err(|e| format!("{name}: {e}"))?;
             if !ids.insert(item.clone()) {
                 return Err(format!("{name}: {item} is also a block's item"));
             }
@@ -540,6 +628,7 @@ impl Content {
                 components: file.components,
                 tags: file.tags,
                 template_tags: file.template_tags,
+                traits,
             });
         }
         for (entity, name) in entities {
@@ -599,6 +688,7 @@ impl Content {
                 components,
                 tags: Vec::new(),
                 template_tags: false,
+                traits: ItemTraits::default(),
             });
         }
         Ok(())
@@ -654,6 +744,75 @@ fn check_tags(tags: &[String], namespaces: &[String]) -> Result<(), String> {
                 "tag {tag:?} is not a tag of the mod's namespaces, minecraft or c (<namespace>:<path>, no #)"
             ));
         }
+    }
+    Ok(())
+}
+
+/// Item traits in the ranges vanilla's codecs take, each set once: a trait
+/// and the component it writes can't both be given.
+fn check_traits(
+    t: &ItemTraits,
+    components: &BTreeMap<String, serde_json::Value>,
+    max_stack_size: Option<u8>,
+) -> Result<(), String> {
+    let given = |c: &str| {
+        components.contains_key(&format!("minecraft:{c}"))
+            || components.contains_key(&format!("!minecraft:{c}"))
+    };
+    let pairs = [
+        ("fuel", t.fuel.is_some(), "cooking_fuel"),
+        ("food", t.food.is_some(), "food"),
+        ("durability", t.durability.is_some(), "max_damage"),
+        (
+            "attack_damage",
+            t.attack_damage.is_some(),
+            "attribute_modifiers",
+        ),
+        (
+            "attack_speed",
+            t.attack_speed.is_some(),
+            "attribute_modifiers",
+        ),
+        ("tool", t.tool.is_some(), "tool"),
+    ];
+    for (name, set, component) in pairs {
+        if set && given(component) {
+            return Err(format!(
+                "{name} and the component minecraft:{component} both set it; keep one"
+            ));
+        }
+    }
+    if t.fuel.is_some_and(|f| !(1..=1_000_000).contains(&f)) {
+        return Err("fuel is 1 to 1000000 ticks".into());
+    }
+    if let Some(food) = &t.food
+        && (food.nutrition > 1000 || !(food.saturation.is_finite() && food.saturation >= 0.0))
+    {
+        return Err("food nutrition is 0 to 1000, saturation 0 or more".into());
+    }
+    if let Some(d) = t.durability {
+        if d == 0 || d > 1_000_000_000 {
+            return Err("durability is 1 to 1000000000".into());
+        }
+        if max_stack_size.is_some_and(|n| n > 1) {
+            return Err("an item with durability stacks to 1".into());
+        }
+    }
+    if t.attack_damage
+        .is_some_and(|d| !(d.is_finite() && (0.0..=2048.0).contains(&d)))
+    {
+        return Err("attack_damage is 0 to 2048".into());
+    }
+    if t.attack_speed
+        .is_some_and(|s| !(s.is_finite() && s > 0.0 && s <= 1024.0))
+    {
+        return Err("attack_speed is over 0, up to 1024".into());
+    }
+    if t.tool
+        .as_ref()
+        .is_some_and(|tool| !(tool.speed.is_finite() && tool.speed > 0.0))
+    {
+        return Err("tool speed is over 0".into());
     }
     Ok(())
 }
@@ -917,6 +1076,89 @@ capabilities = ["registries"]
             ),
         ] {
             let e = refused("block-refused", decl, more);
+            assert!(e.contains(why), "{e}");
+        }
+    }
+
+    /// Fuel, food, durability, attack and tool read as Weft's item builder
+    /// sets them; out of range or set twice is refused.
+    #[test]
+    fn items_declare_fuel_food_durability_and_tools() {
+        let pick = br#"{"template": "minecraft:stick", "durability": 900, "attack_damage": 5,
+            "attack_speed": 1.2, "tool": {"kind": "pickaxe", "tier": "iron", "speed": 7.5}}"#;
+        let dust = br#"{"template": "minecraft:redstone", "fuel": 800,
+            "food": {"nutrition": 3, "saturation": 1.8, "always_eat": true}}"#;
+        let content = hmod(
+            "item-traits",
+            MANIFEST_TEXT,
+            &[
+                ("data/ruby/horizon/item/ruby_pickaxe.json", pick),
+                ("data/ruby/horizon/item/coal_dust.json", dust),
+            ],
+        )
+        .unwrap();
+        let by = |id: &str| &content.items.iter().find(|i| i.id == id).unwrap().traits;
+        let p = by("ruby:ruby_pickaxe");
+        assert_eq!(
+            (p.durability, p.attack_damage, p.attack_speed),
+            (Some(900), Some(5.0), Some(1.2))
+        );
+        assert_eq!(
+            p.tool,
+            Some(ItemTool {
+                kind: Tool::Pickaxe,
+                tier: Material::Iron,
+                speed: 7.5
+            })
+        );
+        let d = by("ruby:coal_dust");
+        assert_eq!(d.fuel, Some(800));
+        assert_eq!(
+            d.food,
+            Some(Food {
+                nutrition: 3,
+                saturation: 1.8,
+                always_eat: true
+            })
+        );
+        assert_eq!(p.fuel, None);
+
+        for (decl, why) in [
+            (
+                &br#"{"template": "minecraft:stick", "fuel": 100, "components": {"minecraft:cooking_fuel": {}}}"#[..],
+                "both set it",
+            ),
+            (
+                br#"{"template": "minecraft:stick", "durability": 5, "components": {"!minecraft:max_damage": {}}}"#,
+                "both set it",
+            ),
+            (br#"{"template": "minecraft:stick", "fuel": 0}"#, "fuel is"),
+            (br#"{"template": "minecraft:stick", "durability": 0}"#, "durability is"),
+            (
+                br#"{"template": "minecraft:stick", "durability": 9, "max_stack_size": 16}"#,
+                "stacks to 1",
+            ),
+            (br#"{"template": "minecraft:stick", "attack_speed": 0}"#, "attack_speed is"),
+            (br#"{"template": "minecraft:stick", "attack_damage": 5000}"#, "attack_damage is"),
+            (
+                br#"{"template": "minecraft:stick", "food": {"nutrition": 2, "saturation": -1}}"#,
+                "food nutrition",
+            ),
+            (
+                br#"{"template": "minecraft:stick", "tool": {"kind": "pickaxe", "tier": "ruby", "speed": 2}}"#,
+                "unknown variant",
+            ),
+            (
+                br#"{"template": "minecraft:stick", "tool": {"kind": "axe", "tier": "gold", "speed": 0}}"#,
+                "tool speed",
+            ),
+        ] {
+            let e = hmod(
+                "item-refused",
+                MANIFEST_TEXT,
+                &[("data/ruby/horizon/item/x.json", decl)],
+            )
+            .unwrap_err();
             assert!(e.contains(why), "{e}");
         }
     }

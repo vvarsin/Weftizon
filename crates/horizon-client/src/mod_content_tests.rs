@@ -1494,6 +1494,84 @@ fn declared_tools_tags_and_drops_reach_the_game() {
     fs::remove_dir_all(&scratch).unwrap();
 }
 
+/// Fuel, food, durability, attack and tool traits reach the game's item
+/// table as vanilla's own fuels, foods and tools have them.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn declared_item_traits_reach_the_game() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch =
+        std::env::temp_dir().join(format!("horizon-content-traits-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("gems"),
+        &[
+            ("horizon-mod.toml", &manifest("gems", "")),
+            (
+                "data/gems/horizon/item/ruby_pickaxe.json",
+                r#"{"template": "minecraft:stick", "durability": 900, "attack_damage": 5,
+                    "attack_speed": 1.2, "tool": {"kind": "pickaxe", "tier": "iron", "speed": 7.5}}"#,
+            ),
+            (
+                "data/gems/horizon/item/coal_dust.json",
+                r#"{"template": "minecraft:redstone", "fuel": 800,
+                    "food": {"nutrition": 3, "saturation": 1.8, "always_eat": true}}"#,
+            ),
+            // A trait over a template that has the component already.
+            (
+                "data/gems/horizon/item/ruby_sword.json",
+                r#"{"template": "minecraft:iron_sword", "attack_damage": 8}"#,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let assets = Assets::load(&root).unwrap();
+    let registry = assets.registry;
+    let facts = BlockFacts::load(&root, registry).unwrap();
+    let items = Items::load(&root, registry, &facts, &PackOverlay::NONE).unwrap();
+    let providers = crate::providers::Providers::load(&root);
+    let stack = |id: &str| crate::items::ItemStack::new(id, 1);
+
+    // Fuel: 800 ticks in a furnace, half in a blast furnace or smoker, as coal's 1600.
+    let dust = &items.items["gems:coal_dust"];
+    assert_eq!(
+        providers.burn_time(&items, &stack("gems:coal_dust"), false),
+        800
+    );
+    assert_eq!(
+        providers.burn_time(&items, &stack("gems:coal_dust"), true),
+        400
+    );
+    assert_eq!(
+        providers.burn_time(&items, &stack("minecraft:coal"), false),
+        1600
+    );
+    assert_eq!(dust.food, Some((3, 1.8)));
+    assert!(dust.can_always_eat && dust.consumable.is_some());
+    assert!(items.items["minecraft:redstone"].food.is_none());
+
+    // Durability, attack and tool, as an iron pickaxe has them.
+    let pick = &items.items["gems:ruby_pickaxe"];
+    let iron = &items.items["minecraft:iron_pickaxe"];
+    assert_eq!((pick.max_damage, pick.max_stack), (900, 1));
+    assert_eq!((pick.attack_damage, pick.attack_speed), (4.0, 1.2 - 4.0));
+    assert_eq!(iron.attack_speed, 1.2 - 4.0, "vanilla's own pickaxe speed");
+    let held = stack("gems:ruby_pickaxe");
+    assert_eq!(items.mining_speed(Some(&held), "minecraft:stone"), 7.5);
+    assert!(items.correct_for_drops(Some(&held), "minecraft:iron_ore"));
+    assert!(!items.correct_for_drops(Some(&held), "minecraft:obsidian"));
+    assert_eq!(items.mining_speed(Some(&held), "minecraft:dirt"), 1.0);
+    // The sword's base damage modifier is replaced, its speed kept.
+    let sword = &items.items["gems:ruby_sword"];
+    let iron_sword = &items.items["minecraft:iron_sword"];
+    assert_eq!(sword.attack_damage, 7.0);
+    assert_eq!(sword.attack_speed, iron_sword.attack_speed);
+    assert_eq!(sword.modifiers.len(), iron_sword.modifiers.len());
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
 /// A drop naming an item nobody registers fails the root with the reason.
 #[test]
 fn declared_drops_name_a_known_item() {

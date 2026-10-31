@@ -16,7 +16,7 @@
 //! content mod the root is the base root itself.
 use crate::{Result, blocks::MAP_COLORS};
 use horizon_core::geometry::{Aabb, Axis, ShapeOp, Vec3, VoxelShape};
-use horizon_mods::content::{Block, Content, Rarity};
+use horizon_mods::content::{Block, Content, ItemTraits, Rarity};
 use horizon_world::nbt::{self, JavaString, Limits, Tag};
 use serde::{Deserialize, Serialize, de};
 use std::{
@@ -329,6 +329,7 @@ struct NewItem {
     max_stack_size: Option<u8>,
     rarity: Option<Rarity>,
     components: Vec<(String, J)>,
+    traits: ItemTraits,
 }
 
 struct Plan<'a> {
@@ -362,6 +363,122 @@ fn patch_components(
         }
     }
     Ok(())
+}
+
+/// An item's declared traits over its components, in the forms vanilla's
+/// own items have them (coal's fuel, an apple's food, an iron pickaxe's
+/// durability, attack and tool).
+fn apply_traits(entry: &mut J, t: &ItemTraits) {
+    let obj =
+        |pairs: Vec<(&str, J)>| J::Obj(pairs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect());
+    let s = |v: &str| J::Str(v.to_owned());
+    if let Some(ticks) = t.fuel {
+        // time_coal's form: halved in a smoker or a blast furnace.
+        let burn = obj(vec![
+            ("type", s("minecraft:div")),
+            ("left", J::Num(ticks.into())),
+            (
+                "right",
+                obj(vec![
+                    ("type", s("minecraft:conditional")),
+                    ("condition", s("minecraft:block/fast_cooking")),
+                    (
+                        "on_false",
+                        s("minecraft:cooking/normal_burn_time_reduction_factor"),
+                    ),
+                    (
+                        "on_true",
+                        s("minecraft:cooking/fast_burn_time_reduction_factor"),
+                    ),
+                ]),
+            ),
+        ]);
+        let speed = entry
+            .get("minecraft:cooking_fuel")
+            .and_then(|f| f.get("speed_multiplier"))
+            .cloned()
+            .unwrap_or_else(|| s("minecraft:cooking/speed_default"));
+        entry.set(
+            "minecraft:cooking_fuel",
+            obj(vec![("burn_time", burn), ("speed_multiplier", speed)]),
+        );
+    }
+    if let Some(food) = &t.food {
+        let mut f = vec![
+            ("nutrition", J::Num(food.nutrition.into())),
+            ("saturation", J::f64(food.saturation.into())),
+        ];
+        if food.always_eat {
+            f.push(("can_always_eat", J::Bool(true)));
+        }
+        entry.set("minecraft:food", obj(f));
+        if entry.get("minecraft:consumable").is_none() {
+            entry.set("minecraft:consumable", obj(vec![]));
+        }
+    }
+    if let Some(uses) = t.durability {
+        entry.set("minecraft:max_damage", J::Num(uses.into()));
+        entry.set("minecraft:damage", J::Num(0.into()));
+        entry.set("minecraft:max_stack_size", J::Num(1.into()));
+    }
+    // The tooltip adds the player's base values: 1 damage, 4 attacks a second.
+    for (value, kind, id, base) in [
+        (
+            t.attack_damage,
+            "minecraft:attack_damage",
+            "minecraft:base_attack_damage",
+            1.0,
+        ),
+        (
+            t.attack_speed,
+            "minecraft:attack_speed",
+            "minecraft:base_attack_speed",
+            4.0,
+        ),
+    ] {
+        let Some(value) = value else {
+            continue;
+        };
+        let modifier = obj(vec![
+            ("type", s(kind)),
+            ("amount", J::f64(f64::from(value - base))),
+            ("id", s(id)),
+            ("operation", s("add_value")),
+            ("slot", s("mainhand")),
+        ]);
+        if !matches!(entry.get("minecraft:attribute_modifiers"), Some(J::Arr(_))) {
+            entry.set("minecraft:attribute_modifiers", J::Arr(Vec::new()));
+        }
+        if let Some(J::Arr(list)) = entry.get_mut("minecraft:attribute_modifiers") {
+            match list.iter_mut().find(|m| m.get("id") == Some(&s(id))) {
+                Some(old) => *old = modifier,
+                None => list.push(modifier),
+            }
+        }
+    }
+    if let Some(tool) = &t.tool {
+        let rules = J::Arr(vec![
+            obj(vec![
+                (
+                    "blocks",
+                    J::Str(format!(
+                        "#minecraft:incorrect_for_{}_tool",
+                        tool.tier.name()
+                    )),
+                ),
+                ("correct_for_drops", J::Bool(false)),
+            ]),
+            obj(vec![
+                (
+                    "blocks",
+                    J::Str(format!("#minecraft:mineable/{}", tool.kind.name())),
+                ),
+                ("correct_for_drops", J::Bool(true)),
+                ("speed", J::f64(tool.speed.into())),
+            ]),
+        ]);
+        entry.set("minecraft:tool", obj(vec![("rules", rules)]));
+    }
 }
 
 fn read_json(path: &Path) -> Result<J> {
@@ -573,6 +690,7 @@ impl<'a> Plan<'a> {
                     max_stack_size: None,
                     rarity: None,
                     components: Vec::new(),
+                    traits: ItemTraits::default(),
                 });
             }
         }
@@ -588,6 +706,7 @@ impl<'a> Plan<'a> {
                         .map(|(k, v)| Ok((k.clone(), serde_json::from_value(v.clone())?)))
                         .collect::<std::result::Result<_, serde_json::Error>>()
                         .map_err(|e| format!("{}: {e}", i.id))?,
+                    traits: i.traits.clone(),
                 });
             }
         }
@@ -756,6 +875,7 @@ impl<'a> Plan<'a> {
                 }
                 patch_components(&mut v, &i.components, &known)
                     .map_err(|e| format!("{}: {e}", i.rename.to))?;
+                apply_traits(&mut v, &i.traits);
             }
             map.set(&i.rename.to, v);
         }

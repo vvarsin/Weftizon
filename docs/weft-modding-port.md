@@ -133,7 +133,16 @@ clients without the same mods (they need the same content, as for blocks).
 - Spawn eggs for declared entities (`"spawn_egg": {"colors": [..]}` → an item copying a vanilla egg with
   `minecraft:entity_data`). **Done early**: the content root generates `<id>_spawn_egg`, plus a simple
   two-colour egg model/texture from the colours; a custom `item_model` names the mod's own model and texture.
-- Weft components/tags as data (`fuel`, `food`, `hardness`, `light`) over vanilla components.
+- ✅ Weft's item builder and its `fuel`/`food` components as data (`horizon_mods::content::ItemTraits`,
+  `mod_content.rs::apply_traits`): `fuel` (ticks, halved in smokers and blast furnaces as coal's),
+  `food` (nutrition, saturation, always_eat; eatable when the template isn't), `durability` (stacks to 1),
+  `attack_damage` and `attack_speed` (the tooltip's numbers, replacing the template's base modifiers),
+  `tool` (kind, tier, speed as vanilla's tools' rules). Each writes vanilla's own component form, and a trait
+  and its component in `components` together are refused. `hardness` and `light` were block properties
+  already; tags are above. Players' docs: [mods.md#fuel-food-durability-attack-and-tools](mods.md#fuel-food-durability-attack-and-tools).
+  Tests: `content.rs::items_declare_fuel_food_durability_and_tools`,
+  `mod_content_tests.rs::declared_item_traits_reach_the_game` (fuel times through the providers, food,
+  durability, attack modifiers and tool checks through the game's item table).
 - Events, questions, value chains and attributes as a hook-point family (`horizon_mods::events` names,
   native handlers), the built-in events of Weft mapped to Horizon's call sites.
 - Commands (typed builders over `horizon-command`) and a World API for native mods.

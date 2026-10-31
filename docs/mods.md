@@ -134,6 +134,30 @@ A block declaration can say what Weft's block builder says with `mineable`, `nee
 Tags and tiers are entries in the vanilla tags the game already reads, merged after the mod's own tag files;
 vanilla's entries and tables are never changed.
 
+#### Fuel, food, durability, attack and tools
+
+An item declaration can set what Weft's item builder and its `fuel` and `food` components set, without writing
+the vanilla components by hand:
+
+```json
+{ "template": "minecraft:stick",
+  "durability": 900, "attack_damage": 5, "attack_speed": 1.2,
+  "tool": { "kind": "pickaxe", "tier": "iron", "speed": 7.5 } }
+```
+
+- `fuel`: ticks it burns in a furnace (coal is 1600), half that in a smoker or a blast furnace, as vanilla's fuels.
+- `food`: `nutrition` (hunger points), `saturation` (as `minecraft:food` stores it: an apple's is 2.4) and
+  `always_eat`. The item becomes eatable if its template wasn't.
+- `durability`: uses before it breaks; the item then stacks to 1.
+- `attack_damage` and `attack_speed`: the numbers its tooltip shows (a bare hand deals 1 and attacks 4 times a
+  second); they replace the template's main-hand modifiers of the same kind and keep the others.
+- `tool`: `kind` (`pickaxe`, `axe`, `shovel`, `hoe`), `tier` (`wooden`, `stone`, `copper`, `iron`, `gold`,
+  `diamond`, `netherite`: what it can harvest, as vanilla's tools of that tier) and `speed` (an iron pickaxe's is 6).
+
+Each writes the component vanilla's own items have (`cooking_fuel`, `food` and `consumable`, `max_damage`,
+`attribute_modifiers`, `tool`) over the template's, so the game reads it as it reads vanilla's. Setting one of
+these and its component in `components` too is refused.
+
 The fence: files go in the mod's own namespaces (`assets/<id>/`,
 `data/<id>/`, and those its manifest lists), plus additions to vanilla tags
 (`data/minecraft/tags/`) and to the convention tags NeoForge and Fabric mods
