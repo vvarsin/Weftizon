@@ -9,8 +9,10 @@ The Weftizon roadmap is [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md); the detailed
 ## TheAfterdark
 
 TheAfterdark content/data port is tracked in [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md) under
-"TheAfterdark status": custom dimension/biomes load; legacy carvers and many custom feature types
-are supported; a few placed features still need work. The Teleport Catalyst and Teleport Block are
+"TheAfterdark status": custom dimension/biomes load; legacy carvers and custom feature types
+are supported; every placed feature in its biome list now decodes (0 skipped at load). A follow-up
+bug remains in `ModPatchFeature`: waterloggable random patches sample the offset itself, so all
+tries hit the same block. The Teleport Catalyst and Teleport Block are
 data-only content, not required to enter the dimension: `/execute in the_afterdark:afterdark` and
 `/tp` already work. For visual tests prefer an asynchronous local game rather than `--control`;
 the control-socket integrated start can stall at "Joining world..." while the asynchronous path
