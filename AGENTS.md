@@ -4,15 +4,14 @@ Minecraft: Java Edition 26.3 rewritten in Rust (wgpu), forked from Horizon and b
 Weft-style modding features. Vanilla is the specification wherever it has the feature. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
-The Weftizon roadmap is [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md); the detailed Weft feature port is [docs/weft-modding-port.md](docs/weft-modding-port.md). [ROADMAP.md](ROADMAP.md) is upstream Horizon's roadmap, inherited from the fork.
+The roadmap is [ROADMAP.md](ROADMAP.md): the fork's only roadmap, with the status and the detail of every part of
+the Weft port. Upstream Horizon's roadmap and its generator were removed on purpose; do not start a second roadmap.
 
 ## TheAfterdark
 
-TheAfterdark content/data port is tracked in [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md) under
-"TheAfterdark status": custom dimension/biomes load; legacy carvers and custom feature types
-are supported; every placed feature in its biome list now decodes (0 skipped at load). A follow-up
-bug remains in `ModPatchFeature`: waterloggable random patches sample the offset itself, so all
-tries hit the same block. The Teleport Catalyst and Teleport Block are
+TheAfterdark content/data port is tracked in [ROADMAP.md](ROADMAP.md) under
+"TheAfterdark": custom dimension/biomes load; legacy carvers and custom feature types
+are supported; every placed feature in its biome list now decodes (0 skipped at load). The Teleport Catalyst and Teleport Block are
 data-only content, not required to enter the dimension: `/execute in the_afterdark:afterdark` and
 `/tp` already work. For visual tests prefer an asynchronous local game rather than `--control`;
 the control-socket integrated start can stall at "Joining world..." while the asynchronous path
@@ -93,7 +92,7 @@ Game workspace (root `Cargo.toml`); `launcher/` and `crates/horizon-telemetry-se
 Other top-level folders: `tools/` (harnesses and dev scripts), `tests/` (Python unit tests: `python3 -m
 unittest discover -s tests`), `mods/horizon/src/test/java/dev/horizonlab/parity/` (Java oracles),
 `docs/`, `.github/workflows/`. The website (playhorizon.dev) is the private horizon-rust/horizon-site: its build
-reads `README.md`, `launcher/links.json`, `docs/api/`, `roadmap/roadmap.json` and `crates/horizon-theme/tokens.css` from main.
+reads `README.md`, `launcher/links.json`, `docs/api/` and `crates/horizon-theme/tokens.css` from main.
 
 ## Build and test fast
 

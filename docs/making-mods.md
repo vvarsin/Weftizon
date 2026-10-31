@@ -1,7 +1,7 @@
 # Making mods for Weftizon
 
 This is the practical guide. The reference pages are [mods.md](mods.md) for the formats,
-[native-mods.md](native-mods.md) for code mods, and [weft-modding-port.md](weft-modding-port.md)
+[native-mods.md](native-mods.md) for code mods, and [ROADMAP.md](../ROADMAP.md)
 for the Weftizon modding roadmap and what is still being ported.
 
 There are two kinds of mod:
@@ -402,13 +402,12 @@ Good first projects:
 - A small native mod that adds a HUD, key, command or block entity tick.
 - A resource-pack-style mod that replaces textures, models, sounds and language.
 
-Big projects that need the later phases:
+Big projects that need parts not finished yet:
 
-- Custom AI goals and entity callbacks (phase 2)
-- Machines with inventories, menus, energy and block entities (phase 4)
-- Liquids, biomes, dimensions and custom terrain (phase 5)
-- Screens, HUD builders, packets and settings (phase 6)
-- CTM, animated blocks, custom shaders and full Blockbench block/item models (phase 7)
+- Energy networks and systems for machines (part 4)
+- Liquids, custom terrain, ores and scatter (part 5)
+- Screens, HUD builders, packets and settings (part 6)
+- CTM, animated blocks, custom shaders and full Blockbench block/item models (part 7)
 
-The roadmap is in [weft-modding-port.md](weft-modding-port.md). Phase 1 is complete; phase 2 is
-in progress. If you need a feature that is not there yet, a native mod can often hook it today.
+The roadmap, with what each part has and lacks, is [ROADMAP.md](../ROADMAP.md). If you need a feature that is
+not there yet, a native mod can often hook it today.

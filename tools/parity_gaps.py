@@ -8,8 +8,7 @@
 The harness count says that what is tested passes; it can't say what isn't tested. The port ledger
 (tools/port_ledger.py) read every vanilla 26.3 method against Horizon's code, and the rows a player would notice went
 into ten issues, one per area, as a checklist: a row is ticked when it is fixed (or turns out wrong). The headline
-is the number of rows not ticked yet, and it goes down as gaps close. Run it after ticking rows, and in each weekly
-roadmap pass (roadmap/README.md).
+is the number of rows not ticked yet, and it goes down as gaps close. Run it after ticking rows.
 """
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # Horizon documentation
 
-To play, use [the launcher](../launcher/README.md); the project site is [playhorizon.dev](https://playhorizon.dev). These pages are for developers. What is being done now and next, the work board and how to help: [the hub](https://playhorizon.dev/hub) ([Horizon's ROADMAP.md](../ROADMAP.md), the fork's [ROADMAP-WEFTIZON.md](../ROADMAP-WEFTIZON.md), [roadmap/README.md](../roadmap/README.md) for keeping it current).
+To play, use [the launcher](../launcher/README.md); the project site is [playhorizon.dev](https://playhorizon.dev). These pages are for developers. What is being done now and next, the work board and how to help: [the hub](https://playhorizon.dev/hub) (this fork's roadmap: [ROADMAP.md](../ROADMAP.md)).
 
 ## Build and run
 
