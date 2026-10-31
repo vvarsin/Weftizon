@@ -6,6 +6,16 @@ Weft-style modding features. Vanilla is the specification wherever it has the fe
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
 The Weftizon roadmap is [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md); the detailed Weft feature port is [docs/weft-modding-port.md](docs/weft-modding-port.md). [ROADMAP.md](ROADMAP.md) is upstream Horizon's roadmap, inherited from the fork.
 
+## TheAfterdark
+
+TheAfterdark content/data port is tracked in [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md) under
+"TheAfterdark status": custom dimension/biomes load; legacy carvers and many custom feature types
+are supported; a few placed features still need work. The Teleport Catalyst and Teleport Block are
+data-only content, not required to enter the dimension: `/execute in the_afterdark:afterdark` and
+`/tp` already work. For visual tests prefer an asynchronous local game rather than `--control`;
+the control-socket integrated start can stall at "Joining world..." while the asynchronous path
+loads and renders the custom dimension.
+
 ## The Weftizon modding port
 
 Weftizon adds [Weft](https://github.com/VortexSo4/Weft)'s modding surface on top of Horizon, one complete feature
