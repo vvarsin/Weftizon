@@ -1,338 +1,290 @@
-//! Content mods' entities for native mods (docs/native-mods.md, "Entities",
-//! API 16): the hook points `native_entity_tick`, `native_entity_hurt`,
-//! `native_entity_died` and `native_entity_interact` (in `native_hooks.rs`)
-//! are called from here, and the helpers below read and change an entity by
-//! its id. Weft's `on_tick`, `on_hurt`, `on_death` and `on_interact` for the
-//! entities a mod declares in `data/<id>/horizon/entity/`. They run where the
-//! world is simulated (single player's server thread, a LAN host, a dedicated
-//! server), never on a client.
-use super::Game;
-use horizon_client::mobs::{Damage, Mob, Who, custom};
+//! Entities for native server mods (docs/native-mods.md, "Entities"): spawn
+//! any entity from its compound as `/summon` does, and move, show or remove
+//! the entities Horizon keeps without simulating them (displays, markers,
+//! interactions), which is what a mod needs for models that move: an
+//! `item_display` showing an item model from the mod's assets. They act where
+//! the world is simulated, in the level in place, which each names by its
+//! `dimension` (`minecraft:overworld`) as `native_set_block` does.
+use super::{Game, commands::Target};
 use horizon_core::geometry::Vec3;
-use horizon_world::nbt::Tag;
+use horizon_world::nbt::{Compound, Tag};
 
-/// A mod's entity as a native mod reads it (`native_entity`).
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeEntity {
-    pub(crate) id: u32,
-    /// Its type, `mymod:ghost`.
-    pub(crate) kind: String,
-    pub(crate) position: [f64; 3],
-    pub(crate) velocity: [f64; 3],
-    /// Where it faces and looks, degrees.
-    pub(crate) yaw: f32,
-    pub(crate) pitch: f32,
-    pub(crate) health: f32,
-    pub(crate) max_health: f32,
-    pub(crate) on_ground: bool,
-    /// Ticks since it was made (or loaded).
-    pub(crate) age: u32,
-    /// What it attacks: a player (`Some(None)`, the one it sees) or an
-    /// entity (`Some(Some(id))`).
-    pub(crate) target: Option<Option<u32>>,
-    /// The animation a mod plays on it (`native_play_animation`).
-    pub(crate) animation: Option<String>,
+/// A display's transformation and interpolation (`Display`'s
+/// `transformation`, `interpolation_duration` and `teleport_duration`):
+/// a translation, a left rotation (a quaternion `[x, y, z, w]`), a scale and a
+/// right rotation, eased over `interpolation` ticks from what it showed;
+/// `teleport` ticks ease a move (0 to 59).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct NativeDisplay {
+    pub translation: [f32; 3],
+    pub left_rotation: [f32; 4],
+    pub scale: [f32; 3],
+    pub right_rotation: [f32; 4],
+    pub interpolation: i32,
+    pub teleport: i32,
 }
 
-/// A hit as a native mod hears it (`native_entity_hurt`, `native_entity_died`).
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeDamage {
-    /// The damage type, `minecraft:player_attack`, `minecraft:fall`...
-    pub(crate) kind: &'static str,
-    /// What it took of the entity's health.
-    pub(crate) amount: f32,
-    /// A player hit it (their attack, arrow, trident...).
-    pub(crate) by_player: bool,
-    /// The entity that hit it, when it was a mob.
-    pub(crate) attacker: Option<u32>,
-}
-
-impl NativeDamage {
-    fn of(d: &Damage, amount: f32) -> Self {
-        let by_player = d.attacker == Some(Who::Player);
+impl Default for NativeDisplay {
+    fn default() -> Self {
         Self {
-            kind: super::creatures::damage_type(d.kind, by_player),
-            amount,
-            by_player,
-            attacker: match d.attacker {
-                Some(Who::Mob(id)) => Some(id),
-                _ => None,
-            },
+            translation: [0.0; 3],
+            left_rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+            right_rotation: [0.0, 0.0, 0.0, 1.0],
+            interpolation: 0,
+            teleport: 0,
         }
     }
 }
 
-fn view(m: &Mob, kind: &str) -> NativeEntity {
-    NativeEntity {
-        id: m.id,
-        kind: kind.to_owned(),
-        position: [m.position.x, m.position.y, m.position.z],
-        velocity: [m.velocity.x, m.velocity.y, m.velocity.z],
-        yaw: m.yaw,
-        pitch: m.head_pitch,
-        health: m.health,
-        max_health: m.attrs.max_health,
-        on_ground: m.on_ground,
-        age: m.age,
-        target: m.ai.target.map(|t| match t {
-            Who::Player => None,
-            Who::Mob(id) => Some(id),
-        }),
-        animation: m.extra.animation.as_ref().map(|a| a.name.clone()),
+impl NativeDisplay {
+    /// Whether every value is finite, the quaternions aren't zero and the
+    /// durations are in range.
+    fn valid(&self) -> bool {
+        let finite = |v: &[f32]| v.iter().all(|x| x.is_finite());
+        let unit = |q: &[f32; 4]| q.iter().map(|x| x * x).sum::<f32>() > 1.0e-12;
+        finite(&self.translation)
+            && finite(&self.left_rotation)
+            && finite(&self.scale)
+            && finite(&self.right_rotation)
+            && unit(&self.left_rotation)
+            && unit(&self.right_rotation)
+            && (0..=1_000_000).contains(&self.interpolation)
+            && (0..=59).contains(&self.teleport)
     }
-}
-
-/// Calls into the hook points.
-impl Game<'_> {
-    /// `native_entity_tick` for each type of a mod's entities with any alive
-    /// in this level, its ids in the level's order, types by id.
-    pub(super) fn native_entity_ticks(&mut self) {
-        for (entity, ids) in custom::tick_batches(&self.mobs) {
-            self.native_entity_tick(entity, &ids);
-        }
-    }
-    /// `native_entity_hurt` for the hits mods' entities took since the last
-    /// call, in the level's order.
-    pub(super) fn native_entity_hurts(&mut self) {
-        for (entity, id, d, amount) in custom::take_hurts(&mut self.mobs) {
-            self.native_entity_hurt(entity, id, &NativeDamage::of(&d, amount));
-        }
-    }
-    /// `native_entity_died` as a mod's entity dies (`LivingEntity.die`),
-    /// before its loot drops.
-    pub(super) fn native_entity_dies(&mut self, m: &Mob) {
-        if let Some(c) = &m.kind.custom {
-            let damage = m
-                .last_damage
-                .map(|(d, _)| NativeDamage::of(&d, m.last_hurt));
-            self.native_entity_died(c.id, m.id, damage.as_ref());
-        }
-    }
-    /// `native_entity_interact` for a player's right click on `self.mobs[index]`:
-    /// true when a mod took it.
-    pub(super) fn native_entity_interacts(&mut self, index: usize) -> bool {
-        let Some(c) = self.mobs.get(index).and_then(|m| m.kind.custom.clone()) else {
-            return false;
+    /// Writes its keys into a display's compound. `start` is the
+    /// interpolation's start delay: entity data reaches clients only when it
+    /// changes (as vanilla's does unless forced), and a display restarts its
+    /// interpolation only when the start comes, so each write flips it
+    /// between 0 and -1.
+    fn write(&self, tag: &mut Compound) {
+        let floats = |v: &[f32]| Tag::List(v.iter().map(|x| Tag::Float(x.to_bits())).collect());
+        let mut t = Compound::new();
+        t.insert("translation".into(), floats(&self.translation));
+        t.insert("left_rotation".into(), floats(&self.left_rotation));
+        t.insert("scale".into(), floats(&self.scale));
+        t.insert("right_rotation".into(), floats(&self.right_rotation));
+        tag.insert("transformation".into(), Tag::Compound(t));
+        tag.insert(
+            "interpolation_duration".into(),
+            Tag::Int(self.interpolation),
+        );
+        tag.insert("teleport_duration".into(), Tag::Int(self.teleport));
+        let start = match tag.get(&"start_interpolation".into()) {
+            Some(Tag::Int(0)) => -1,
+            _ => 0,
         };
-        let id = self.mobs[index].id;
-        let stack = self.held().cloned();
-        let mut claimed = false;
-        self.native_entity_interact(c.id, id, stack.as_ref(), &mut claimed);
-        claimed
+        tag.insert("start_interpolation".into(), Tag::Int(start));
     }
 }
 
-/// Helpers for native mods' entities, kept as stable as the hook points.
-// Native mods use these; nothing in Horizon does.
+/// Whether a position is one `/summon` takes.
+fn position_ok(pos: [f64; 3]) -> bool {
+    pos.iter().all(|v| v.is_finite())
+        && pos[0].abs() < 30_000_000.0
+        && pos[2].abs() < 30_000_000.0
+        && (-20_000_000.0..20_000_000.0).contains(&pos[1])
+}
+
+/// The entity id a summoned stack's root is known by.
+fn target_id(t: Target) -> Option<u32> {
+    match t {
+        Target::Mob(id)
+        | Target::Item(id)
+        | Target::Orb(id)
+        | Target::Projectile(id)
+        | Target::Stand(id)
+        | Target::Frame(id)
+        | Target::Painting(id)
+        | Target::Boat(id)
+        | Target::Cart(id)
+        | Target::Other(id)
+        | Target::Crystal(id)
+        | Target::Dragon(id) => Some(id),
+        Target::Player | Target::Guest(_) => None,
+    }
+}
+
 #[allow(dead_code)]
 impl Game<'_> {
-    fn native_mob(&self, id: u32) -> Option<&Mob> {
-        self.mobs.iter().find(|m| m.id == id && !m.removed)
+    /// Whether this game simulates the level `dimension`.
+    fn native_entity_level(&self, dimension: &str) -> bool {
+        (self.serving.is_some() || self.options.dedicated.is_some()) && dimension == self.dim.id()
     }
-    fn native_mob_mut(&mut self, id: u32) -> Option<&mut Mob> {
-        self.mobs.iter_mut().find(|m| m.id == id && !m.removed)
-    }
-    /// Entity `id` of this level, when it is a mob (a mod's or vanilla's).
-    pub(super) fn native_entity(&self, id: u32) -> Option<NativeEntity> {
-        self.native_mob(id).map(|m| view(m, &m.kind.id))
-    }
-    /// The ids of this level's alive entities of type `entity` (`mymod:ghost`).
-    pub(super) fn native_entities_of(&self, entity: &str) -> Vec<u32> {
-        self.mobs
-            .iter()
-            .filter(|m| !m.removed && m.alive() && *m.kind.id == *entity)
-            .map(|m| m.id)
-            .collect()
-    }
-    /// Sets its motion (blocks a tick); it is sent to the players at once.
-    pub(super) fn native_set_entity_velocity(&mut self, id: u32, velocity: [f64; 3]) -> bool {
-        if !velocity.iter().all(|v| v.is_finite()) {
-            return false;
-        }
-        let Some(m) = self.native_mob_mut(id) else {
-            return false;
-        };
-        m.velocity = Vec3::new(velocity[0], velocity[1], velocity[2]);
-        m.needs_sync = true;
-        true
-    }
-    /// Moves it to `position` at once, as `/tp` does.
-    pub(super) fn native_teleport_entity(&mut self, id: u32, position: [f64; 3]) -> bool {
-        if !position.iter().all(|v| v.is_finite()) {
-            return false;
-        }
-        let Some(m) = self.native_mob_mut(id) else {
-            return false;
-        };
-        let at = Vec3::new(position[0], position[1], position[2]);
-        m.position = at;
-        m.previous = at;
-        m.needs_sync = true;
-        true
-    }
-    /// Hurts it by `amount` of generic damage (armour and invulnerable time
-    /// count, as for any hit); false when the hit didn't land.
-    pub(super) fn native_hurt_entity(&mut self, id: u32, amount: f32) -> bool {
-        if !(amount.is_finite() && amount > 0.0) {
-            return false;
-        }
-        self.native_mob_mut(id).is_some_and(|m| {
-            m.damage(
-                amount,
-                Damage::of(horizon_client::mobs::DamageKind::Generic),
-            )
-        })
-    }
-    /// Gives back up to `amount` of its health (`LivingEntity.heal`).
-    pub(super) fn native_heal_entity(&mut self, id: u32, amount: f32) -> bool {
-        if !(amount.is_finite() && amount > 0.0) {
-            return false;
-        }
-        let Some(m) = self.native_mob_mut(id) else {
-            return false;
-        };
-        if !m.alive() {
-            return false;
-        }
-        m.health = (m.health + amount).min(m.attrs.max_health);
-        true
-    }
-    /// Takes it out of the world with no death and no loot (`discard`).
-    pub(super) fn native_remove_entity(&mut self, id: u32) -> bool {
-        let Some(m) = self.native_mob_mut(id) else {
-            return false;
-        };
-        m.removed = true;
-        true
-    }
-    /// Plays its animation `name` in place of idle and walk: once, or over
-    /// and over when `repeat`; `""` goes back to idle and walk (Weft's
-    /// `play_animation`). Every player who sees it sees it. False when it is
-    /// not a mod's entity.
-    pub(super) fn native_play_animation(&mut self, id: u32, name: &str, repeat: bool) -> bool {
-        let Some(m) = self.native_mob_mut(id) else {
-            return false;
-        };
-        if m.kind.custom.is_none() {
-            return false;
-        }
-        m.play_animation(name, repeat);
-        true
-    }
-    /// Spawns a mob of type `kind` (`mymod:ghost`, `minecraft:zombie`;
-    /// no namespace is vanilla's) at `position` in this level, made as a
-    /// natural spawn makes it (its equipment, variant and difficulty rolls)
-    /// but persistent, so it never despawns (Weft's `spawn`). Every player
-    /// near it sees it. Its id, or None when `kind` is not a mob type, the
-    /// position is not a number, or it is a monster on Peaceful (as
-    /// `/summon` refuses it). API 20.
-    pub(super) fn native_spawn_entity(&mut self, kind: &str, position: [f64; 3]) -> Option<u32> {
-        if !position.iter().all(|v| v.is_finite()) {
-            return None;
-        }
-        let kind = if kind.contains(':') {
-            kind.to_owned()
-        } else {
-            format!("minecraft:{kind}")
-        };
-        let monster = self.res.mob_types().get(&kind)?.category == "monster";
-        if monster && self.ui.difficulty == 0 {
-            return None;
-        }
-        self.spawn_mob(&kind, position, true)
-    }
-    /// Sends it walking to `target` by itself, around obstacles, at `speed`
-    /// times its movement speed (Weft's `navigate`, vanilla's
-    /// `PathNavigation.moveTo`); 0 or less stops it. True when a path was
-    /// found. The path is the mob's own navigation: a goal that moves it
-    /// (melee, wander) may take it over on a later tick, as in vanilla, so
-    /// call it again as the target moves. API 20.
-    pub(super) fn native_navigate(&mut self, id: u32, target: [f64; 3], speed: f64) -> bool {
-        let Some(i) = self.mobs.iter().position(|m| m.id == id && !m.removed) else {
-            return false;
-        };
-        if !(speed.is_finite() && speed > 0.0) {
-            self.mobs[i].nav_stop();
-            return false;
-        }
-        if !target.iter().all(|v| v.is_finite()) {
-            return false;
-        }
-        let mut mobs = std::mem::take(&mut self.mobs);
-        let found = mobs[i].nav_move_to(&self.mob_world_base(&[]), target, speed);
-        self.mobs = mobs;
-        found
-    }
-    /// Whether it still walks a path (`native_navigate`'s or its goals'):
-    /// false once it arrived, the path ran out or it got stuck. API 20.
-    pub(super) fn native_navigating(&self, id: u32) -> bool {
-        self.native_mob(id)
-            .is_some_and(|m| m.ai.nav.is_in_progress())
-    }
-    /// Whether the path it walks ends at its target (`Path.canReach`). A
-    /// target behind a wall gets a path to the nearest block it can reach:
-    /// false then, and a mob that should dig through knows to. API 20.
-    pub(super) fn native_path_reaches(&self, id: u32) -> bool {
-        self.native_mob(id)
-            .and_then(|m| m.ai.nav.path.as_ref())
-            .is_some_and(|p| p.reached)
-    }
-    /// Value `name` (`mymod:mana`) of its per-entity components (Weft's
-    /// `entity_component`): its type's declared value until a mod changes
-    /// it, saved with it. None when it has no such value.
-    pub(super) fn native_entity_component(&self, id: u32, name: &str) -> Option<Tag> {
-        self.native_mob(id)?
-            .extra
-            .components
-            .get(&name.into())
-            .cloned()
-    }
-    /// Sets value `name` of its per-entity components; `None` takes it out.
-    /// Any mob may carry them (Weft's `attach` on another's kind); the world
-    /// saves them with it. Server-side only: clients don't get them.
-    pub(super) fn native_set_entity_component(
+    /// Spawns an entity of `kind` (`minecraft:item_display`) at `pos` in the
+    /// level in place, `dimension`, from `nbt` (its compound, as `/summon
+    /// <kind> <pos> <nbt>` takes it; passengers included): its id. None on a
+    /// client's copy of the world, for another dimension, a position outside
+    /// `/summon`'s bounds, a chunk that isn't loaded, a kind Horizon can't
+    /// load, or one a mod kept out (`native_entity_join_level`). API
+    /// 59.
+    pub(super) fn native_summon(
         &mut self,
+        dimension: &str,
+        kind: &str,
+        pos: [f64; 3],
+        nbt: Compound,
+    ) -> Option<u32> {
+        if !self.native_entity_level(dimension) || !position_ok(pos) {
+            return None;
+        }
+        let chunk = ((pos[0].floor() as i32) >> 4, (pos[2].floor() as i32) >> 4);
+        if !self.world.chunks.contains_key(&chunk) {
+            return None;
+        }
+        let mut tag = nbt;
+        tag.insert("id".into(), Tag::String(kind.into()));
+        tag.insert(
+            "Pos".into(),
+            Tag::List(pos.map(|v| Tag::Double(v.to_bits())).to_vec()),
+        );
+        let from = self.mobs.len();
+        let target = self.spawn_entity_from_nbt(Tag::Compound(tag));
+        self.native_mobs_joined(from, false);
+        target.and_then(target_id)
+    }
+    /// Moves entity `id`, one Horizon keeps without simulating (a display, a
+    /// marker, an interaction), to `pos` facing `yaw` and `pitch` in degrees;
+    /// a display eases there over its `teleport` ticks. False for no such
+    /// entity, another dimension or a position outside `/summon`'s bounds.
+    /// Mobs move with `native_teleport_mob`. API 59.
+    pub(super) fn native_move_entity(
+        &mut self,
+        dimension: &str,
         id: u32,
-        name: &str,
-        value: Option<Tag>,
+        pos: [f64; 3],
+        yaw: f32,
+        pitch: f32,
     ) -> bool {
-        let Some(m) = self.native_mob_mut(id) else {
+        if !self.native_entity_level(dimension)
+            || !position_ok(pos)
+            || !yaw.is_finite()
+            || !pitch.is_finite()
+        {
+            return false;
+        }
+        let Some(o) = self.others.iter_mut().find(|o| o.id == id) else {
             return false;
         };
-        match value {
-            Some(v) => m.extra.components.insert(name.into(), v),
-            None => m.extra.components.remove(&name.into()),
+        o.position = Vec3::new(pos[0], pos[1], pos[2]);
+        o.yaw = yaw.rem_euclid(360.0);
+        o.pitch = pitch.clamp(-90.0, 90.0);
+        true
+    }
+    /// Sets the transformation and interpolation of display `id` (a
+    /// `block_display`, `item_display` or `text_display`): players see it
+    /// ease from what it showed over `interpolation` ticks. False for no such
+    /// display, another dimension, or a value that isn't finite, a zero
+    /// quaternion, or a duration out of range. API 59.
+    pub(super) fn native_set_display(
+        &mut self,
+        dimension: &str,
+        id: u32,
+        display: &NativeDisplay,
+    ) -> bool {
+        if !self.native_entity_level(dimension) || !display.valid() {
+            return false;
+        }
+        let is_display = self.others.iter().any(|o| {
+            o.id == id
+                && matches!(
+                    o.kind.as_str(),
+                    "minecraft:block_display" | "minecraft:item_display" | "minecraft:text_display"
+                )
+        });
+        if !is_display {
+            return false;
+        }
+        let tag = self
+            .persist
+            .raw
+            .entry(id)
+            .or_insert_with(|| Tag::Compound(Compound::new()));
+        let Tag::Compound(c) = tag else {
+            return false;
         };
+        display.write(c);
+        true
+    }
+    /// Removes entity `id`, one Horizon keeps without simulating, as `/kill`
+    /// does (it drops nothing and isn't saved). False for no such entity or
+    /// another dimension. Mobs go with `native_remove_mob`. API
+    /// 59.
+    pub(super) fn native_remove_entity(&mut self, dimension: &str, id: u32) -> bool {
+        if !self.native_entity_level(dimension) || !self.others.iter().any(|o| o.id == id) {
+            return false;
+        }
+        self.others.retain(|o| o.id != id);
+        self.persist.raw.remove(&id);
         true
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::NativeDamage;
-    use horizon_client::mobs::{Damage, DamageKind};
+    use super::*;
 
-    /// A hit as the hooks hear it: its damage type, who dealt it.
     #[test]
-    fn hits_name_their_damage_type_and_attacker() {
-        let by_player = NativeDamage::of(&Damage::player([0.0; 3]), 4.0);
+    fn a_display_write_flips_the_start_so_clients_restart_the_ease() {
+        let display = NativeDisplay {
+            translation: [0.0, 1.5, 0.0],
+            scale: [2.0; 3],
+            interpolation: 10,
+            ..NativeDisplay::default()
+        };
+        assert!(display.valid());
+        let mut tag = Compound::new();
+        display.write(&mut tag);
+        assert_eq!(tag.get(&"start_interpolation".into()), Some(&Tag::Int(0)));
         assert_eq!(
-            by_player,
-            NativeDamage {
-                kind: "minecraft:player_attack",
-                amount: 4.0,
-                by_player: true,
-                attacker: None,
+            tag.get(&"interpolation_duration".into()),
+            Some(&Tag::Int(10))
+        );
+        display.write(&mut tag);
+        assert_eq!(tag.get(&"start_interpolation".into()), Some(&Tag::Int(-1)));
+        display.write(&mut tag);
+        assert_eq!(tag.get(&"start_interpolation".into()), Some(&Tag::Int(0)));
+        let Some(Tag::Compound(t)) = tag.get(&"transformation".into()) else {
+            panic!("no transformation");
+        };
+        assert_eq!(
+            t.get(&"scale".into()),
+            Some(&Tag::List(vec![Tag::Float(2.0f32.to_bits()); 3]))
+        );
+    }
+
+    #[test]
+    fn a_display_refuses_values_it_cant_show() {
+        let ok = NativeDisplay::default();
+        assert!(ok.valid());
+        assert!(
+            !NativeDisplay {
+                scale: [f32::NAN, 1.0, 1.0],
+                ..ok
             }
+            .valid()
         );
-        let by_mob = NativeDamage::of(&Damage::mob(12, [0.0; 3]), 2.0);
-        assert_eq!(
-            (by_mob.kind, by_mob.by_player, by_mob.attacker),
-            ("minecraft:mob_attack", false, Some(12))
+        assert!(
+            !NativeDisplay {
+                left_rotation: [0.0; 4],
+                ..ok
+            }
+            .valid()
         );
-        let fall = NativeDamage::of(&Damage::of(DamageKind::Fall), 1.0);
-        assert_eq!((fall.kind, fall.attacker), ("minecraft:fall", None));
+        assert!(!NativeDisplay { teleport: 60, ..ok }.valid());
+        assert!(
+            !NativeDisplay {
+                interpolation: -1,
+                ..ok
+            }
+            .valid()
+        );
+    }
+
+    #[test]
+    fn summon_positions_are_summons() {
+        assert!(position_ok([0.5, 64.0, 0.5]));
+        assert!(!position_ok([3.0e7, 64.0, 0.5]));
+        assert!(!position_ok([0.5, f64::NAN, 0.5]));
     }
 }

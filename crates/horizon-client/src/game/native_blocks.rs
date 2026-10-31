@@ -1,4 +1,4 @@
-//! Blocks for native mods (docs/native-mods.md, "Blocks", API 17): Weft's
+//! Blocks for native mods (docs/native-mods.md, "Blocks", API 64): Weft's
 //! block `on_use` and `on_scheduled` and the World API's blocks. The hook
 //! points `native_use_block` and `native_block_tick` (in `native_hooks.rs`)
 //! are called from here, and the helpers below read and change the level's
@@ -83,14 +83,18 @@ impl Game<'_> {
 impl Game<'_> {
     /// The block at `pos` in the level the hook runs in, with its
     /// properties; None outside the world or where no chunk is loaded.
-    pub(super) fn native_block(&self, pos: [i32; 3]) -> Option<BlockState> {
+    pub(super) fn native_block_at(&self, pos: [i32; 3]) -> Option<BlockState> {
         super::native_world_read::read_block(&self.world, self.pack.assets.registry, pos).ok()
     }
     /// Sets the block at `pos` to `block` (`ruby:lamp[lit=true]`; properties
     /// it doesn't name take the block's defaults), as `/setblock` does: the
     /// old block entity goes, the new block gets its own, and the neighbours
     /// and players hear of it. `Ok(false)` when that state was there already.
-    pub(super) fn native_set_block(&mut self, pos: [i32; 3], block: &str) -> Result<bool, String> {
+    pub(super) fn native_set_block_at(
+        &mut self,
+        pos: [i32; 3],
+        block: &str,
+    ) -> Result<bool, String> {
         let wanted = parse_state(block)?;
         let state = self
             .pack
@@ -98,7 +102,7 @@ impl Game<'_> {
             .registry
             .resolve(&wanted)
             .map_err(|e| format!("{block:?}: {e}"))?;
-        self.native_block(pos)
+        self.native_block_at(pos)
             .ok_or_else(|| format!("{pos:?} is not loaded"))?;
         self.place_state(pos, state, false)
             .map_err(|_| format!("{block:?} could not be set at {pos:?}"))
@@ -106,13 +110,13 @@ impl Game<'_> {
     /// Sets property `key` of the block at `pos` to `value`, its other
     /// properties kept (Weft's `set_prop`); false when the block has no such
     /// property or value, or `pos` is not loaded.
-    pub(super) fn native_set_block_property(
+    pub(super) fn native_set_block_property_at(
         &mut self,
         pos: [i32; 3],
         key: &str,
         value: &str,
     ) -> bool {
-        if self.native_block(pos).is_none() {
+        if self.native_block_at(pos).is_none() {
             return false;
         }
         let current = self.world.block(pos[0], pos[1], pos[2]);
@@ -127,7 +131,7 @@ impl Game<'_> {
     /// and position: an earlier one already waiting stays. False where no
     /// chunk is loaded.
     pub(super) fn native_schedule_block_tick(&mut self, pos: [i32; 3], delay: u32) -> bool {
-        if self.native_block(pos).is_none() {
+        if self.native_block_at(pos).is_none() {
             return false;
         }
         let at = BlockPos::new(pos[0], pos[1], pos[2]);
@@ -139,9 +143,9 @@ impl Game<'_> {
     /// (`Level.destroyBlock(pos, drop)`): its break particles and sound, its
     /// drops without a tool when `drop`, a block entity's contents spilled,
     /// and the fluid it held left in its place. False when it was air or
-    /// `pos` is not loaded. API 20.
+    /// `pos` is not loaded. API 67.
     pub(super) fn native_break_block(&mut self, pos: [i32; 3], drop: bool) -> bool {
-        if self.native_block(pos).is_none() {
+        if self.native_block_at(pos).is_none() {
             return false;
         }
         let at = BlockPos::new(pos[0], pos[1], pos[2]);
@@ -153,9 +157,9 @@ impl Game<'_> {
     }
     /// How long the block at `pos` takes to break (its `destroy_time`:
     /// stone 1.5, obsidian 50); `None` for a block nothing breaks (bedrock,
-    /// barriers: -1 in vanilla) or where no chunk is loaded. API 20.
+    /// barriers: -1 in vanilla) or where no chunk is loaded. API 67.
     pub(super) fn native_block_hardness(&self, pos: [i32; 3]) -> Option<f32> {
-        self.native_block(pos)?;
+        self.native_block_at(pos)?;
         let hardness = self
             .res
             .facts()
@@ -167,7 +171,7 @@ impl Game<'_> {
     /// it, as a zombie breaking a door does (`Level.destroyBlockProgress`):
     /// `progress` 0 to 9, anything else takes the crack away. One crack per
     /// breaker; pass the breaking mob's id. A crack not changed for 400
-    /// ticks goes. API 20.
+    /// ticks goes. API 67.
     pub(super) fn native_block_crack(&mut self, breaker: u32, pos: [i32; 3], progress: i32) {
         let event = horizon_client::mobs::MobEvent::DestroyProgress {
             mob: breaker,

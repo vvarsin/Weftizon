@@ -1,5 +1,5 @@
 //! Native mods' say on every hit an entity takes where the world is
-//! simulated (docs/native-mods.md, "Events and questions", API 18): Weft's
+//! simulated (docs/native-mods.md, "Events and questions", API 65): Weft's
 //! `question::HURT`, which any mod may refuse, and its `chain::DAMAGE`,
 //! where each mod may change the amount. The two places every hit goes
 //! through ask here: `Mob::damage_with` for mobs and

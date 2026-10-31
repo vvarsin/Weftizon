@@ -12,7 +12,7 @@
 //! and tells the server of a riding jump (`START_RIDING_JUMP`). A minecart
 //! moves on the server with the rider's input, and the rider sits in it.
 use super::{Game, Keys, ray_box};
-use horizon_client::mobs::{Mob, equine};
+use horizon_client::mobs::{Mob, equine, happy_ghast};
 use horizon_core::geometry::{Aabb, Vec3};
 use horizon_protocol::packets::play::{self, Serverbound as S};
 
@@ -71,11 +71,20 @@ impl Game<'_> {
             let p = self.carts[i].position;
             hits.push((self.carts[i].id as i32, d, [p.x, p.y, p.z]));
         }
+        // Interaction.isPickable: an invisible box the server clicks through
+        // to its scripts, for both uses and attacks.
+        let reach = self.entity_reach;
+        for (&id, i) in &self.interactions {
+            if let Some(d) = ray_box(eye, dir, reach, i.bounds()) {
+                let p = i.position;
+                hits.push((id, d, [p.x, p.y, p.z]));
+            }
+        }
         if attacking {
             // EndCrystal.isPickable: its 2 x 2 box, with the server's entity
             // id, not special_targets' local projectile target id.
             // Entity.interact passes on a crystal, so right clicks use the item.
-            let reach = if self.creative { 5.0 } else { 3.0 };
+            let reach = self.entity_reach;
             for c in self.crystals.iter().filter(|c| c.id != 0) {
                 let p = c.position;
                 let bounds = Aabb::new(
@@ -129,6 +138,20 @@ impl Game<'_> {
                 display.vehicle = Some(vehicle_id);
             } else if display.vehicle == Some(vehicle_id) {
                 display.vehicle = None;
+            }
+        }
+        for a in &mut self.armor_stands {
+            if passengers.contains(&(a.id as i32)) {
+                a.vehicle = Some(vehicle_id);
+            } else if a.vehicle == Some(vehicle_id) {
+                a.vehicle = None;
+            }
+        }
+        for (&id, i) in &mut self.interactions {
+            if passengers.contains(&id) {
+                i.vehicle = Some(vehicle_id);
+            } else if i.vehicle == Some(vehicle_id) {
+                i.vehicle = None;
             }
         }
         if passengers.contains(&me)
@@ -325,14 +348,28 @@ impl Game<'_> {
         mob.removed = false;
         self.world.random = random;
         self.mobs.insert(i, mob);
+        // #4821: footstep, gallop, breathe, splash and landing sounds from mob.tick
+        let _ = self.handle_mob_events(events);
     }
 }
 
 /// Whether a player's client moves `m`, the mount it rides
 /// (`isLocalInstanceAuthoritative`): a saddled horse, donkey, mule or camel
-/// it is the first passenger of (`AbstractHorse.getControllingPassenger`).
+/// it is the first passenger of (`AbstractHorse.getControllingPassenger`),
+/// or a harnessed adult Happy Ghast it is the first passenger of
+/// (`HappyGhast.getControllingPassenger`: wearing body armor, player on
+/// top, not on a still timeout — the rider steers it with `travelRidden`
+/// on their own client, and the mount goes to the server as `MoveVehicle`).
 fn client_moves(m: &Mob, first_passenger: bool) -> bool {
-    first_passenger && equine::moved_by_rider(m.species()) && m.extra.saddled && m.alive()
+    if !first_passenger || !m.alive() {
+        return false;
+    }
+    if equine::moved_by_rider(m.species()) && m.extra.saddled {
+        return true;
+    }
+    m.species() == horizon_client::mobs::Species::HappyGhast
+        && happy_ghast::harnessed_adult(m)
+        && !happy_ghast::on_still_timeout(m)
 }
 
 /// `LocalPlayer.sendRidingJump`: START_RIDING_JUMP with
@@ -389,6 +426,22 @@ mod tests {
             assert_eq!(client_moves(&m, true), horse, "{kind}");
             assert!(!client_moves(&m, false), "{kind} behind another rider");
         }
+    }
+
+    /// #4107: on a vanilla server the rider's client moves a harnessed adult
+    /// Happy Ghast (`getControllingPassenger`); an unharnessed one, a baby
+    /// or a second passenger's ride is the server's.
+    #[test]
+    fn the_rider_moves_a_harnessed_ghast_on_its_client() {
+        let Some(mut m) = mob("minecraft:happy_ghast") else {
+            return;
+        };
+        assert!(!client_moves(&m, true), "ghast without a harness");
+        m.extra.head = Some("minecraft:white_happy_ghast_harness".into());
+        assert!(client_moves(&m, true), "harnessed adult");
+        assert!(!client_moves(&m, false), "behind another rider");
+        m.extra.age = -1;
+        assert!(!client_moves(&m, true), "baby ghast");
     }
 
     /// #2920: the client reports where it moved the mount, and a released

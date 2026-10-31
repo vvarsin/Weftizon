@@ -47,18 +47,18 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
 | Packaging / loader | `declare_mod!`, native cdylib, C ABI, zip mods loaded at runtime | `.hmod` content mods and `.hnmod` mixin mods built by the launcher; no runtime SDK | 9 |
 | Names / handles | `namespace:path` names, handles with ids, generated names | content namespaces, network ids after vanilla's, auto names for items, blocks, entities and eggs | done |
 | Entities | size, health, speed, category, texture, model, animations, sounds, spawns | declarations from vanilla templates, Bedrock models and animations, skins, variants, glow, sounds, spawns, loot, spawn eggs | 1 ✅ |
-| Entity behaviour | AI goals, attack damage, tick/hurt/death/interact, components, platforms | goals, targets, animations, hooks (API 16), components, solid/kinematic platforms; block decks later | 2 |
-| World API: mobs | spawn, navigate, remove, set state | spawn, navigate, path reach, teleport, velocity, hurt, heal, remove (API 16, 20) | 2 ✅ |
-| Blocks | hardness, tool tier, drops, light, render layers, model boxes, collision, states, events | templates with properties and shapes; tools, tiers, tags, drops as data; block hooks (API 17); break, hardness, cracks (API 20) | 3 |
+| Entity behaviour | AI goals, attack damage, tick/hurt/death/interact, components, platforms | goals, targets, animations, hooks (API 63), components, solid/kinematic platforms; block decks later | 2 |
+| World API: mobs | spawn, navigate, remove, set state | spawn, navigate, path reach, teleport, velocity, hurt, heal, remove (API 63, 20) | 2 ✅ |
+| Blocks | hardness, tool tier, drops, light, render layers, model boxes, collision, states, events | templates with properties and shapes; tools, tiers, tags, drops as data; block hooks (API 64); break, hardness, cracks (API 67) | 3 |
 | Items | texture, stack, durability, tools, damage, placed block, wearable, use | templates with component patches; fuel, food, durability, attack, tools as data; use hooks (API 13) | 3 |
 | Recipes / loot | shaped/shapeless, recipe kinds, loot pools, loot modification | 26.3 data-pack recipes and loot; `horizon:add_to` loot modification; no custom recipe kinds | 3 |
 | Components / tags | typed components, per-entity components, tags | vanilla components and tags; declarations join tags; per-entity components | 3 |
-| Events / questions / chains | batched events, intercepts, value chains, timed attributes, `w.emit` | built-in events, questions and damage chains (API 18); a level's own tick (API 20); no `w.emit`, no timed attributes | 3 |
+| Events / questions / chains | batched events, intercepts, value chains, timed attributes, `w.emit` | built-in events, questions and damage chains (API 65); a level's own tick (API 67); no `w.emit`, no timed attributes | 3 |
 | Commands | typed command builders | native command hooks (API 8) | 3 |
-| Machines | block + block entity + inventory + menu + screen; systems; `core:energy` | machine blocks with slot groups, menus, hopper rules, spill, save, catch-up ticks (API 19); no energy, no systems | 4 |
+| Machines | block + block entity + inventory + menu + screen; systems; `core:energy` | machine blocks with slot groups, menus, hopper rules, spill, save, catch-up ticks (API 66); no energy, no systems | 4 |
 | Liquids | flow, renewal, temperature, bucket, reactions | vanilla fluids only | 5 |
 | Worldgen | biomes, dimensions, terrain presets, ores, scatter, structures, spawns | custom dimensions and biomes, noise settings, density functions, material rules, structures, features, presets as data | 5 |
-| Client UI | screens, HUD, keybinds, packets, frame hooks, cosmetics, settings | native HUD/key/packet/settings hooks; boss bars (API 20); no screen or HUD builders | 6 |
+| Client UI | screens, HUD, keybinds, packets, frame hooks, cosmetics, settings | native HUD/key/packet/settings hooks; boss bars (API 67); no screen or HUD builders | 6 |
 | Tooltips / rich text | tooltips, colours, effects, images, previews | native tooltip hook (API 12) | 6 |
 | Textures | animated (`.anim`), glow (`_e`), overlays, CTM | resource packs, `.mcmeta`; glow for entity skins | 7 |
 | Models / animations | Blockbench block/item/entity models, keyframes, first-person hand, armour | vanilla models; Bedrock entity models | 7 |
@@ -67,12 +67,12 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
 
 ## Next, in order
 
-1. **Invasion Mod support** (part 2 and 3's World API, API 20): done. Tested in a real game (2026-10-31) with a
+1. **Invasion Mod support** (part 2 and 3's World API, API 67): done. Tested in a real game (2026-10-31) with a
    wave written into `native_level_tick`: 6 zombies spawned, walked to a player in a glass box, found their paths
    blocked, dug through the glass, and a boss bar counted them. Not yet built through the launcher as a
    horizon-mixins bundle. Left: the invasion mod itself, as a native mod with its own mob declarations.
-2. **InvasionV2 support** (API 21, done 2026-10-31): spawning with gear from saved data, potion effects on mobs and
-   players, fire, lightning, weather, projectiles, block search. Creaking variants by wood (API 22, done
+2. **InvasionV2 support** (API 68, done 2026-10-31): spawning with gear from saved data, potion effects on mobs and
+   players, fire, lightning, weather, projectiles, block search. Creaking variants by wood (API 69, done
    2026-10-31): a content mod's `creaking` block with Grafted Creaking's abilities, `overlay` texture layers, hearts
    that grow a variant between its logs, and `native_plant_creaking_heart` to put hearts in trees. Next, for
    InvasionV2's phases 7 and 8 (Herobrine): setting what a mob spawner spawns (his hidden wither spawners);
@@ -80,7 +80,7 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
    that eats them stronger, faster and bigger); a short-lived charged aura and a tint on any mob; coloured
    lightning and particles (blue soul lightning, soul sparks); a sword hit that disables a shield; reflecting an
    arrow back at its shooter (the hurt question plus `native_shoot`); giant mobs (the `scale` attribute through
-   `native_summon`).
+   `native_summon_snbt`).
 3. **Weft's own events** (`w.emit`) and timed attributes (part 3).
 4. **Screen and HUD builders** (part 6).
 5. **Energy and systems** for machines (part 4).
@@ -130,12 +130,12 @@ planned: keyframes only), LAN/dedicated clients without the same mods (they need
 - ✅ Animation triggers: `attack` keyframes from each swing, and `Mob::play_animation(name, repeat)` (Weft's
   `play_animation`; native mods call `native_play_animation`), synced by the entity tracker as the
   `horizon:play_animation` custom payload.
-- ✅ Callbacks for code (API 16, `game/native_entities.rs`): `entity_tick` (batched per type, as Weft's `on_tick`),
+- ✅ Callbacks for code (API 63, `game/native_entities.rs`): `entity_tick` (batched per type, as Weft's `on_tick`),
   `entity_hurt`, `entity_died`, `entity_interact` (claimable), and helpers by entity id (read, velocity, teleport,
   hurt, heal, remove, `native_play_animation`).
 - ✅ Per-entity components (Weft's `entity_component`) saved in the entity's NBT under `horizon:components`.
 - ✅ Kinematic platforms (`solid`, `kinematic`, `carry_height`). Weft's block decks are still later.
-- ✅ The mobs' World API (API 20, `game/native_entities.rs`): `native_spawn_entity` (Weft's `spawn`: a persistent
+- ✅ The mobs' World API (API 67, `game/native_entities.rs`): `native_spawn_entity` (Weft's `spawn`: a persistent
   mob, finalized as a natural spawn, refused for monsters on Peaceful as `/summon` refuses them), `native_navigate`
   (Weft's `navigate`, vanilla's `PathNavigation.moveTo` over Horizon's ported pathfinder), `native_navigating` and
   `native_path_reaches` (`Path.canReach`: false for a target behind a wall, so a digging mob knows to dig).
@@ -148,21 +148,21 @@ planned: keyframes only), LAN/dedicated clients without the same mods (they need
   and silk touch, written as vanilla's generated loot tables) and `properties.replaceable`. Players' docs:
   [mods.md#tools-tags-and-drops](docs/mods.md#tools-tags-and-drops). Unlike Weft, a block without `drops` or a table
   drops nothing, so ported mods keep their own tables' meaning.
-- ✅ Block callbacks for code (API 17, `game/native_blocks.rs`): `native_use_block` (Weft's block `on_use`),
-  `native_block_tick` (Weft's `on_scheduled`), and helpers `native_block`, `native_set_block`,
-  `native_set_block_property` (Weft's `set_prop`) and `native_schedule_block_tick` (Weft's `schedule`).
+- ✅ Block callbacks for code (API 64, `game/native_blocks.rs`): `native_use_block` (Weft's block `on_use`),
+  `native_block_tick` (Weft's `on_scheduled`), and helpers `native_block_at`, `native_set_block_at`,
+  `native_set_block_property_at` (Weft's `set_prop`) and `native_schedule_block_tick` (Weft's `schedule`).
   `on_neighbor`, `on_placed` and `on_broken` are API 6, 7 and 14's hooks.
-- ✅ Breaking blocks (API 20, `game/native_blocks.rs`): `native_break_block` (`Level.destroyBlock`: particles, sound,
+- ✅ Breaking blocks (API 67, `game/native_blocks.rs`): `native_break_block` (`Level.destroyBlock`: particles, sound,
   drops without a tool), `native_block_hardness` (`destroy_time`; none for bedrock and barriers) and
   `native_block_crack` (`Level.destroyBlockProgress`, the crack a zombie shows on a door).
 - ✅ Weft's item builder and its components as data (`horizon_mods::content::ItemTraits`): `fuel`, `food`,
   `durability`, `attack_damage`, `attack_speed`, `tool`. Players' docs:
   [mods.md#fuel-food-durability-attack-and-tools](docs/mods.md#fuel-food-durability-attack-and-tools).
-- ✅ Weft's built-in events, questions and value chains (API 18, `game/native_events.rs`): `native_pickup_item`,
-  `native_item_picked_up`, `native_player_joined`, `native_player_left`, `native_attack_entity`,
+- ✅ Weft's built-in events, questions and value chains (API 65, `game/native_events.rs`): `native_pickup_item`,
+  `native_items_picked_up`, `native_player_joined`, `native_player_left`, `native_player_attack`,
   `native_enter_dimension`, `native_hurt` (`question::HURT`), `native_damage` (`chain::DAMAGE`) and
   `native_attack_damage` (`chain::ATTACK_DAMAGE`). Verified with a real horizon-mixins bundle (`07dab17`).
-- ✅ A level's own tick (API 20): `native_level_tick(dimension)`, once a tick for each level the server ticks, after
+- ✅ A level's own tick (API 67): `native_level_tick(dimension)`, once a tick for each level the server ticks, after
   its mobs, with that level in place. Where a mod runs waves, events and timers.
 - ✅ Loot modification: `"horizon:add_to"` + `pools` appends to another table.
 - Left: Weft's own events (`w.emit`), timed attributes, a player's hits on boats, carts, frames, armour stands and
@@ -172,7 +172,7 @@ planned: keyframes only), LAN/dedicated clients without the same mods (they need
 ## 4. Machines, block entities, inventories and menus
 
 - ✅ One declaration (Weft's `r.machine`): a content block `machine` with slot groups, a menu, hopper rules, spill
-  and save; `native_machine_tick` with catch-up ticks (API 19, `game/mod_machines.rs`).
+  and save; `native_machine_tick` with catch-up ticks (API 66, `game/mod_machines.rs`).
 - Left: `core:energy` as a block entity component with conductor tags, networks balanced once per tick; systems
   batched over a component; mod networking between client and server halves (custom payloads); broader menu
   screens.
@@ -190,7 +190,7 @@ planned: keyframes only), LAN/dedicated clients without the same mods (they need
 ## 6. Client APIs
 
 - ✅ Native hook points: HUD drawing, keys, mouse wheel, client commands, zoom, minimap, settings, item panel.
-- ✅ Boss bars for server mods (API 20, `game/bossbars.rs`): `native_boss_bar` and `native_remove_boss_bar`, a saved
+- ✅ Boss bars for server mods (API 67, `game/bossbars.rs`): `native_boss_bar` and `native_remove_boss_bar`, a saved
   custom bar shown to every player, as `/bossbar` makes it.
 - Left: screen and HUD builders (data layouts + native callbacks), key binding builders, packets, frame hooks; entity
   cosmetics (`client_entity_tick`), screen effects, sound categories, music; mod settings in client, server and
@@ -221,7 +221,7 @@ planned: keyframes only), LAN/dedicated clients without the same mods (they need
 Invasion Mod's waves need: a timer in the level (`native_level_tick`), spawning the wave (`native_spawn_entity`),
 walking mobs to the target (`native_navigate`), knowing when a wall is in the way (`native_path_reaches`,
 `native_navigating`), digging through it (`native_block_hardness`, `native_block_crack`, `native_break_block`) and
-showing the wave (`native_boss_bar`). All of them are in API 20. Custom mobs for the invaders are content mod
+showing the wave (`native_boss_bar`). All of them are in API 67. Custom mobs for the invaders are content mod
 entities (part 1 and 2). The mod itself is not written yet.
 
 ## TheAfterdark

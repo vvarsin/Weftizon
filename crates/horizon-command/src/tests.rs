@@ -692,9 +692,9 @@ fn horizon_commands_are_off_unless_the_server_turns_them_on() {
     // By default the game runs vanilla's tree: /help lists no /pregen.
     assert!(vanilla::game_dispatcher().find("pregen").is_none());
     for dev in [false, true] {
-        let vanilla_tree = vanilla::game_tree(dev, false);
+        let vanilla_tree = vanilla::game_tree(dev, false, false);
         assert!(vanilla_tree.find("pregen").is_none());
-        let d = vanilla::game_tree(dev, true);
+        let d = vanilla::game_tree(dev, true, false);
         let parse = d.parse("pregen start 100 circle", &reg());
         assert_eq!(parse.executable().unwrap().1, "pregen.start");
         // Vanilla's commands are the same with or without it.
@@ -703,4 +703,118 @@ fn horizon_commands_are_off_unless_the_server_turns_them_on() {
             vanilla_tree.nodes[0].children.len() + 1
         );
     }
+}
+/// `run` on a dedicated server's tree.
+fn run_dedicated(input: &str) -> CmdResult<(String, Vec<String>)> {
+    let reg = reg();
+    let parse = vanilla::game_tree(true, false, true).parse(input, &reg);
+    let (ctx, id) = parse.executable()?;
+    Ok((
+        id.to_owned(),
+        ctx.args.iter().map(|a| a.name.clone()).collect(),
+    ))
+}
+#[test]
+fn profile_commands_parse_like_vanilla() {
+    // OpCommand, DeOpCommands, BanPlayerCommands, PardonCommand and
+    // WhitelistCommand: GameProfileArgument targets, admins only.
+    let run = run_dedicated;
+    assert_eq!(run("op Steve").unwrap().0, "op");
+    assert_eq!(run("deop @a").unwrap().0, "deop");
+    assert_eq!(run("pardon Steve").unwrap().0, "pardon");
+    assert_eq!(run("ban Steve").unwrap().0, "ban");
+    assert_eq!(
+        run("ban Steve griefing the farm").unwrap().1,
+        ["targets", "reason"]
+    );
+    for word in ["on", "off", "list", "reload"] {
+        assert_eq!(
+            run(&format!("whitelist {word}")).unwrap().0,
+            format!("whitelist.{word}")
+        );
+    }
+    assert_eq!(run("whitelist add Steve").unwrap().0, "whitelist.add");
+    assert_eq!(run("whitelist remove @p").unwrap().0, "whitelist.remove");
+    // GameProfileArgument: entity selectors are refused.
+    assert_eq!(
+        run("op @e").unwrap_err().message.plain(),
+        "argument.player.entities"
+    );
+    assert!(run("whitelist add").is_err());
+    let reg = Registries {
+        permission: 2,
+        ..reg()
+    };
+    let d = vanilla::game_tree(false, false, true);
+    for line in ["op Steve", "ban Steve", "whitelist on"] {
+        let e = d.parse(line, &reg).executable().unwrap_err();
+        assert_eq!(e.message.plain(), "command.unknown.command", "{line}");
+    }
+}
+#[test]
+fn the_dedicated_commands_complete_from_the_servers_lists() {
+    // OpCommand, DeOpCommands, PardonCommand, PardonIpCommand and WhitelistCommand: the server answers from
+    // its own lists (vanilla's `.suggests(...)`, javap on the pinned 26.3 classes), not from the registries'
+    // default of the one local player.
+    let reg = Registries {
+        permission: 4,
+        players: vec!["Alex".into(), "Steve".into(), "Zed".into()],
+        ops: vec!["steve".into()],
+        banned_players: vec!["Griefer".into()],
+        banned_ips: vec!["203.0.113.9".into()],
+        whitelisted: vec!["Alex".into(), "Old".into()],
+        ..reg()
+    };
+    let d = vanilla::game_tree(false, false, true);
+    let suggest = |input: &str| -> Vec<String> {
+        let parse = d.parse(input, &reg);
+        d.suggestions(&parse, input.len(), &reg)
+            .1
+            .into_iter()
+            .map(|s| s.text)
+            .collect()
+    };
+    // Only the online players who are not operators (the match ignores case).
+    assert_eq!(suggest("op "), ["Alex", "Zed"]);
+    assert_eq!(suggest("op z"), ["Zed"]);
+    assert_eq!(suggest("deop "), ["steve"]);
+    assert_eq!(suggest("pardon "), ["Griefer"]);
+    assert_eq!(suggest("pardon-ip "), ["203.0.113.9"]);
+    // Add offers the online players who are not whitelisted; remove offers the list, online or not.
+    assert_eq!(suggest("whitelist add "), ["Steve", "Zed"]);
+    assert_eq!(suggest("whitelist remove "), ["Alex", "Old"]);
+    // Nothing else changed: ban still completes by the argument type, with the selectors.
+    assert!(suggest("ban ").contains(&"@a".to_owned()));
+}
+#[test]
+fn only_a_dedicated_server_has_the_dedicated_commands() {
+    // Commands.CommandSelection: an integrated server (single player, a LAN
+    // world) registers no /op, /ban, /ban-ip, /banlist, /pardon, /pardon-ip,
+    // /deop or /whitelist, so /help and Tab don't offer them.
+    let dedicated = [
+        "ban",
+        "ban-ip",
+        "banlist",
+        "deop",
+        "op",
+        "pardon",
+        "pardon-ip",
+        "whitelist",
+    ];
+    for dev in [false, true] {
+        for horizon in [false, true] {
+            let integrated = vanilla::game_tree(dev, horizon, false);
+            let server = vanilla::game_tree(dev, horizon, true);
+            for name in dedicated {
+                assert!(integrated.find(name).is_none(), "{name}");
+                assert!(server.find(name).is_some(), "{name}");
+            }
+            assert_eq!(
+                server.nodes[0].children.len(),
+                integrated.nodes[0].children.len() + dedicated.len()
+            );
+        }
+    }
+    assert!(vanilla::game_dispatcher().find("ban").is_none());
+    assert!(vanilla::release_dispatcher().find("ban").is_none());
 }

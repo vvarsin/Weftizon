@@ -4,7 +4,7 @@
 //! opens its vanilla screen over those slots (game/lan_actions.rs), clicks
 //! follow its groups' rules (lan/menu.rs), breaking it spills them
 //! (game/spill.rs), and each tick hands it to native mods with the ticks it
-//! missed (`native_machine_tick`, API 19). All of it runs where the world is
+//! missed (`native_machine_tick`, API 66). All of it runs where the world is
 //! simulated.
 use super::{Game, Resources};
 use horizon_client::{

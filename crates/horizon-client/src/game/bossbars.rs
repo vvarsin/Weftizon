@@ -404,7 +404,7 @@ impl Game<'_> {
     }
 }
 
-/// Boss bars for native mods (API 20), kept as stable as the hook points.
+/// Boss bars for native mods (API 67), kept as stable as the hook points.
 // Native mods use these; nothing in Horizon does.
 #[allow(dead_code)]
 impl Game<'_> {

@@ -91,7 +91,7 @@ impl Game<'_> {
     pub(super) fn wear(&mut self, stack: &ItemStack, amount: u32) -> u32 {
         let loss = self.durability_loss(stack, amount);
         if loss > 0 {
-            self.trigger_item_durability(stack);
+            self.trigger_item_durability(stack, stack.damage + loss);
         }
         loss
     }
@@ -122,19 +122,11 @@ impl Game<'_> {
             base,
         )
     }
-    /// Strength / weakness on the attack damage attribute.
-    pub(super) fn effect_attack_bonus(&self) -> f32 {
-        let fx = &self.potions.effects;
-        fx.amplifier("strength")
-            .map_or(0.0, |a| 3.0 * (a + 1) as f32)
-            - fx.amplifier("weakness")
-                .map_or(0.0, |a| 4.0 * (a + 1) as f32)
-    }
     /// `Player.attack`'s extra knockback: `getKnockback` (the weapon's knockback
     /// enchantment, halved) plus 0.5 for a sprinting full-strength hit, and
     /// whether the hit is that knockback attack.
     pub(super) fn extra_knockback(&mut self, target_kind: &str, scale: f32) -> (f32, bool) {
-        let knockback_attack = scale > 0.9 && self.player.as_ref().is_some_and(|p| p.sprinting);
+        let sprinting = self.player.as_ref().is_some_and(|p| p.sprinting);
         let enchanted = match self.held().cloned() {
             Some(held) => {
                 let ctx = EffectContext {
@@ -155,8 +147,7 @@ impl Game<'_> {
             }
             None => 0.0,
         };
-        let bonus = if knockback_attack { 0.5 } else { 0.0 };
-        (enchanted / 2.0 + bonus, knockback_attack)
+        horizon_client::attack_strength::extra_knockback(enchanted, scale, sprinting)
     }
     /// `causeExtraKnockback`'s direction, `(sin yRot, -cos yRot)` from Mth's
     /// sine table: the target flies where the attacker looks, not away from
@@ -167,9 +158,11 @@ impl Game<'_> {
         (f64::from(trig::sin(yaw)), -f64::from(trig::cos(yaw)))
     }
     /// The attacker's side of `causeExtraKnockback` as the attacking client
-    /// sees it: the server's player stops sprinting, and its flag reaches the
-    /// client. (The server's 0.6 speed cut never does: the client's own
-    /// `Player.attack` simulates no hurt, so it skips the knockback.)
+    /// sees it after a hit on a mob: the server's player stops sprinting, and
+    /// its flag reaches the client. (The server's 0.6 speed cut never does:
+    /// the client's own `Player.attack` simulates no hurt on a mob, so it
+    /// skips the knockback. A hit on another player does simulate one:
+    /// `remote_player_attack`.)
     pub(super) fn stop_sprint_after_extra_knockback(&mut self) {
         if let Some(p) = self.player.as_mut() {
             let _ = p.set_sprinting(false);
@@ -371,7 +364,9 @@ impl Game<'_> {
         let ticks = (between("min_duration", "max_duration") * 20.0).round() as i32;
         let amplifier = (between("min_amplifier", "max_amplifier").round() as i32).max(0);
         if let Some(id) = super::potions::mob_effect_id(ids[pick]) {
+            let (new, entity) = (!m.has_effect(id), m.id as i32);
             m.add_effect(id, ticks, amplifier);
+            self.mod_effect_added(id, Some(entity), amplifier, new);
         }
     }
     /// `minecraft:post_attack` explode effects on the attacker (wind burst):
@@ -495,14 +490,7 @@ impl Game<'_> {
                     .is_some_and(|i| s.damage >= i.max_damage)
                 {
                     self.armor[slot] = None;
-                    if let Some(eye) = self.eye_position() {
-                        self.audio.play(
-                            "minecraft:entity.item.break",
-                            Some(eye),
-                            0.8,
-                            0.8 + self.world.random.next_float() * 0.4,
-                        );
-                    }
+                    self.player_equipment_broke(super::armor_slot(slot), &stack);
                     self.apply_equipment();
                 }
             }
@@ -767,16 +755,11 @@ impl Game<'_> {
         boots.damage += loss;
         if boots.damage >= max {
             self.armor[3] = None;
-            if let Some(eye) = self.eye_position() {
-                self.audio.play(
-                    "minecraft:entity.item.break",
-                    Some(eye),
-                    0.8,
-                    0.8 + self.world.random.next_float() * 0.4,
-                );
-            }
-            // LivingEntity.breakItem: the broken boots' five crumbs.
-            self.eat_particles(&stack, 5);
+            // LivingEntity.onEquippedItemBroken: the broken boots.
+            self.player_equipment_broke(
+                horizon_world::player_inventory::EquipmentSlot::Feet,
+                &stack,
+            );
             self.apply_equipment();
         }
     }

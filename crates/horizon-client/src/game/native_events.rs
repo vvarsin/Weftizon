@@ -1,5 +1,5 @@
 //! Weft's built-in events and questions for native mods (docs/native-mods.md,
-//! "Events and questions", API 18): `question::PICKUP_ITEM` and
+//! "Events and questions", API 65): `question::PICKUP_ITEM` and
 //! `ITEM_PICKED_UP`, `PLAYER_JOINED` (and leaving), `question::ATTACK`,
 //! `question::ENTER_DIMENSION` and `question::HURT`, and the value chains
 //! `chain::DAMAGE` and `chain::ATTACK_DAMAGE`. The hook points are in
@@ -25,14 +25,7 @@ pub(super) fn weigh_hit(hit: &Hit<'_>) -> Option<f32> {
 }
 
 impl Game<'_> {
-    /// `native_pickup_item` for the player in place touching an item's
-    /// `stack`: true when a mod leaves it on the ground.
-    pub(super) fn native_pickup_refused(&mut self, stack: &ItemStack) -> bool {
-        let mut canceled = false;
-        self.native_pickup_item(stack, &mut canceled);
-        canceled
-    }
-    /// `native_item_picked_up` once player `conn` took `count` of `stack`.
+    /// `native_items_picked_up` once player `conn` took `count` of `stack`.
     pub(super) fn native_picked_up(
         &mut self,
         host: &mut LanHost,
@@ -40,13 +33,13 @@ impl Game<'_> {
         stack: &ItemStack,
         count: u32,
     ) {
-        self.as_guest(host, conn, |g| g.native_item_picked_up(stack, count));
+        self.as_guest(host, conn, |g| g.native_items_picked_up(stack, count));
     }
-    /// `native_attack_entity` for the acting player's hit on entity `id`:
+    /// `native_player_attack` for the acting player's hit on entity `id`:
     /// true when a mod stopped it.
     pub(super) fn native_attack_refused(&mut self, id: u32) -> bool {
         let mut canceled = false;
-        self.native_attack_entity(id, &mut canceled);
+        self.native_player_attack(id, &mut canceled);
         canceled
     }
     /// The acting player's attack damage on a `target` after the mods'

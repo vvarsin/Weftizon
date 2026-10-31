@@ -2,18 +2,26 @@
 //! paddling controls, collisions, riding (`positionRider`, `clampRotation`,
 //! dismounting), `BoatItem` placement, `VehicleEntity.hurtServer` breaking,
 //! saving and `AbstractBoatRenderer` with animated paddles.
-use super::{Game, Keys, entity_culling::at, view_vector};
+use super::{Game, InteractTarget, Keys, entity_culling::at, view_vector};
 use horizon_client::{
     blocks::Fluid,
     collisions::{EntityCollisions, SceneCollisions},
     items::ItemStack,
     mesher::Vertex,
-    mobs::{Part, anim::Poses, riders},
+    mobs::{
+        Part,
+        anim::Poses,
+        leash::{Holder, Pending},
+        riders,
+    },
+    motion::RiddenBoat,
 };
 use horizon_core::{
-    geometry::{Aabb, Vec3},
+    geometry::{Aabb, ShapeOp, Vec3, VoxelShape},
+    position::BlockPos,
     random::RandomSource,
 };
+use horizon_world::collision_context::CollisionContext;
 use std::{collections::HashMap, f32::consts::PI, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +59,16 @@ pub(super) struct Boat {
     /// `ChestBoat`: a chest with 27 slots in the back seat.
     pub chest: bool,
     pub items: Vec<Option<ItemStack>>,
+    /// `AbstractBoat.leashData`: who holds its lead (`boat_leads.rs`).
+    pub leash: Option<Holder>,
+    /// The player a `Holder::Player` lead is tied to (their UUID).
+    pub leash_player: Option<[i32; 4]>,
+    /// A holder read from a save that is not in the world yet.
+    pub leash_pending: Option<Pending>,
+    /// `LeashData.angularMomentum`.
+    pub leash_spin: f64,
+    /// `Entity.tickCount`, for the 100 ticks a saved holder is waited for.
+    pub age: i32,
 }
 /// `ChestBoat.CONTAINER_SIZE`.
 pub(super) const CHEST_SLOTS: usize = 27;
@@ -81,6 +99,11 @@ impl Boat {
             on_ground: false,
             chest: false,
             items: Vec::new(),
+            leash: None,
+            leash_player: None,
+            leash_pending: None,
+            leash_spin: 0.0,
+            age: 0,
         }
     }
     /// A chest boat or chest raft.
@@ -100,6 +123,13 @@ impl Boat {
     /// `isEyeInFluid(WATER)` too.
     pub fn under_water(&self) -> bool {
         matches!(self.status, Status::UnderWater | Status::UnderFlowingWater)
+    }
+    /// `Entity.isInLiquid`, for `Leashable.angularFriction`.
+    pub fn in_liquid(&self) -> bool {
+        matches!(
+            self.status,
+            Status::InWater | Status::UnderWater | Status::UnderFlowingWater
+        )
     }
     /// `getMaxPassengers`: two, one beside a chest.
     pub fn max_passengers(&self) -> usize {
@@ -231,9 +261,72 @@ impl Game<'_> {
     fn fluid_height(&self, x: i32, y: i32, z: i32) -> Option<(f32, bool)> {
         self.fluid_height_of(x, y, z, Some(Fluid::Water))
     }
+    /// The horizontal water plane around the camera for the water mirror: the median
+    /// standing-water surface of a grid of columns 48 blocks around, each scanned down from
+    /// the camera to its ground. A lake or the sea has one plane; the mirror shows only the
+    /// water on it. With no water in reach the last plane found stays, so the mirror never
+    /// switches off as the camera moves.
+    pub(super) fn water_plane(&self, camera: glam::DVec3) -> Option<f32> {
+        const RADIUS: i32 = 48;
+        const STEP: usize = 4;
+        const DEPTH: i32 = 96;
+        let (cx, cz) = (camera.x.floor() as i32, camera.z.floor() as i32);
+        let top = camera.y.floor() as i32 + 2;
+        // Scanned again once the camera moves 8 blocks, or every 5 seconds: a scan reads up
+        // to 60 000 blocks on the game thread, and the plane rarely changes.
+        let scan = (
+            [cx >> 3, top >> 3, cz >> 3],
+            self.world.game_time.div_euclid(100),
+        );
+        if self.water_plane_scan.replace(Some(scan)) == Some(scan) {
+            return self.water_plane_memo.get();
+        }
+        let mut heights = Vec::with_capacity(625);
+        for x in (cx - RADIUS..=cx + RADIUS).step_by(STEP) {
+            for z in (cz - RADIUS..=cz + RADIUS).step_by(STEP) {
+                // The top of the column's water: the highest standing water under the
+                // camera (a full block's water continues above it).
+                for y in (top - DEPTH..=top).rev() {
+                    if let Some((h, source)) = self.fluid_height(x, y, z) {
+                        if source && h < 1.0 {
+                            heights.push(y as f32 + h);
+                        }
+                        break;
+                    }
+                    if self.res.facts().get(self.world.block(x, y, z)).solid_render {
+                        break;
+                    }
+                }
+            }
+        }
+        if heights.is_empty() {
+            return self.water_plane_memo.get();
+        }
+        heights.sort_by(f32::total_cmp);
+        let found = heights[heights.len() / 2];
+        // The plane in use stays while a quarter of the columns are still on it, so two
+        // lakes at different heights do not make the mirror flicker between them.
+        let plane = match self.water_plane_memo.get() {
+            Some(last)
+                if 4 * heights.iter().filter(|h| (*h - last).abs() < 0.05).count()
+                    >= heights.len() =>
+            {
+                last
+            }
+            _ => found,
+        };
+        self.water_plane_memo.set(Some(plane));
+        Some(plane)
+    }
     /// `FluidState.getHeight` and whether it is a source, for `fluid` or,
     /// with `None`, any fluid (`ClipContext.Fluid.ANY`).
-    fn fluid_height_of(&self, x: i32, y: i32, z: i32, fluid: Option<Fluid>) -> Option<(f32, bool)> {
+    pub(super) fn fluid_height_of(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        fluid: Option<Fluid>,
+    ) -> Option<(f32, bool)> {
         let f = self.res.facts().get(self.world.block(x, y, z));
         if f.fluid == Fluid::None || fluid.is_some_and(|want| f.fluid != want) {
             return None;
@@ -312,14 +405,37 @@ impl Game<'_> {
         if in_water {
             return Status::InWater;
         }
-        // getGroundFriction over the blocks just below the hull (corners skipped).
-        let y0 = (lo.y - 0.001).floor() as i32;
-        let (x0, x1, z0, z1) = (
-            lo.x.floor() as i32 - 1,
-            hi.x.ceil() as i32 + 1,
-            lo.z.floor() as i32 - 1,
-            hi.z.ceil() as i32 + 1,
+        let friction = self.boat_ground_friction(bb);
+        if friction > 0.0 {
+            b.land_friction = friction;
+            Status::OnLand
+        } else {
+            Status::InAir
+        }
+    }
+    /// `AbstractBoat.getGroundFriction`: average friction of the blocks whose
+    /// collision shape meets a thin slab just under the hull (lily pads skipped).
+    fn boat_ground_friction(&self, bb: Aabb) -> f32 {
+        let (lo, hi) = (bb.min_position(), bb.max_position());
+        let ground = Aabb::new(
+            Vec3::new(lo.x, lo.y - 0.001, lo.z),
+            Vec3::new(hi.x, lo.y, hi.z),
         );
+        let (g_lo, g_hi) = (ground.min_position(), ground.max_position());
+        let (x0, x1, y0, y1, z0, z1) = (
+            g_lo.x.floor() as i32 - 1,
+            g_hi.x.ceil() as i32 + 1,
+            g_lo.y.floor() as i32 - 1,
+            g_hi.y.ceil() as i32 + 1,
+            g_lo.z.floor() as i32 - 1,
+            g_hi.z.ceil() as i32 + 1,
+        );
+        let slab = VoxelShape::from_box(ground).unwrap_or_else(|_| VoxelShape::empty());
+        let mut scene = SceneCollisions {
+            world: &self.world,
+            binding: self.collision,
+            subject: None,
+        };
         let (mut friction, mut count) = (0.0f32, 0);
         for x in x0..x1 {
             for z in z0..z1 {
@@ -327,28 +443,50 @@ impl Game<'_> {
                 if edges == 2 {
                     continue;
                 }
-                let inside = f64::from(x) < hi.x
-                    && f64::from(x + 1) > lo.x
-                    && f64::from(z) < hi.z
-                    && f64::from(z + 1) > lo.z;
-                let f = self.res.facts().get(self.world.block(x, y0, z));
-                if inside && (f.full_collision || f.legacy_solid) && !f.has_class("LilyPadBlock") {
-                    friction += f.friction;
-                    count += 1;
+                for y in y0..y1 {
+                    if edges == 1 && (y == y0 || y == y1 - 1) {
+                        continue;
+                    }
+                    let state = self.world.block(x, y, z);
+                    let f = self.res.facts().get(state);
+                    if f.name.as_ref() == "minecraft:air" || f.has_class("LilyPadBlock") {
+                        continue;
+                    }
+                    let Ok(shape) = self.collision.collision_shape_with_context(
+                        &mut scene,
+                        state,
+                        BlockPos::new(x, y, z),
+                        &CollisionContext::empty(false),
+                    ) else {
+                        continue;
+                    };
+                    let world_shape =
+                        shape.moved(Vec3::new(f64::from(x), f64::from(y), f64::from(z)));
+                    if world_shape
+                        .join_is_not_empty(&slab, ShapeOp::AND)
+                        .unwrap_or(false)
+                    {
+                        friction += f.friction;
+                        count += 1;
+                    }
                 }
             }
         }
-        if count > 0 && friction > 0.0 {
-            b.land_friction = friction / count as f32;
-            Status::OnLand
+        if count > 0 {
+            friction / count as f32
         } else {
-            Status::InAir
+            0.0
         }
     }
     /// `AbstractBoat.tick` for one boat (`controlled` when the player rides it).
     pub(super) fn tick_boat(&mut self, mut b: Boat, controlled: bool) -> Boat {
         b.previous = b.position;
         b.previous_yaw = b.yaw;
+        // Entity.baseTick ends with Leashable.tickLeash, on a server only
+        // (a ridden boat's lead ticks in `tick_boats`).
+        if !controlled && self.remote.is_none() {
+            self.tick_boat_leash(&mut b);
+        }
         b.old_status = b.status;
         b.status = self.boat_status(&mut b);
         b.out_of_control = if matches!(b.status, Status::UnderWater | Status::UnderFlowingWater) {
@@ -513,6 +651,12 @@ impl Game<'_> {
                 || driven.contains(&self.boats[i].id)
                 || !ticking(p.x.floor() as i32, p.z.floor() as i32)
             {
+                // Its rider's client moves it, but the lead still ticks.
+                if ticking(p.x.floor() as i32, p.z.floor() as i32) && self.remote.is_none() {
+                    let mut b = self.boats[i].clone();
+                    self.tick_boat_leash(&mut b);
+                    self.boats[i] = b;
+                }
                 continue;
             }
             let b = self.boats[i].clone();
@@ -584,6 +728,19 @@ impl Game<'_> {
             }
         }
         false
+    }
+    /// `AbstractBoat.modifyPassengerFluidInteractionBox`: the ridden boat's box
+    /// and whether it is underwater, for `Entity.getFluidInteractionBox`. A boat
+    /// keeps only the part of the passenger's box above its own top, so a boat
+    /// bobbing on water never sinks the passenger's eyes or body.
+    pub(super) fn riding_boat_fluid_box(&self) -> Option<RiddenBoat> {
+        self.boats
+            .iter()
+            .find(|b| Some(b.id) == self.riding)
+            .map(|b| RiddenBoat {
+                under_water: b.under_water(),
+                max_y: b.bounds().max_position().y,
+            })
     }
     /// The player's tick while riding: steer, tick the boat, sit in it.
     pub(super) fn tick_riding(&mut self, keys: Keys) -> horizon_client::Result<()> {
@@ -752,7 +909,7 @@ impl Game<'_> {
     }
     pub(super) fn boat_hit(&self) -> Option<(usize, f64)> {
         let (eye, dir) = self.aim()?;
-        let reach: f64 = if self.creative { 5.0 } else { 3.0 };
+        let reach: f64 = self.entity_reach;
         let mut best: Option<(usize, f64)> = None;
         for (i, b) in self.boats.iter().enumerate() {
             if Some(b.id) == self.riding {
@@ -781,27 +938,28 @@ impl Game<'_> {
         }
         best
     }
-    /// `AbstractBoat.interact`: board the boat under the crosshair.
-    pub(super) fn interact_boat(&mut self) -> bool {
-        let Some((i, d)) = self.boat_hit() else {
+    /// `AbstractBoat.interact`: board the boat under the crosshair, or the one
+    /// a guest's interact packet named.
+    pub(super) fn interact_boat(&mut self, target: Option<InteractTarget>) -> bool {
+        let Some((i, d)) = (match target {
+            Some(t) => Self::named_entity(&self.boats, t.id, |b| b.id).map(|i| (i, 0.0)),
+            None => self.boat_hit(),
+        }) else {
             return false;
         };
         let sneaking = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft);
-        if !self.before_block(d) {
+        // Only a client's own pick is stopped by a block: the range check passed.
+        if target.is_none() && !self.before_block(d) {
             return false;
+        }
+        // AbstractBoat.interact starts with Entity.interact: the lead.
+        if self.interact_boat_leash(i) {
+            self.swing_arm();
+            return true;
         }
         // ChestBoat.interact: sneaking (or a full seat) opens the chest.
         if self.boats[i].chest && (sneaking || self.riding.is_some() || !self.boat_has_room(i)) {
-            let b = &self.boats[i];
-            let key = (i32::MAX - 15, super::minecarts::CART_KEY_Y, b.id as i32);
-            self.world.block_entities.insert(
-                key,
-                horizon_client::containers::BlockEntity::Chest(b.items.clone()),
-            );
-            self.container = Some(key);
-            self.screen = super::Screen::Inventory;
-            self.capture(false);
-            self.right = false;
+            self.open_chest_boat_container(i);
             self.swing_arm();
             return true;
         }
@@ -815,7 +973,54 @@ impl Game<'_> {
         }
         self.riding = Some(self.boats[i].id);
         self.yaw = self.boats[i].yaw;
+        // ServerPlayer.startRiding.
+        self.trigger_player("minecraft:started_riding");
         true
+    }
+    /// `ContainerEntity.interactWithContainerVehicle` (`AbstractChestBoat`):
+    /// the chest's 27 slots go under a placeholder key that the menu edits; a
+    /// server hands them to the player as a `ChestMenu` (`as_guest` ->
+    /// `lan_open_container`). `AbstractChestBoat.interact` fires
+    /// `CONTAINER_OPEN` and angers the piglins that see it.
+    pub(super) fn open_chest_boat_container(&mut self, i: usize) {
+        let b = &self.boats[i];
+        let key = (i32::MAX - 15, super::minecarts::CART_KEY_Y, b.id as i32);
+        let at = [b.position.x, b.position.y, b.position.z];
+        let items = b.items.clone();
+        self.world
+            .block_entities
+            .insert(key, horizon_client::containers::BlockEntity::Chest(items));
+        self.container = Some(key);
+        self.screen = super::Screen::Inventory;
+        self.capture(false);
+        self.right = false;
+        let ctx = self.player_context(None);
+        self.post_game_event("minecraft:container_open", at, ctx);
+        self.anger_piglins(true);
+    }
+    /// `AbstractChestBoat.openCustomInventoryScreen` (`HasCustomInventoryScreen`),
+    /// the inventory key while riding a chest boat: its chest opens, not the
+    /// player's inventory.
+    pub(super) fn open_ridden_chest_boat(&mut self) -> bool {
+        let Some(id) = self.riding else {
+            return false;
+        };
+        let Some(i) = self.boats.iter().position(|b| b.id == id) else {
+            return false;
+        };
+        if !self.boats[i].chest {
+            return false;
+        }
+        self.open_chest_boat_container(i);
+        true
+    }
+    /// Whether the player rides a chest boat: `HasCustomInventoryScreen`, so
+    /// the inventory key sends `ServerboundPlayerCommandPacket.Action.OPEN_INVENTORY`
+    /// (`ServerGamePacketListenerImpl.handlePlayerCommand` opens its screen).
+    pub(super) fn riding_chest_boat(&self) -> bool {
+        self.riding
+            .and_then(|id| self.boats.iter().find(|b| b.id == id))
+            .is_some_and(|b| b.chest)
     }
     /// `VehicleEntity.hurtServer` from the player's attack.
     pub(super) fn attack_boat(&mut self) -> bool {
@@ -835,8 +1040,11 @@ impl Game<'_> {
         true
     }
     /// `VehicleEntity.hurtServer`: wobble, add the damage and break past 40
-    /// (`creative`: a creative player's hit removes it without drops).
-    /// True when the boat was removed.
+    /// (`creative`: a creative player's hit discards it straight away).
+    /// `AbstractChestBoat.remove` drops the chest contents for every removal
+    /// reason that destroys the boat (DISCARDED included), while the boat item
+    /// itself only drops on the death path (`VehicleEntity.destroy`), not when
+    /// a creative hit discards it. True when the boat was removed.
     pub(super) fn hurt_boat(&mut self, i: usize, damage: f32, creative: bool) -> bool {
         let b = &mut self.boats[i];
         b.hurt_dir = -b.hurt_dir;
@@ -847,11 +1055,17 @@ impl Game<'_> {
             self.eject_boat_mobs(i, true);
             let b = self.boats.remove(i);
             let at = [b.position.x, b.position.y, b.position.z];
+            // AbstractBoat.remove: a destroyed boat drops its lead.
+            self.boat_removed(&b);
+            // `AbstractChestBoat.remove` spills the chest through
+            // `Containers.dropContents` for every destroying removal reason;
+            // that has no `entity_drops` gate of its own.
+            for stack in b.items.iter().flatten() {
+                self.spawn_item(stack.clone(), at, super::dispenser::new_item_motion(), 10);
+            }
+            // `VehicleEntity.destroy(level, dropItem)` drops the boat item on
+            // the death path only, and only with `entity_drops` on.
             if !creative && self.ui.rules.bool("entity_drops") {
-                // ChestBoat.destroy: chestVehicleDestroyed spills the contents.
-                for stack in b.items.iter().flatten() {
-                    self.spawn_item(stack.clone(), at, super::dispenser::new_item_motion(), 10);
-                }
                 let item = b.entity_type();
                 self.spawn_item(
                     ItemStack {

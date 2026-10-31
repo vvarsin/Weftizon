@@ -30,6 +30,24 @@ fn banner_matrix(head: glam::Mat4) -> glam::Mat4 {
         * glam::Mat4::from_scale(glam::Vec3::new(2.0 / 3.0, -2.0 / 3.0, -2.0 / 3.0))
 }
 
+/// `BlockDecorationLayer.submit` and `CopperGolemModel.applyBlockOnAntennaTransform`, then the
+/// block model's own display transformation, which `BlockModelRenderState.submitModel` post-multiplies.
+fn antenna_block_matrix(head: glam::Mat4, flowerbed_shift: bool) -> glam::Mat4 {
+    // UNIT_CUBE_BOTTOM_CENTER_TO_ANTENNA_CENTER: translation(-0.5, 0, -0.5)
+    // then rotateAround(Z 180, 0.5, 0.5, 0.5), which JOML post-multiplies.
+    let unit = glam::Mat4::from_translation(glam::Vec3::new(-0.5, 0.0, -0.5))
+        * glam::Mat4::from_translation(glam::Vec3::splat(0.5))
+        * glam::Mat4::from_rotation_z(180.0f32.to_radians())
+        * glam::Mat4::from_translation(glam::Vec3::splat(-0.5));
+    let t = head * glam::Mat4::from_translation(glam::Vec3::new(0.0, -1.75, 0.0)) * unit;
+    if flowerbed_shift {
+        // `BuiltInBlockModels.createFlowerBedModel`'s Transformation(0.25, 0, 0.25).
+        t * glam::Mat4::from_translation(glam::Vec3::new(0.25, 0.0, 0.25))
+    } else {
+        t
+    }
+}
+
 /// `ElderGuardianParticle.lifetime`.
 pub(super) const APPARITION_TICKS: i32 = 30;
 
@@ -212,7 +230,8 @@ impl Game<'_> {
     /// `BlockDecorationLayer.submit`: the block item in a copper golem's
     /// antenna slot (a flower, or any block item), drawn at the antenna by
     /// `CopperGolemModel.applyBlockOnAntennaTransform` with `NO_OVERLAY`. Only
-    /// the block's default state is drawn, not the item's block state component.
+    /// the block's default state with the item's `block_state` component
+    /// applied (`BlockItemStateProperties.apply`).
     fn antenna_block_geometry(
         &self,
         mob: &Mob,
@@ -221,7 +240,6 @@ impl Game<'_> {
         light: u32,
         out: &mut Vec<Vertex>,
     ) {
-        use glam::{Mat4, Vec3};
         if mob.species() != Species::CopperGolem || horizon_client::mobs::trader::is_invisible(mob)
         {
             return;
@@ -229,21 +247,42 @@ impl Game<'_> {
         let Some(stack) = mob.saddle_item() else {
             return;
         };
-        let Some(state) = self.pack.assets.registry.default_state(&stack.item) else {
+        let Some(mut state) = self.pack.assets.registry.default_state(&stack.item) else {
             return;
         };
+        // CopperGolemRenderer.extractRenderState: blockItemState.apply, one
+        // property at a time; a property the block lacks or a value it
+        // cannot take leaves the state as it was.
+        if let Some(horizon_world::nbt::Tag::Compound(saved)) =
+            stack.data().and_then(|d| d.other("minecraft:block_state"))
+        {
+            for (k, v) in saved.iter() {
+                let horizon_world::nbt::Tag::String(v) = v else {
+                    continue;
+                };
+                let (k, v) = (k.to_string_lossy(), v.to_string_lossy());
+                let has = self
+                    .pack
+                    .assets
+                    .registry
+                    .state(state)
+                    .is_some_and(|s| s.properties.contains_key(&*k));
+                if has && let Some(next) = self.with_props(state, &[(&*k, &*v)]) {
+                    state = next;
+                }
+            }
+        }
         let Some(head) =
             render::part_transform(mob, alpha as f32, camera, self.res.mob_data(), "head")
         else {
             return;
         };
-        // UNIT_CUBE_BOTTOM_CENTER_TO_ANTENNA_CENTER: translation(-0.5, 0, -0.5)
-        // then rotateAround(Z 180, 0.5, 0.5, 0.5), which JOML post-multiplies.
-        let unit = Mat4::from_translation(Vec3::new(-0.5, 0.0, -0.5))
-            * Mat4::from_translation(Vec3::splat(0.5))
-            * Mat4::from_rotation_z(180.0f32.to_radians())
-            * Mat4::from_translation(Vec3::splat(-0.5));
-        let t = head * Mat4::from_translation(Vec3::new(0.0, -1.75, 0.0)) * unit;
+        // Only wildflowers and pink petals carry the flowerbed display shift.
+        let flowerbeds = matches!(
+            &*stack.item,
+            "minecraft:wildflowers" | "minecraft:pink_petals"
+        );
+        let t = antenna_block_matrix(head, flowerbeds);
         self.block_model_vertices(state, 42, t, light, true, out);
     }
     /// `IronGolemFlowerLayer`: the poppy in the right arm while the golem
@@ -405,7 +444,13 @@ impl Game<'_> {
                 // A drinking witch's main hand holds the potion's type, drawn as a potion item.
                 ItemStack::new("minecraft:potion", 1).with_potion(item)
             } else {
-                ItemStack::new(item, 1)
+                // The stack the equipment packet (or the mob's own AI) left:
+                // its components are what the item model reads, a loaded
+                // crossbow's `charged_projectiles` included.
+                let Some(stack) = render::held_item_stack(&mob.extra, off_hand) else {
+                    continue;
+                };
+                stack
             };
             if !local_player && horizon_client::mobs::gear::enchanted(mob, slot) {
                 // The gear's enchantments are not tracked, only that it has some.
@@ -434,12 +479,14 @@ impl Game<'_> {
                 owner.crossbow_charge_duration = 25;
             }
             use horizon_assets::item_model::DisplayContext as Context;
-            // PandaHoldsItemLayer and FoxHeldItemLayer show the item as it lies
-            // on the ground.
+            // PandaHoldsItemLayer, FoxHeldItemLayer and DolphinCarryingItemLayer
+            // show the item as it lies on the ground.
             let (context, ordinal) = match (mob.species(), left) {
                 // The spyglass held to the eye is the HEAD display.
                 _ if spyglass_to_eye => (Context::Head, 5),
-                (Species::Panda | Species::Fox | Species::Witch, _) => (Context::Ground, 7),
+                (Species::Panda | Species::Fox | Species::Witch | Species::Dolphin, _) => {
+                    (Context::Ground, 7)
+                }
                 (_, true) => (Context::ThirdPersonLeftHand, 1),
                 (_, false) => (Context::ThirdPersonRightHand, 2),
             };
@@ -627,12 +674,13 @@ mod tests {
             (Vec3::ONE, Vec3::new(-0.3535534, 0.3938461, -0.85688126)),
             (Vec3::splat(0.5), Vec3::new(0.0, 0.6287693, -0.77137625)),
         ];
-        for base in [
+        let bases = [
             Mat4::IDENTITY,
             Mat4::from_translation(Vec3::new(3.0, 2.0, -7.0))
                 * Mat4::from_rotation_y(1.2)
                 * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0)),
-        ] {
+        ];
+        for base in bases {
             let block = carried_block_matrix(base);
             for (point, expected) in samples {
                 let actual = block.transform_point3(point);
@@ -641,6 +689,33 @@ mod tests {
                     actual.abs_diff_eq(expected, 1e-6),
                     "{actual:?} != {expected:?}"
                 );
+            }
+        }
+        // `antenna_block_matrix` with an identity head, from the 26.3 expressions:
+        // `UNIT_CUBE_BOTTOM_CENTER_TO_ANTENNA_CENTER` (`translate(-0.5, 0, -0.5)`
+        // then `rotateAround(Z 180, 0.5, 0.5, 0.5)`) sends (x, y, z) to
+        // (0.5 - x, 1 - y, z - 0.5), the antenna drops it 1.75, and
+        // `createFlowerBedModel`'s quarter block lands on (-0.25, 0, 0.25) because
+        // the Z-180 turn flips it.
+        let antenna = [
+            (Vec3::ZERO, Vec3::new(0.5, -0.75, -0.5)),
+            (Vec3::X, Vec3::new(-0.5, -0.75, -0.5)),
+            (Vec3::Y, Vec3::new(0.5, -1.75, -0.5)),
+            (Vec3::Z, Vec3::new(0.5, -0.75, 0.5)),
+            (Vec3::ONE, Vec3::new(-0.5, -1.75, 0.5)),
+            (Vec3::splat(0.5), Vec3::new(0.0, -1.25, 0.0)),
+        ];
+        for (shifted, shift) in [(false, Vec3::ZERO), (true, Vec3::new(-0.25, 0.0, 0.25))] {
+            for base in bases {
+                let m = antenna_block_matrix(base, shifted);
+                for (point, expected) in antenna {
+                    let actual = m.transform_point3(point);
+                    let expected = base.transform_point3(expected + shift);
+                    assert!(
+                        actual.abs_diff_eq(expected, 1e-6),
+                        "{actual:?} != {expected:?}"
+                    );
+                }
             }
         }
     }

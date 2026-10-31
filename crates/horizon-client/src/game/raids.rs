@@ -744,7 +744,9 @@ impl Game<'_> {
         raider::finalize(&mut mob, reason);
         let id = mob.id;
         self.mobs.push(mob);
+        self.native_mobs_joined(self.mobs.len() - 1, false);
         self.enchant_spawn_equipment(id);
+        self.halloween_spawn_head(id);
         Some(id)
     }
 
@@ -903,7 +905,8 @@ impl Game<'_> {
                         s.banner_at = None;
                         s.patrol_leader = true;
                         s.patrolling = true;
-                        m.extra.head = Some(raider::BANNER.into());
+                        // wear_banner: head id + ominous stack for SetEquipment (#4567).
+                        raider::wear_banner(m);
                     }
                 }
             }
@@ -917,7 +920,7 @@ impl Game<'_> {
         }
         taken.sort_unstable();
         for i in taken.into_iter().rev() {
-            self.dropped.remove(i);
+            self.remove_dropped(i);
         }
         for (id, wave, mob) in new_leaders {
             if let Some(r) = self.raiding.raids.get_mut(id) {

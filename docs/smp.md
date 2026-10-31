@@ -1,6 +1,6 @@
 # Survival multiplayer (SMP): the official server's mod
 
-The official Horizon server (horizon.bunchy7s.dev) wants an organised survival game: a currency players earn in
+The official Horizon server (play.playhorizon.dev) wants an organised survival game: a currency players earn in
 game, a server market, safe player-to-player trades, small games of chance with that currency, and spawn, homes,
 teleport requests, warps, land claims and rules.
 
@@ -53,7 +53,9 @@ breaking and placing, item use: #4483, #4302), the SMP uses theirs.
 | 1. Market | 9 | the acting player's items: held, count, carried, take, room, give (plain stacks only, nothing dropped) |
 | 2. Trading | 10 | a vanilla chest menu the server opens and fills for a player, display only: its clicks and its closing go to the mod; an atomic exchange of two players' items; a player left or died |
 | 3. Gambling | nothing new |
-| 4. Organisation | teleport a player (across dimensions), damage taken, a player's interaction with a block or entity that a mod can refuse (with #4302 and #4483), the player's time played |
+| 4. Organisation | 21 | a right click on a block that a mod can refuse (beside #4302's item use and #4483's block breaking), the acting player, a command run as the server (teleports across levels with `execute in … run tp`), a player's health (a teleport's warmup stops when it drops) |
+| 4. Claims | 22 | the world kept out of claims: fluid and fire spreading, pistons, explosions' blocks, buckets, a player's blow on an entity (frames, armor stands, animals); right-clicking an entity is #4648's |
+| 5. Public server polish | 49 | a sidebar and Tab list lines for one player (the richest players, the server's TPS), the server's tick times, AFK players out of the sleep count, where players look |
 
 ## Mojang's rules
 

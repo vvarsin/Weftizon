@@ -23,6 +23,9 @@ pub struct Cx<'a, 'w> {
 }
 pub trait Goal: std::fmt::Debug {
     fn flags(&self) -> u8;
+    /// A goal that draws its first start delay in its constructor (a schooling fish's
+    /// `FollowFlockLeaderGoal`): the delay again, when the mob's random is seeded afterwards.
+    fn set_start_delay(&mut self, _ticks: i32) {}
     fn can_use(&mut self, m: &mut Mob, cx: &mut Cx) -> bool;
     fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
         self.can_use(m, cx)
@@ -86,6 +89,14 @@ impl GoalSelector {
             goal: Box::new(goal),
             running: false,
         });
+    }
+    /// `Goal::set_start_delay` of the goal of this name.
+    pub fn set_start_delay(&mut self, name: &str, ticks: i32) {
+        for g in &mut self.goals {
+            if g.goal.name() == name {
+                g.goal.set_start_delay(ticks);
+            }
+        }
     }
     pub fn clear(&mut self) {
         self.goals.clear();
@@ -646,15 +657,51 @@ impl Mob {
         let b = self.bounds().inflate(Vec3::new(reach, 0.0, reach));
         b.intersects(t.bounds)
     }
-    /// `IronGolem.canAttack`: a golem a player built never attacks players.
-    pub fn spares_players(&self) -> bool {
+    /// Whether the species is a `TamableAnimal` (not the horses and llamas,
+    /// which are tamed another way).
+    pub fn is_tamable_animal(&self) -> bool {
+        matches!(
+            self.species(),
+            Species::Wolf
+                | Species::Cat
+                | Species::Parrot
+                | Species::Nautilus
+                | Species::ZombieNautilus
+        )
+    }
+    /// `IronGolem.isPlayerCreated`: a golem a player built, which
+    /// `IronGolem.canAttack` never lets attack a player.
+    pub fn built_by_player(&self) -> bool {
         self.species() == Species::IronGolem && self.extra.player_created
+    }
+    /// `canAttack` for the player: a golem a player built never attacks
+    /// players (`IronGolem.canAttack`), and a pet never attacks its owner
+    /// (`TamableAnimal.canAttack`: `isOwnedBy`).
+    pub fn spares_players(&self, w: &MobWorld) -> bool {
+        self.built_by_player()
+            || (self.is_tamable_animal()
+                && self.extra.tame
+                && w.player
+                    .as_ref()
+                    .is_some_and(|p| super::tame::owned_by(self.extra.owner, p.uuid)))
+    }
+    /// `canAttack` of any target: the player rules above, and
+    /// `IronGolem.canAttack`'s refusal of creepers. The callers check that
+    /// the target is alive and can be seen as an enemy.
+    pub fn spares_target(&self, w: &MobWorld, who: Who) -> bool {
+        match who {
+            Who::Player => self.spares_players(w),
+            Who::Mob(id) => {
+                self.species() == Species::IronGolem
+                    && w.seen(id).is_some_and(|s| s.species == Species::Creeper)
+            }
+        }
     }
     /// TargetingConditions.forCombat().test for the player: alive, not
     /// creative, within range scaled by visibility, optionally visible.
     pub fn can_target_player(&mut self, w: &MobWorld, range: f64, check_sight: bool) -> bool {
         let Some(p) = &w.player else { return false };
-        if self.spares_players() {
+        if self.spares_players(w) {
             return false;
         }
         // TargetingConditions.isCombat: never an ally.
@@ -667,7 +714,7 @@ impl Mob {
     /// a target the mob already has, which ignores the visibility scaling.
     pub fn can_keep_target_player(&mut self, w: &MobWorld, range: f64) -> bool {
         let Some(p) = &w.player else { return false };
-        if self.spares_players() {
+        if self.spares_players(w) {
             return false;
         }
         if p.creative || p.allies.contains(&self.id) {
@@ -1598,7 +1645,11 @@ pub fn target_continue(st: &mut TargetState, must_see: bool, m: &mut Mob, cx: &m
     let Some(t) = cx.w.target_info(who) else {
         return false;
     };
-    if !t.alive || !t.can_be_seen_as_enemy || t.is_player && (t.creative || m.spares_players()) {
+    if !t.alive
+        || !t.can_be_seen_as_enemy
+        || (t.is_player && t.creative)
+        || m.spares_target(cx.w, who)
+    {
         return false;
     }
     let follow = m.attrs.follow_range * st.follow_scale;
@@ -1790,7 +1841,11 @@ impl Goal for HurtByTarget {
         let Some(t) = cx.w.target_info(by) else {
             return false;
         };
-        t.alive && t.can_be_seen_as_enemy && !(t.is_player && (t.creative || m.spares_players()))
+        t.alive
+            && t.can_be_seen_as_enemy
+            && !(t.is_player && t.creative)
+            // HurtByTargetGoal.canUse ends with canAttack(lastHurtByMob).
+            && !m.spares_target(cx.w, by)
     }
     fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
         if self.bee && !super::bee::angry(m, cx.w) {
@@ -1816,14 +1871,7 @@ impl Goal for HurtByTarget {
             let pos = m.position;
             // TamableAnimal: its owner (`getOwner`, none for a wild one) and
             // whether it is a pet at all.
-            let tamable = matches!(
-                species,
-                Species::Wolf
-                    | Species::Cat
-                    | Species::Parrot
-                    | Species::Nautilus
-                    | Species::ZombieNautilus
-            );
+            let tamable = m.is_tamable_animal();
             let owner = m.extra.tame.then_some(m.extra.owner).flatten();
             let player = cx.w.player.as_ref().map(|p| p.uuid);
             let ids: Vec<u32> =
@@ -2242,6 +2290,10 @@ impl Goal for Breed {
             if m.species() == Species::Turtle {
                 m.extra.flag = true;
             }
+            // Frog.spawnChildFromBreeding: IS_PREGNANT instead of a baby.
+            if m.species() == Species::Frog {
+                super::frog::set_pregnant(m, true);
+            }
             cx.events.push(MobEvent::Breed {
                 parent: m.id,
                 partner: p.id,
@@ -2327,6 +2379,118 @@ impl Goal for FollowParent {
             if let Some(p) = self.parent.and_then(|p| cx.w.seen(p)) {
                 let at = [p.position.x, p.position.y, p.position.z];
                 m.nav_move_to_entity(cx.w, at, 1, self.speed);
+            }
+        }
+    }
+}
+/// `FollowMobGoal` `(mob, speed, stopDistance, areaSize)`: follows the first
+/// visible mob of another class within `area` blocks and keeps `stop` away
+/// from it (a parrot hovers by the other animals).
+///
+/// Left out: vanilla also backs away when the followed mob's look control
+/// wants this mob's position; only another `FollowMobGoal` mob of a different
+/// class would look at it, and parrots are the only ones that have the goal.
+#[derive(Clone, Debug)]
+pub struct FollowMob {
+    speed: f64,
+    stop: f64,
+    area: f64,
+    following: Option<u32>,
+    recalc: i32,
+    old_water: f32,
+}
+impl FollowMob {
+    pub fn new(speed: f64, stop: f32, area: f32) -> Self {
+        Self {
+            speed,
+            stop: f64::from(stop),
+            area: f64::from(area),
+            following: None,
+            recalc: 0,
+            old_water: 0.0,
+        }
+    }
+}
+impl Goal for FollowMob {
+    fn name(&self) -> &'static str {
+        "FollowMobGoal"
+    }
+    goal_clone!();
+    fn flags(&self) -> u8 {
+        MOVE | LOOK
+    }
+    /// `FollowMobGoal.canUse`.
+    fn can_use(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
+        let species = m.species();
+        // `getEntitiesOfClass(Mob, getBoundingBox().inflate(areaSize))`.
+        let area = m
+            .bounds()
+            .inflate(Vec3::new(self.area, self.area, self.area));
+        let found = cx
+            .w
+            .others_near(area)
+            .find(|s| {
+                s.species != species && s.bounds.intersects(area) && !s.has_effect("invisibility")
+            })
+            .map(|s| s.id);
+        self.following = found;
+        found.is_some()
+    }
+    /// `FollowMobGoal.canContinueToUse`.
+    fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
+        let Some(at) = self
+            .following
+            .and_then(|id| cx.w.seen(id))
+            .map(|s| s.position)
+        else {
+            return false;
+        };
+        !m.ai.nav.is_done() && m.distance_sqr(at) > self.stop * self.stop
+    }
+    /// `FollowMobGoal.start`.
+    fn start(&mut self, m: &mut Mob, _: &mut Cx) {
+        self.recalc = 0;
+        self.old_water = m.malus(super::path::PathType::Water);
+        m.set_malus(super::path::PathType::Water, 0.0);
+    }
+    /// `FollowMobGoal.stop`.
+    fn stop(&mut self, m: &mut Mob, _: &mut Cx) {
+        self.following = None;
+        m.nav_stop();
+        m.set_malus(super::path::PathType::Water, self.old_water);
+    }
+    /// `FollowMobGoal.tick`.
+    fn tick(&mut self, m: &mut Mob, cx: &mut Cx) {
+        let Some((at, eye)) = self
+            .following
+            .and_then(|id| cx.w.seen(id))
+            .map(|s| (s.position, s.eye_y))
+        else {
+            return;
+        };
+        if m.extra.leash.is_some() {
+            return;
+        }
+        let max = m.max_head_x_rot();
+        m.look_at_speed([at.x, eye, at.z], 10.0, max);
+        self.recalc -= 1;
+        if self.recalc <= 0 {
+            self.recalc = reduced(10);
+            let d = m.distance_sqr(at);
+            if d > self.stop * self.stop {
+                m.nav_move_to_entity(cx.w, [at.x, at.y, at.z], 1, self.speed);
+            } else {
+                m.nav_stop();
+                // `distSqr <= stopDistance` (not squared, as vanilla writes it):
+                // too close, so it moves away from the mob.
+                if d <= self.stop {
+                    let (dx, dz) = (at.x - m.position.x, at.z - m.position.z);
+                    m.nav_move_to(
+                        cx.w,
+                        [m.position.x - dx, m.position.y, m.position.z - dz],
+                        self.speed,
+                    );
+                }
             }
         }
     }
@@ -2482,6 +2646,7 @@ impl Goal for EatBlock {
                     pos: [x, y - 1, z],
                     name: "minecraft:dirt",
                     effect: true,
+                    flags: horizon_world::level::flags::UPDATE_CLIENTS,
                 });
                 super::ai::ate(m);
             }
@@ -2698,5 +2863,31 @@ impl MoveToBlock {
             self.reached = true;
             self.try_ticks -= 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod built_by_player_tests {
+    use super::*;
+
+    /// A mob of `species`, from a made-up type.
+    fn mob(species: Species) -> Mob {
+        let mut kind = crate::mobs::sensor_scan_tests::kind();
+        Arc::make_mut(&mut kind).species = species;
+        Mob::new(1, kind, Vec3::ZERO, 0.0)
+    }
+
+    /// `IronGolem.canAttack`: only a golem a player built spares players, so
+    /// the save restore drops that target (`Mob.asValidTarget`) while another
+    /// mob's `PlayerCreated` byte means nothing.
+    #[test]
+    fn only_a_golem_spares_the_player_that_built_it() {
+        let mut built = mob(Species::IronGolem);
+        built.extra.player_created = true;
+        assert!(built.built_by_player());
+        assert!(!mob(Species::IronGolem).built_by_player());
+        let mut zombie = mob(Species::Zombie);
+        zombie.extra.player_created = true;
+        assert!(!zombie.built_by_player());
     }
 }

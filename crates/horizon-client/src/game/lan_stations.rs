@@ -141,6 +141,13 @@ impl Game<'_> {
         true
     }
 
+    /// How many slots of its own the guest's open station menu has before the
+    /// player's inventory (`slot_count - 36`), if one is open.
+    pub(super) fn lan_station_own_slots(host: &LanHost, conn: u32) -> Option<usize> {
+        let gs = host.play.get(&conn)?.station.as_ref()?;
+        Some(gs.menu.slot_count() - 36)
+    }
+
     /// `LecternBlock.openScreen` for a guest: `minecraft:lectern` over the
     /// block entity, with its book and page.
     pub(super) fn lan_open_lectern(&mut self, host: &mut LanHost, conn: u32, key: (i32, i32, i32)) {
@@ -350,7 +357,14 @@ impl Game<'_> {
             .get(&conn)
             .and_then(|p| p.station.as_ref())
             .is_some_and(|s| s.kind == StationKind::Anvil);
-        if anvil {
+        if anvil
+            && self.chat_filter_text(
+                host,
+                conn,
+                &[name],
+                horizon_client::lan::hub::chat_filter::Place::Anvil,
+            )
+        {
             self.lan_station_op(host, conn, None, |menu, env| {
                 menu.rename(env, name);
             });
@@ -392,6 +406,31 @@ impl Game<'_> {
         window: i32,
         id: i32,
     ) {
+        // A mod container's menu: its mod's buttons (`native_menu_button`),
+        // as handleContainerButtonClick checks them: the open menu, not a
+        // spectator, still valid.
+        if let Some(g) = host.hub.guest(conn)
+            && let Some(menu) = g.menu.as_ref().filter(|m| m.window == window)
+            && let Some(pos) = menu.pos
+            && self.mod_menu_at(pos).is_some()
+        {
+            if !g.spectator() && menu.slots.still_valid(&self.world, g, menu.pos) {
+                // The clicking player's cursor stack (`clickMenuButton`'s
+                // other half). Single player's own player is a guest of
+                // its own host too (`lan.rs:165`), so this one path covers
+                // both single player and a LAN guest.
+                let mut carried = g.carried.clone();
+                self.mod_menu_button(pos, id, &mut carried);
+                if host.hub.guest(conn).is_some_and(|g| g.carried != carried) {
+                    let net = host.hub.stack(&carried);
+                    if let Some(g) = host.hub.guest_mut(conn) {
+                        g.carried = carried;
+                        g.send(&C::SetCursorItem(play::SetCursorItem { item: net }));
+                    }
+                }
+            }
+            return;
+        }
         // LecternMenu's page buttons and Take Book.
         if self.lan_lectern_op(host, conn, window, |menu, env| {
             menu.button(env, id);
@@ -544,13 +583,30 @@ impl Game<'_> {
             }
         }
         let data = self.beacon_data(host, pos);
-        let mut updated = false;
+        let mut updated = None;
         self.lan_station_op(host, conn, None, |menu, env| {
             menu.data.copy_from_slice(&data);
             let power = |k: usize| powers[k].as_ref().map(|(id, n)| (*id, n.as_str()));
-            updated = menu.beacon_update(env, power(0), power(1));
+            updated = Some(menu.beacon_update(env, power(0), power(1)));
         });
-        if !updated {
+        // handleSetBeaconPacket: effects the beacon can't give, or no payment, disconnect.
+        if updated == Some(false) {
+            let name = host
+                .hub
+                .guests
+                .iter()
+                .find(|g| g.conn == conn)
+                .map(|g| g.name.clone());
+            eprintln!(
+                "Player {} tried to set invalid beacon effects",
+                name.unwrap_or_default()
+            );
+            host.hub.kick(
+                conn,
+                horizon_protocol::text::translatable("multiplayer.disconnect.generic", &[]),
+            );
+        }
+        if updated != Some(true) {
             return;
         }
         let [primary, secondary] = powers.map(|p| p.map(|(_, n)| n));

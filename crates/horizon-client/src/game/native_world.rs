@@ -1,8 +1,8 @@
-//! The World API for native mods, API 21 (docs/native-mods.md, "Spawning
+//! The World API for native mods, API 68 (docs/native-mods.md, "Spawning
 //! with gear, effects, weather and projectiles"): spawning any entity from
 //! its saved data, potion effects and fire on mobs and players, lightning and
 //! weather, shooting projectiles, and finding blocks around a place. What a
-//! mod such as Invasion Mod needs beside API 20's waves. They run where the
+//! mod such as Invasion Mod needs beside API 67's waves. They run where the
 //! world is simulated (single player's server thread, a LAN host, a dedicated
 //! server), never on a client, and act on the level in place: call them from
 //! `native_level_tick` or another server hook.
@@ -69,8 +69,8 @@ impl Game<'_> {
     /// Add `PersistenceRequired:1b` to keep a mob from despawning. Its id, or
     /// None when the data does not parse, the type cannot be summoned, or it
     /// made an entity with no id of its own (primed TNT, falling blocks).
-    /// API 21.
-    pub(super) fn native_summon(
+    /// API 68.
+    pub(super) fn native_summon_snbt(
         &mut self,
         kind: &str,
         position: [f64; 3],
@@ -100,7 +100,7 @@ impl Game<'_> {
     /// for `ticks` (-1 for ever) at `amplifier` (0 is level I), as `/effect
     /// give` does: a stronger or longer one already there stays. False when
     /// it is not a mob of this level, the effect is unknown, or the mob is
-    /// immune to it (a wither to wither, a spider to poison). API 21.
+    /// immune to it (a wither to wither, a spider to poison). API 68.
     pub(super) fn native_mob_effect(
         &mut self,
         id: u32,
@@ -130,7 +130,7 @@ impl Game<'_> {
     /// Gives the player `uuid` the effect `effect` (`minecraft:darkness`,
     /// `weakness`, `wither`...) for `ticks` (-1 for ever) at `amplifier`, as
     /// `/effect give` does. False when they are not on, or the effect is
-    /// unknown. API 21.
+    /// unknown. API 68.
     pub(super) fn native_player_effect(
         &mut self,
         uuid: u128,
@@ -164,7 +164,7 @@ impl Game<'_> {
     /// Sets mob `id` on fire for `ticks` (as fire or lava would; a longer
     /// fire already burning stays). Fire-immune mobs only look on fire. Call
     /// it again to keep it burning. False when it is not a mob of this
-    /// level. API 21.
+    /// level. API 68.
     pub(super) fn native_set_entity_fire(&mut self, id: u32, ticks: i32) -> bool {
         let Some(m) = self
             .mobs
@@ -182,7 +182,7 @@ impl Game<'_> {
     /// A lightning bolt at `position`: its flash, thunder, fire and damage,
     /// a creeper struck turns charged, a pig a piglin; `visual_only` keeps
     /// only the flash and the thunder (Weft's and vanilla's
-    /// `setVisualOnly`). API 21.
+    /// `setVisualOnly`). API 68.
     pub(super) fn native_lightning(&mut self, position: [f64; 3], visual_only: bool) -> bool {
         if !position.iter().all(|v| v.is_finite()) {
             return false;
@@ -193,7 +193,7 @@ impl Game<'_> {
     /// Sets the weather of the level in place for `ticks`, as `/weather`
     /// does: `clear`, `rain` or `thunder`. The overworld's weather is the
     /// world's: call it from the overworld's `native_level_tick`. False for
-    /// another kind. API 21.
+    /// another kind. API 68.
     pub(super) fn native_set_weather(&mut self, kind: &str, ticks: i32) -> bool {
         let ticks = ticks.max(1);
         let (clear, time, raining, thundering) = match kind {
@@ -217,7 +217,7 @@ impl Game<'_> {
     /// counts as shot by (its kills and its own hits ignored), or none.
     /// `burning` lights it, as a Flame bow does: an arrow sets what it hits on
     /// fire. Its id, or None for another kind or a direction that isn't one.
-    /// API 21.
+    /// API 68.
     pub(super) fn native_shoot(
         &mut self,
         kind: &str,
@@ -255,7 +255,7 @@ impl Game<'_> {
     /// The positions within `radius` blocks (a cube, at most 32) of
     /// `center` whose block is `block` (`minecraft:obsidian`) or in the
     /// block tag `#tag` (`#minecraft:logs`), nearest first, at most `limit`.
-    /// Only loaded chunks are searched. API 21.
+    /// Only loaded chunks are searched. API 68.
     pub(super) fn native_find_blocks(
         &self,
         center: [i32; 3],
@@ -308,7 +308,7 @@ impl Game<'_> {
     }
 }
 
-/// Creaking hearts in trees for native mods (API 22).
+/// Creaking hearts in trees for native mods (API 69).
 #[allow(dead_code)]
 impl Game<'_> {
     /// The creaking that grows between logs `name`: a content mod's variant
@@ -341,7 +341,7 @@ impl Game<'_> {
     /// variant, Grafted Creaking-style, or vanilla's in pale oak). With
     /// `creaking`, only a trunk whose wood grows that one (`invasion:spruce_creaking`).
     /// The heart's position and the creaking it grows, nearest first; None
-    /// when no such trunk is loaded. API 22.
+    /// when no such trunk is loaded. API 69.
     pub(super) fn native_plant_creaking_heart(
         &mut self,
         center: [i32; 3],
@@ -357,7 +357,7 @@ impl Game<'_> {
                 .clone()
         };
         let upright = |g: &Self, p: [i32; 3]| {
-            g.native_block(p)
+            g.native_block_at(p)
                 .is_some_and(|b| b.properties.get("axis").is_none_or(|a| a == "y"))
         };
         for p in logs {
@@ -391,7 +391,7 @@ impl Game<'_> {
             if self
                 // Dormant, as `getStateForPlacement` makes it between its
                 // logs: its own tick wakes it at its creaking's hours.
-                .native_set_block(
+                .native_set_block_at(
                     p,
                     "minecraft:creaking_heart[axis=y,natural=true,creaking_heart_state=dormant]",
                 )
