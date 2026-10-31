@@ -1775,23 +1775,6 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             add_lang(&overlay, ns, format!("block.{ns}.{path}"), title_case(path))?;
         }
     }
-    // Declared machines, for the game's block entities and menus.
-    let machines: Vec<crate::mod_machines::Entry> = mods
-        .iter()
-        .flat_map(|m| &m.content.blocks)
-        .filter_map(|b| {
-            Some(crate::mod_machines::Entry {
-                block: b.id.clone(),
-                machine: b.machine.clone()?,
-            })
-        })
-        .collect();
-    if !machines.is_empty() {
-        overlay.write(
-            crate::mod_machines::FILE,
-            &serde_json::to_vec_pretty(&machines)?,
-        )?;
-    }
     // A declared entity needs its name key; a mod's own value wins.
     for m in mods {
         for e in &m.content.entities {
@@ -1935,10 +1918,7 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             .map(|(id, _)| J::Str(id.clone()))
             .collect();
         add(&["biomes"], &new_biomes);
-        add(
-            &["by_registry", "minecraft:worldgen/biome", "ids"],
-            &new_biomes,
-        );
+        add(&["by_registry", "minecraft:worldgen/biome", "ids"], &new_biomes);
         let mut new_dimensions: Vec<J> = Vec::new();
         for m in mods {
             for file in &m.content.files {
@@ -1953,10 +1933,7 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             }
         }
         add(&["dimensions"], &new_dimensions);
-        add(
-            &["by_registry", "minecraft:dimension", "ids"],
-            &new_dimensions,
-        );
+        add(&["by_registry", "minecraft:dimension", "ids"], &new_dimensions);
         overlay.write("command-registries.json", &serde_json::to_vec(&doc)?)?;
     }
     // A block without its own blockstate looks like its template, so every
