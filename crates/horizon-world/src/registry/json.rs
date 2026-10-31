@@ -44,7 +44,10 @@ impl<'a> BlockStateJsonCodec<'a> {
         let name = if !full && value.is_string() {
             value.as_str()
         } else {
-            value.get("id").and_then(Value::as_str)
+            value
+                .get("id")
+                .or_else(|| value.get("Name"))
+                .and_then(Value::as_str)
         }
         .ok_or_else(|| invalid("missing block identifier"))?;
         let (namespace, path) = name.split_once(':').unwrap_or(("minecraft", name));
@@ -61,7 +64,11 @@ impl<'a> BlockStateJsonCodec<'a> {
             .default_state(&name)
             .ok_or_else(|| invalid("unknown block identifier"))?;
         let mut state = self.registry.state(default).unwrap().clone();
-        if let Some(properties) = value.get("properties").and_then(Value::as_object) {
+        if let Some(properties) = value
+            .get("properties")
+            .or_else(|| value.get("Properties"))
+            .and_then(Value::as_object)
+        {
             for (key, raw) in properties {
                 if !state.properties.contains_key(key) {
                     continue;

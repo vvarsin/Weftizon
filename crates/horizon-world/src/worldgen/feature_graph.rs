@@ -8,7 +8,7 @@ use super::{
     },
     density::identifier,
     feature::{BasicFeature, FeatureBlocks, FeatureError, FeatureWorld},
-    number_text,
+    mod_features, number_text,
     ore_feature::ScatteredOreFeature,
     placement::{
         FeaturePlacementError, FeaturePlacer, PlacementContext, PlacementModifier,
@@ -86,6 +86,12 @@ pub enum FeatureDefinition {
     SteppedColumnCluster(Box<super::projected::SteppedColumnClusterFeature>),
     FallenTree(Box<super::tree::FallenTreeFeature>),
     NoOp,
+    ModBlob(mod_features::ModBlobFeature),
+    ModPillar(mod_features::ModPillarFeature),
+    ModPond(mod_features::ModPondFeature),
+    ModFall(mod_features::ModFallFeature),
+    ModPatch(mod_features::ModPatchFeature),
+    ModPlant(mod_features::ModPlantFeature),
     Template(Box<super::structure::features::TemplateFeature>),
     Fossil(Box<super::structure::features::FossilFeature>),
     WeightedChoice(OptionalWeightedList<PlacedFeatureDefinition>),
@@ -654,6 +660,69 @@ impl FeatureDefinition {
                 )
                 .map(|f| Self::ProjectedPatchySquare(Box::new(f)))
             }
+            "the_afterdark:supported_disk" => super::disk::DiskFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("disk bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::Disk),
+            "the_afterdark:pond" => mod_features::ModPondFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("pond bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModPond),
+            "the_afterdark:crystal_spike"
+            | "the_afterdark:additive_blob"
+            | "the_afterdark:additive_ground_blob"
+            | "the_afterdark:spiral"
+            | "the_afterdark:anvil_rock" => mod_features::ModBlobFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("blob bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModBlob),
+            "the_afterdark:catching_fall" => mod_features::ModFallFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("fall bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModFall),
+            "the_afterdark:waterloggable_random_patch" => mod_features::ModPatchFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("patch bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModPatch),
+            "the_afterdark:cave_kelp" => mod_features::ModPlantFeature::decode(
+                json,
+                "minecraft:kelp",
+                blocks.ok_or(DecodeError::Field("kelp bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModPlant),
+            "the_afterdark:cave_pickle" => mod_features::ModPlantFeature::decode(
+                json,
+                "minecraft:sea_pickle",
+                blocks.ok_or(DecodeError::Field("pickle bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModPlant),
+            "the_afterdark:cave_seagrass" => mod_features::ModPlantFeature::decode(
+                json,
+                "minecraft:seagrass",
+                blocks.ok_or(DecodeError::Field("seagrass bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::ModPlant),
             "minecraft:stepped_column_cluster" => {
                 super::projected::SteppedColumnClusterFeature::decode(
                     json,
@@ -805,6 +874,17 @@ impl FeatureDefinition {
                     )?),
                 })
             }
+            _ if kind.starts_with("the_afterdark:") && kind.ends_with("_pillar") => {
+                let material = mod_features::pillar_material(&kind)?;
+                mod_features::ModPillarFeature::decode(
+                    json,
+                    material,
+                    blocks.ok_or(DecodeError::Field("pillar bindings"))?,
+                    depth,
+                    remaining,
+                )
+                .map(Self::ModPillar)
+            }
             _ => BasicFeature::from_json(json).map(Self::Basic),
         }
     }
@@ -855,6 +935,12 @@ impl FeatureDefinition {
                 .place(world, random, origin, run.blocks)
                 .map_err(FeatureExecutionError::Basic),
             Self::NoOp => Ok(true),
+            Self::ModBlob(feature) => feature.place(world, random, origin),
+            Self::ModPillar(feature) => feature.place(world, random, origin),
+            Self::ModPond(feature) => feature.place(world, random, origin),
+            Self::ModFall(feature) => feature.place(world, random, origin),
+            Self::ModPatch(feature) => feature.place(world, random, origin),
+            Self::ModPlant(feature) => feature.place(world, random, origin),
             Self::Template(feature) => feature
                 .place(world, random, origin)
                 .map_err(FeatureExecutionError::Query),

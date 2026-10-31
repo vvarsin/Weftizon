@@ -224,6 +224,14 @@ impl FeatureCatalog {
             return self.named(&name, false, depth, work);
         }
         let mut object: Object = serde_json::from_str(value.get())?;
+        // 1.20.1 packs keep feature settings under `config`; the generator
+        // reads the flattened form.
+        if let Some(config) = object.remove("config") {
+            let fields: Object = serde_json::from_str(config.get())?;
+            for (key, value) in fields {
+                object.insert(key, value);
+            }
+        }
         let kind = identifier(&serde_json::from_str::<String>(
             required(&object, "type")?.get(),
         )?)?;

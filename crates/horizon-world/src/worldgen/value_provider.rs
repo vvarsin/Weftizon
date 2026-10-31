@@ -31,7 +31,11 @@ impl FloatProvider {
             return Ok(Self::Constant(if value == 0. { 0. } else { value }));
         }
         let object: Object = serde_json::from_str(raw.get())?;
-        let field = |name| required(&object, name).and_then(float);
+        let nested = object
+            .get("value")
+            .and_then(|raw| serde_json::from_str::<Object>(raw.get()).ok());
+        let base = nested.as_ref().unwrap_or(&object);
+        let field = |name| required(base, name).and_then(float);
         match kind(&object)?.as_str() {
             "minecraft:constant" => {
                 let value = field("value")?;
@@ -149,7 +153,11 @@ impl IntProvider {
         }
         let object: Object = serde_json::from_str(raw.get())?;
         let kind = kind(&object)?;
-        let field = |name| required(&object, name).and_then(integer);
+        let nested = object
+            .get("value")
+            .and_then(|raw| serde_json::from_str::<Object>(raw.get()).ok());
+        let base = nested.as_ref().unwrap_or(&object);
+        let field = |name| required(base, name).and_then(integer);
         if kind == "minecraft:constant" {
             return Ok(Self::Constant(field("value")?));
         }

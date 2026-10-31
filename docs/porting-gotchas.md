@@ -119,8 +119,14 @@ What did not work:
   `surface_rule` and old block-state objects was also added. The full TheAfterdark port now
   starts the game and `/execute in the_afterdark:afterdark` enters its dimension.
 - **Custom worldgen feature types.** The configured features use Java feature types
-  (`the_afterdark:*`). Data files alone do not register them; a native mod or generator support
-  is needed once the dimension is playable.
+  (`the_afterdark:*`). Data files alone did not register them. Clean-room native support was
+  added for `supported_disk`, `pond`, blobs/crystal spikes, large pillars, `catching_fall`,
+  `waterloggable_random_patch`, and cave plants. The port now loads the 1.20.1
+  `worldgen/configured_feature` folder and flattens its `config` object; legacy `Name`/`Properties`
+  block states, nested provider `value` objects, and `random_offset` placement modifiers are
+  accepted as aliases. From 62 skipped placed features the count is now 12; the remaining ones
+  are mostly coral patches, root-system variants, `amethyst_spiral`, and a missing
+  `minecraft:seagrass_simple` feature reference.
 - **Teleport block behaviour.** `TeleportBlockEntity` and the teleport logic are Java code.
   The content block is only a static block; it needs a native block-entity mod.
 - **Old structure path.** The mod uses `data/the_afterdark/structures/` (plural); Horizon's
@@ -129,5 +135,8 @@ What did not work:
 - **1.20.1 item models** need 26.3 item definitions (`assets/<ns>/items/<name>.json`) in
   addition to `models/item/<name>.json`; the port added them.
 
-So the data/assets port is clean, but TheAfterdark is not fully playable from content data
-alone. Its dimension and teleport behaviour are the missing pieces.
+So the data/assets port is clean, the dimension loads, and most custom terrain features now
+run. What remains is teleport/catalyst behaviour and a handful of special worldgen features.
+The Teleport Catalyst and Teleport Block are data-only decorative/semantic content: entering the
+dimension already works with `/execute in` and movement with `/tp`. A native teleport block
+entity is optional for gameplay parity, not required for terrain or dimension entry.

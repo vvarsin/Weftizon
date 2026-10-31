@@ -37,6 +37,8 @@ Done / substantially done:
 - auto names for items, blocks, entities and spawn eggs
 - events/questions/damage chains API 18 (Warsin finished and pushed)
 - TheAfterdark content port loads, custom dimension enters, legacy carver bug fixed
+- custom TheAfterdark worldgen feature types partially implemented; skipped placed features
+  reduced from 62 to 12; legacy 1.20.1 block-state/provider/placement aliases accepted
 - modder docs and porting-gotchas docs
 
 Still missing for full Weft power:
@@ -90,11 +92,14 @@ TheAfterdark content port is done to the point of loading and dimension entry:
 
 Not done:
 
-- `TeleportBlockEntity` teleport behavior
-- `TeleportCatalystItem` use/teleport behavior
+- `TeleportBlockEntity` teleport behavior (optional; `/execute in` and `/tp` already enter/travel)
+- `TeleportCatalystItem` use/teleport behavior (optional)
+- data-only Teleport Catalyst/Teleport Block are not needed to enter the dimension; the block
+  can stay decorative unless gameplay parity is wanted
 - fire/lava/dripstone/grass-burn mixins
 - catalyst loot modification
-- custom Java worldgen feature classes
+- 12 custom/legacy placed features still skipped (coral patches, root-system variants,
+  amethyst_spiral, a missing seagrass feature reference)
 - config behavior
 - full terrain/biome visual parity in the custom dimension
 

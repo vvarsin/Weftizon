@@ -350,7 +350,7 @@ impl BlockStateProvider {
             required(&object, "type")?.get(),
         )?)?;
         Ok(Self(match kind.as_str() {
-            "minecraft:rule_based" => {
+            "minecraft:rule_based" | "minecraft:rule_based_state_provider" => {
                 let fallback = optional(&object, "fallback")
                     .map(|raw| {
                         Self::decode_holder(raw.get(), bindings, depth + 1, remaining, catalog)
@@ -389,15 +389,15 @@ impl BlockStateProvider {
             "minecraft:noise" | "minecraft:noise_threshold" | "minecraft:dual_noise" => {
                 Node::Noise(Box::new(NoiseProvider::decode(&object, bindings, &kind)?))
             }
-            "minecraft:simple" => {
+            "minecraft:simple" | "minecraft:simple_state_provider" => {
                 Node::Simple(bindings.state(required(&object, "state")?.get(), false)?)
             }
-            "minecraft:weighted" => {
+            "minecraft:weighted" | "minecraft:weighted_state_provider" => {
                 Node::Weighted(WeightedList::decode(required(&object, "entries")?, |v| {
                     bindings.state(v.get(), false)
                 })?)
             }
-            "minecraft:random_block" => {
+            "minecraft:random_block" | "minecraft:random_block_state_provider" => {
                 Node::RandomBlock(bindings.block_set(required(&object, "blocks")?)?)
             }
             "minecraft:rotated" => {

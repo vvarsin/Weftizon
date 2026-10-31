@@ -18,14 +18,16 @@ pub const DIMENSION_TYPES: &str = "dimension_types";
 
 /// Pack folders (`data/<ns>/<kind>/`) the chunk generator reads, and the
 /// bundle each joins.
-const KINDS: [(&str, &str); 16] = [
+const KINDS: [(&str, &str); 18] = [
     ("dimension", DIMENSIONS),
     ("dimension_type", DIMENSION_TYPES),
     ("worldgen/biome", "biomes"),
     ("worldgen/block_state_provider", "state_providers"),
     // 26.3's names: 26.2 called them configured_carver and configured_feature.
     ("worldgen/carver", "carvers"),
+    ("worldgen/configured_carver", "carvers"),
     ("worldgen/feature", "features"),
+    ("worldgen/configured_feature", "features"),
     ("worldgen/density_function", "densities"),
     ("worldgen/material_condition", "conditions"),
     ("worldgen/material_rule", "rules"),
@@ -387,7 +389,7 @@ mod tests {
         );
         assert_eq!(
             add("data/minecraft/worldgen/configured_carver/cave.json", "{}"),
-            PackFile::NotRead("worldgen/configured_carver".into())
+            PackFile::Read
         );
         assert_eq!(
             add("data/minecraft/worldgen/world_preset/normal.json", "{}"),
@@ -404,7 +406,9 @@ mod tests {
         assert_eq!(get("settings"), [("minecraft:overworld", "3")]);
         assert_eq!(get("structure_sets"), [("minecraft:mineshafts", "4")]);
         assert_eq!(get(DIMENSIONS), [("minecraft:overworld", "5")]);
-        assert_eq!(get("carvers"), [("minecraft:cave", "6")]);
+        // A legacy configured_carver entry joins the carvers bundle and, in
+        // this test, is the pack's last entry for the same id.
+        assert_eq!(get("carvers"), [("minecraft:cave", "{}")]);
         assert_eq!(get("features"), [("minecraft:water_delta", "7")]);
         assert_eq!(get("state_providers"), [("p:stony_cliffs", "8")]);
         assert_eq!(get("structures"), []);

@@ -222,6 +222,11 @@ impl PlacementModifier {
                 provider("y", -16, 16)?,
                 provider("z", -16, 16)?,
             ])),
+            "minecraft:random_offset" => Ok(Self::Offset([
+                provider("xz_spread", -16, 16)?,
+                provider("y_spread", -16, 16)?,
+                provider("xz_spread", -16, 16)?,
+            ])),
             "minecraft:height_range" => Ok(Self::HeightRange(HeightProvider::from_json(
                 required(&object, "height")?.get(),
             )?)),
