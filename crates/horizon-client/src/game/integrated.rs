@@ -597,10 +597,10 @@ impl Game<'_> {
             return Vec::new();
         };
         let mut out = Vec::new();
-        if let Some(g) = host.hub.guests.iter().find(|g| g.uuid == owner && g.placed) {
-            let conn = g.conn;
+        if let Some(index) = host.hub.guests.iter().position(|g| g.uuid == owner && g.placed) {
+            let conn = host.hub.guests[index].conn;
             // Commands.performCommand runs in the player's level.
-            let (back, theirs) = (self.dim, super::Dim::from_id(&g.dimension));
+            let (back, theirs) = (self.dim, super::Dim::from_id(&host.hub.guests[index].dimension));
             let entered = theirs == back || self.enter_level(Some(&mut host), theirs).is_ok();
             if entered && let Some(swap) = self.enter_guest(&mut host, conn) {
                 let command = command.trim_start_matches('/').to_owned();
@@ -620,6 +620,9 @@ impl Game<'_> {
                 // sent, and what the command earned is announced before it too.
                 self.run_level_teleports(&mut host);
                 self.announce_guest_advancements(&mut host);
+                // /give and other console commands modify the owner's inventory;
+                // sync the container menu so the window sees the changes.
+                host.hub.send_inventory(index);
                 for line in lines {
                     out.push(line.plain());
                     host.hub.send_to(

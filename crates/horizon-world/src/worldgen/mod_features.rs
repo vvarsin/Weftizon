@@ -323,12 +323,17 @@ impl ModPillarFeature {
         random: &mut impl RandomSource,
         origin: [i32; 3],
     ) -> Result<bool, FeatureExecutionError<W::Error>> {
-        let radius = sample_int(&self.radius, random).map_err(FeatureExecutionError::Random)?;
+        let radius = sample_int(&self.radius, random)
+            .map_err(FeatureExecutionError::Random)?
+            .min(8);
         if radius <= 0 {
             return Ok(false);
         }
         let scale = self.height_scale.sample(random);
         let height = ((self.search_range as f32) * scale).floor() as i32;
+        // Keep a pillar's block count bounded: the original 19-radius, 60-high
+        // columns are visually plausible but make one chunk generation very slow.
+        let height = height.min(24);
         if height <= 0 {
             return Ok(false);
         }
