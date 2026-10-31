@@ -9,6 +9,7 @@ use horizon_client::{
     Result,
     containers::{BlockEntity, HOPPER_SLOTS},
     items::{ItemStack, Items},
+    mod_machines,
     world::World,
 };
 use horizon_core::{geometry::Direction, position::BlockPos, random::RandomSource};
@@ -43,6 +44,9 @@ enum Kind {
     Brewing,
     /// `ChiseledBookShelfBlockEntity`: books only, one to a slot.
     Bookshelf,
+    /// A content mod's machine (`mod_machines`): its groups say what goes
+    /// in, where first, how many, and what a hopper may pull.
+    Machine,
     /// `ComposterBlock.getContainer` at this level (a `WorldlyContainerHolder`
     /// without a block entity): input below 7, empty at 7, bone meal at 8.
     Composter(i32),
@@ -119,8 +123,26 @@ struct Containers<'a> {
     brewing: Option<&'a horizon_client::brewing::Brewing>,
     /// The stack of a full composter's `OutputContainer`.
     bone_meal: ItemStack,
+    /// Content mods' machines, for their groups' rules (not needed for signals).
+    machines: Option<&'a mod_machines::Machines>,
 }
 impl Containers<'_> {
+    /// The machine whose slots `view` is.
+    fn machine(&self, view: &View) -> Option<&horizon_mods::machine::Machine> {
+        let (x, y, z) = view.parts.first()?.0;
+        self.machines?.get(self.name(self.world.block(x, y, z)))
+    }
+    /// The most of `stack` slot `slot` holds: its stack size, or less where a
+    /// machine's group says.
+    fn slot_max(&self, view: &View, slot: usize, stack: &ItemStack) -> u32 {
+        let max = self.max_stack(stack);
+        match self.machine(view) {
+            Some(m) if view.kind == Kind::Machine => {
+                mod_machines::limit(m, slot).map_or(max, |l| l.min(max))
+            }
+            _ => max,
+        }
+    }
     fn prop(&self, state: BlockStateId, key: &str) -> Option<&str> {
         self.registry
             .state(state)?
@@ -166,6 +188,9 @@ impl Containers<'_> {
             (BlockEntity::Crafter(_), _) => Kind::Crafter,
             (BlockEntity::Brewing(_), _) => Kind::Brewing,
             (BlockEntity::ChiseledBookshelf(_), _) => Kind::Bookshelf,
+            (BlockEntity::Mod(_), n) if self.machines.is_some_and(|m| m.get(n).is_some()) => {
+                Kind::Machine
+            }
             (_, "minecraft:hopper") => Kind::Hopper,
             _ => Kind::Generic,
         };
@@ -254,6 +279,15 @@ impl Containers<'_> {
                 .is_some_and(|m| m.contains(&*stack.item))
                 && self.get(view, slot).is_none();
         }
+        if view.kind == Kind::Machine {
+            // Not into an output, and only what the slot's group accepts.
+            let tags = &self.items.item_tags;
+            return self.machine(view).is_some_and(|m| {
+                mod_machines::accepts(m, slot, &stack.item, |tag| {
+                    tags.get(tag).is_some_and(|t| t.contains(&*stack.item))
+                })
+            });
+        }
         if view.kind == Kind::Brewing {
             // BrewingStandBlockEntity.canPlaceItem
             return match slot {
@@ -300,6 +334,11 @@ impl Containers<'_> {
         if view.kind == Kind::Brewing {
             return slot != 3 || &*stack.item == "minecraft:glass_bottle";
         }
+        if view.kind == Kind::Machine {
+            return self
+                .machine(view)
+                .is_some_and(|m| mod_machines::hopper_takes(m, slot));
+        }
         view.kind != Kind::Furnace
             || face != Direction::Down
             || slot != 1
@@ -309,7 +348,7 @@ impl Containers<'_> {
     fn is_full(&self, view: &View, face: Direction) -> bool {
         view.slots_for_face(Some(face)).into_iter().all(|i| {
             self.get(view, i)
-                .is_some_and(|s| s.count >= self.max_stack(s))
+                .is_some_and(|s| s.count >= self.slot_max(view, i, s))
         })
     }
     /// `AbstractContainerMenu.getRedstoneSignalFromContainer`.
@@ -397,6 +436,7 @@ pub(super) fn container_signal(
         registry,
         brewing: None,
         bone_meal: bone_meal(),
+        machines: None,
     };
     c.view((pos.x, pos.y, pos.z), true)
         .filter(|v| !matches!(v.kind, Kind::Composter(_)))
@@ -453,6 +493,7 @@ impl Game<'_> {
             registry: self.pack.assets.registry,
             brewing: Some(&self.stations().brewing),
             bone_meal: bone_meal(),
+            machines: Some(self.res.machines()),
         }
     }
     fn slot_mut_at(&mut self, view: &View, slot: usize) -> Option<&mut Option<ItemStack>> {
@@ -509,7 +550,7 @@ impl Game<'_> {
             return Some(stack);
         }
         let was_empty = c.is_empty(view);
-        let max = c.max_stack(&stack);
+        let max = c.slot_max(view, slot, &stack);
         let mut success = false;
         let target = self.slot_mut_at(view, slot)?;
         match target {
@@ -556,7 +597,17 @@ impl Game<'_> {
             let (x, y, z) = view.parts[0].0;
             return self.composter_container_insert([x, y, z], stack, face == Some(Direction::Up));
         }
-        let slots = if matches!(view.kind, Kind::Furnace | Kind::Brewing) && face.is_some() {
+        let machine_order = match view.kind {
+            Kind::Machine => self
+                .containers()
+                .machine(view)
+                .map(mod_machines::fill_order),
+            _ => None,
+        };
+        let slots = if let Some(order) = machine_order {
+            // A machine's groups with an accepts rule first, as a shift-click.
+            order.into_iter().filter(|&s| s < view.len()).collect()
+        } else if matches!(view.kind, Kind::Furnace | Kind::Brewing) && face.is_some() {
             view.slots_for_face(face)
         } else {
             (0..view.len()).collect()

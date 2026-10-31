@@ -421,7 +421,16 @@ impl GameLevel<'_> {
         let entity = self.world.block_entities.remove(&key);
         self.world.block_names.remove(&key);
         let name = self.facts.get(old).name.clone();
-        let kind = removal::pre_remove(&name);
+        let kind = match (&entity, removal::pre_remove(&name)) {
+            // A content mod's machine spills its slots as a container does.
+            (Some(BlockEntity::Mod(m)), PreRemove::Nothing) if !m.items.is_empty() => {
+                PreRemove::Contents {
+                    slots: m.items.len(),
+                    furnace: false,
+                }
+            }
+            (_, kind) => kind,
+        };
         let mut neighbour_updates = 0;
         if side_effects {
             match kind {
@@ -595,6 +604,11 @@ impl GameLevel<'_> {
                 horizon_client::save::decode_items(tag.get("Items"), slots)
             }
             PreRemove::Campfire => horizon_client::save::decode_items(tag.get("Items"), 4),
+            // A content mod's machine, still as it was saved.
+            PreRemove::Nothing => match horizon_client::save::machine_items(&tag) {
+                Some(items) => items,
+                None => return true,
+            },
             _ => return true,
         };
         for stack in items {

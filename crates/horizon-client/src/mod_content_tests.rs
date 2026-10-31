@@ -2033,3 +2033,55 @@ fn custom_entities_join_the_root() {
     assert!(back.kind.custom.is_some());
     let _ = fs::remove_dir_all(&scratch);
 }
+
+/// A declared machine reaches the game: its table in the content root, its
+/// block with its template's states, and the name its screen is titled with.
+#[test]
+#[ignore = "full content root: CI and pr_ready run it"]
+fn declared_machines_reach_the_game() {
+    let Some(base) = prepared() else {
+        return;
+    };
+    let scratch =
+        std::env::temp_dir().join(format!("horizon-content-machines-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    let m = folder_mod(
+        &scratch.join("gems"),
+        &[
+            ("horizon-mod.toml", &manifest("gems", "")),
+            (
+                "data/gems/horizon/block/grinder.json",
+                r##"{"template": "minecraft:furnace", "machine": {"screen": "furnace", "groups": [
+                    {"name": "input"}, {"name": "fuel", "accepts": ["#minecraft:coals"]},
+                    {"name": "output", "output": true}]}}"##,
+            ),
+            (
+                "data/gems/horizon/block/crate.json",
+                r#"{"template": "minecraft:barrel", "machine": {"screen": "chest"}}"#,
+            ),
+        ],
+    );
+    let root = resource_root(&base, std::slice::from_ref(&m), &scratch.join("cache")).unwrap();
+    let machines = crate::mod_machines::Machines::load(&root);
+    let grinder = machines.get("gems:grinder").unwrap();
+    assert_eq!((grinder.slots(), grinder.group("fuel")), (3, Some(1..2)));
+    assert_eq!(grinder.screen.menu_type(3), "minecraft:furnace");
+    let crate_ = machines.get("gems:crate").unwrap();
+    assert_eq!(
+        crate_.screen.menu_type(crate_.slots()),
+        "minecraft:generic_9x3"
+    );
+    // The blocks keep their templates' states (a furnace's lit and facing).
+    let assets = Assets::load(&root).unwrap();
+    let lit = assets
+        .registry
+        .default_state("gems:grinder")
+        .and_then(|s| assets.registry.state(s))
+        .map(|s| s.properties.contains_key("lit") && s.properties.contains_key("facing"));
+    assert_eq!(lit, Some(true));
+    let lang = fs::read_to_string(root.join("assets/gems/lang/en_us.json")).unwrap();
+    assert!(lang.contains("\"block.gems.grinder\""), "{lang}");
+    // No machine declared: no table, and the base root has none.
+    assert!(crate::mod_machines::Machines::load(&base).is_empty());
+    let _ = fs::remove_dir_all(&scratch);
+}

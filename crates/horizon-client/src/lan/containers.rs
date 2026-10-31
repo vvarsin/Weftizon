@@ -738,6 +738,8 @@ impl Hub {
                 .chain([&c.triggered])
                 .map(|&d| i32::from(d))
                 .collect(),
+            // A content mod's machine: what its native mod set to draw.
+            Some(BlockEntity::Mod(m)) if !m.data.is_empty() => m.data.clone(),
             _ => return,
         }
         .into_iter()

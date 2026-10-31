@@ -130,7 +130,13 @@ impl Game<'_> {
                         if record { Ticking::Yes } else { Ticking::Idle }
                     }
                     n if FurnaceKind::from_block(n).is_some() => Ticking::Yes,
-                    n if !n.starts_with("minecraft:") && self.native_ticks(n) => Ticking::Yes,
+                    // A native mod's ticking block entity, or a content
+                    // mod's machine (game/mod_machines.rs).
+                    n if !n.starts_with("minecraft:")
+                        && (self.native_ticks(n) || self.res.machines().get(n).is_some()) =>
+                    {
+                        Ticking::Yes
+                    }
                     _ => Ticking::No,
                 }
             })

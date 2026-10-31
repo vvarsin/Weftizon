@@ -92,6 +92,14 @@ pub enum BlockEntity {
 pub struct ModBlockEntity {
     pub id: String,
     pub nbt: Compound,
+    /// A content mod's machine's slots (`mod_machines`), saved as `Items`:
+    /// its container. None for other block entities.
+    pub items: Vec<Option<ItemStack>>,
+    /// What a machine's screen draws (a furnace's flame and arrow); not saved.
+    pub data: Vec<i32>,
+    /// The game time of a machine's last tick, to catch up on the ticks it
+    /// missed while unloaded.
+    pub ticked: Option<i64>,
 }
 /// `PotentSulfurBlockEntity`: the seconds left to the geyser's next change of
 /// state (`waitingCountdown`, saved as `countdown`) and the game time of its

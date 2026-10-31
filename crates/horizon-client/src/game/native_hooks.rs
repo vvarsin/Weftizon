@@ -6,6 +6,9 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 19 adds content mods' machines (`native_machine_tick`, and
+//! `native_machine_group` in `mod_machines.rs`).
+//!
 //! API 18 adds Weft's built-in events and questions (`native_pickup_item`,
 //! `native_item_picked_up`, `native_player_joined`, `native_player_left`,
 //! `native_attack_entity`, `native_enter_dimension`, `native_hurt`) and its
@@ -77,7 +80,7 @@ use super::{
 use horizon_client::{
     block_entities::Pos,
     chat::ChatSource,
-    containers::{BlockEntity, ModBlockEntity},
+    containers::BlockEntity,
     extras::Corner,
     extras_hud::Corners,
     hits::Hit,
@@ -97,7 +100,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 18;
+pub(crate) const NATIVE_HOOKS_API: u32 = 19;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.
@@ -687,6 +690,25 @@ impl Game<'_> {
     pub(super) fn native_damage(hit: &Hit<'_>, amount: &mut f32) {
         let _ = (hit, amount);
     }
+    /// A tick of content mod machine `machine` (its block, `ruby:grinder`:
+    /// Weft's `r.system` over its machines) at `pos`: its `slots` in its
+    /// groups' order (`native_machine_group`), its saved `state` (the block
+    /// entity's compound: yours to fill) and the values its screen draws
+    /// (`data`: a furnace screen's lit time left, lit total, cooking progress
+    /// and cooking total). `ticks` is how many ticks the call stands for: 1
+    /// almost always, more when it catches up on the time its chunk was
+    /// unloaded (in at most 20 calls). Server-side. API 19.
+    pub(super) fn native_machine_tick(
+        &mut self,
+        pos: [i32; 3],
+        machine: &str,
+        slots: &mut [Option<ItemStack>],
+        state: &mut Compound,
+        data: &mut [i32],
+        ticks: u32,
+    ) {
+        let _ = (pos, machine, slots, state, data, ticks);
+    }
     /// A player is about to go through a portal into `dimension`
     /// (`minecraft:the_nether`...: Weft's `question::ENTER_DIMENSION`). Set
     /// `canceled` to keep them where they are; the portal asks again after
@@ -937,8 +959,8 @@ impl Game<'_> {
         }
         let mut entity = None;
         self.native_block_entity(name, &mut entity);
-        let (id, nbt) = entity?;
-        Some(BlockEntity::Mod(Box::new(ModBlockEntity { id, nbt })))
+        // A content mod's machine has its slots whoever names it.
+        self.with_machine_slots(name, entity)
     }
     /// Whether a native mod's block `name` has a ticking block entity.
     pub(super) fn native_ticks(&self, name: &str) -> bool {
@@ -961,6 +983,8 @@ impl Game<'_> {
             // BlockEntity.setChanged: the next save writes its chunk.
             self.world.modified.insert((pos.0 >> 4, pos.2 >> 4));
         }
+        // A content mod's machine ticks for native mods after (API 19).
+        self.tick_machine(pos);
     }
     /// Options > Mods' rows for the native mods, after the others.
     pub(super) fn list_native_mods(&mut self) {

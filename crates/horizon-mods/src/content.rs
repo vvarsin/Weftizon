@@ -213,6 +213,7 @@ struct BlockFile {
     #[serde(default)]
     template_tags: bool,
     drops: Option<Drops>,
+    machine: Option<crate::machine::Machine>,
 }
 fn yes() -> bool {
     true
@@ -244,6 +245,8 @@ pub struct Block {
     pub template_tags: bool,
     /// What it drops, when the mod ships no loot table for it.
     pub drops: Option<Drops>,
+    /// Its slots and screen when it is a machine (Weft's `r.machine`).
+    pub machine: Option<crate::machine::Machine>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -573,6 +576,11 @@ impl Content {
                 }
                 check_drops(drops, file.item).map_err(|e| format!("{name}: {e}"))?;
             }
+            if let Some(machine) = &file.machine {
+                machine
+                    .check(&file.template)
+                    .map_err(|e| format!("{name}: {e}"))?;
+            }
             if file.item {
                 ids.insert(block.clone());
             }
@@ -591,6 +599,7 @@ impl Content {
                 tags: file.tags,
                 template_tags: file.template_tags,
                 drops: file.drops,
+                machine: file.machine,
             });
         }
         for (item, name) in items {
@@ -718,7 +727,7 @@ fn check_components(components: &BTreeMap<String, serde_json::Value>) -> Result<
 }
 
 /// An identifier, `<namespace>:<path>`, in resource-location characters.
-fn resource_id(id: &str) -> bool {
+pub(crate) fn resource_id(id: &str) -> bool {
     id.split_once(':').is_some_and(|(ns, path)| {
         let ok = |s: &str, extra: &[u8]| {
             !s.is_empty()
@@ -953,6 +962,39 @@ capabilities = ["registries"]
                   {"name": "head", "parent": "body", "pivot": [0, 16, 0]}]}]}"#;
     const GHOST_ANIM: &[u8] = br#"{"animations": {"animation.ghost.idle": {"loop": true,
         "bones": {"head": {"rotation": {"0": [0, 0, 0], "1": [0, 20, 0]}}}}}}"#;
+
+    /// A block's `machine` reads as Weft's `r.machine` declares one, and a
+    /// machine the game could not open is refused with the reason.
+    #[test]
+    fn blocks_declare_machines() {
+        let grinder = br##"{"template": "minecraft:furnace", "machine": {"screen": "furnace",
+            "groups": [{"name": "input"}, {"name": "fuel", "accepts": ["#minecraft:coals"]},
+                       {"name": "output", "output": true}]}}"##;
+        let content = hmod(
+            "block-machine",
+            MANIFEST_TEXT,
+            &[("data/ruby/horizon/block/grinder.json", grinder)],
+        )
+        .unwrap();
+        let m = content.blocks[0].machine.as_ref().unwrap();
+        assert_eq!(
+            (m.screen, m.slots(), m.group("output")),
+            (crate::machine::Screen::Furnace, 3, Some(2..3))
+        );
+        let refused = hmod(
+            "block-machine-refused",
+            MANIFEST_TEXT,
+            &[(
+                "data/ruby/horizon/block/crate.json",
+                br#"{"template": "minecraft:stone", "machine": {"screen": "chest"}}"#,
+            )],
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("crate.json") && refused.contains("a machine copies one of"),
+            "{refused}"
+        );
+    }
 
     /// Tools, tiers, tags and drops read as Weft's block builder sets them,
     /// and what the game could not use is refused with the reason.
@@ -1511,6 +1553,7 @@ capabilities = ["registries"]
                 tags: Vec::new(),
                 template_tags: false,
                 drops: None,
+                machine: None,
             }]
         );
         assert_eq!(content.items[0].id, "ruby:ruby");

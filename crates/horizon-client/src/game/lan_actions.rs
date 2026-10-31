@@ -210,10 +210,16 @@ impl GuestPlay {
     }
 }
 
-struct ItemRules<'a>(&'a horizon_client::items::Items);
+struct ItemRules<'a>(
+    &'a horizon_client::items::Items,
+    Option<&'a horizon_mods::machine::Machine>,
+);
 impl Rules for ItemRules<'_> {
     fn items(&self) -> &horizon_client::items::Items {
         self.0
+    }
+    fn machine(&self) -> Option<&horizon_mods::machine::Machine> {
+        self.1
     }
     fn max_stack(&self, item: &str) -> u32 {
         self.0.get(item).map_or(64, |i| i.max_stack)
@@ -903,7 +909,8 @@ impl Game<'_> {
             .res
             .facts()
             .get(self.world.block(pos.0, pos.1, pos.2))
-            .name;
+            .name
+            .clone();
         let (menu, slots) = if &**name == "minecraft:ender_chest" {
             // EnderChestBlock.useWithoutItem: the player's own inventory.
             ("minecraft:generic_9x3", Slots::Ender)
@@ -921,6 +928,9 @@ impl Game<'_> {
         } else if let Some(BlockEntity::Brewing(_)) = self.world.block_entities.get(&pos) {
             // BrewingStandBlock.useWithoutItem: BrewingStandMenu.
             ("minecraft:brewing_stand", Slots::Block(pos))
+        } else if let Some(menu) = self.machine_menu(pos, name) {
+            // A content mod's machine: its declared screen over its slots.
+            (menu, Slots::Block(pos))
         } else if let Some((other, right)) = self.chest_partner(pos) {
             // ChestBlock.combine: the right half's slots come first.
             let halves = if right {
@@ -950,10 +960,15 @@ impl Game<'_> {
                 horizon_client::containers::double_chest_name(custom(first), custom(second))
             }
             Slots::Block(k) => {
-                let Some(key) = horizon_client::containers::default_name_key(name) else {
-                    return false;
+                // A machine is named after its block (Weft's `ui.title()`).
+                let key = match horizon_client::containers::default_name_key(name) {
+                    Some(key) => key.to_owned(),
+                    None if self.res.machines().get(name).is_some() => {
+                        format!("block.{}", name.replace([':', '/'], "."))
+                    }
+                    None => return false,
                 };
-                horizon_client::containers::display_name(custom(k), key)
+                horizon_client::containers::display_name(custom(k), &key)
             }
             // Opened by a mod (`native_open_menu`), never here.
             Slots::Native => return false,
@@ -1489,12 +1504,19 @@ impl Game<'_> {
                 }
             }
             S::ContainerClick(p) => {
-                let rules = ItemRules(world_items!(self));
                 let slots = host.hub.guests[gi]
                     .menu
                     .as_ref()
                     .filter(|m| m.window == p.container)
                     .map(|m| m.slots);
+                // A content mod's machine's groups say what its slots take.
+                let machine = match slots {
+                    Some(Slots::Block(key)) => {
+                        super::mod_machines::machine_at(&self.res, &self.world, key)
+                    }
+                    _ => None,
+                };
+                let rules = ItemRules(world_items!(self), machine);
                 let before = slots.and_then(|s| s.read(&self.world, &host.hub.guests[gi]));
                 let drops = host.hub.container_click(conn, &p, &mut self.world, &rules);
                 // A click that changed the container's slots: BlockEntity.setChanged,

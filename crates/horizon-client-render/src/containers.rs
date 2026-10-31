@@ -412,8 +412,10 @@ impl BlockEntity {
             | Self::Beehive(_)
             | Self::CommandBlock(_)
             // Not a Container (only Clearable): hoppers don't reach in.
-            | Self::Campfire(_)
-            | Self::Mod(_) => &[],
+            | Self::Campfire(_) => &[],
+            // A content mod's machine is a container; other mods' block
+            // entities have no slots.
+            Self::Mod(m) => &m.items,
         }
     }
     pub fn slots_mut(&mut self) -> &mut [Option<ItemStack>] {
@@ -441,8 +443,8 @@ impl BlockEntity {
             | Self::Vault(_)
             | Self::Beehive(_)
             | Self::CommandBlock(_)
-            | Self::Campfire(_)
-            | Self::Mod(_) => &mut [],
+            | Self::Campfire(_) => &mut [],
+            Self::Mod(m) => &mut m.items,
         }
     }
 }

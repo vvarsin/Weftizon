@@ -486,6 +486,14 @@ pub fn encode_block_entity(
         for (key, v) in [("x", p.0), ("y", p.1), ("z", p.2)] {
             map.insert(key.into(), Tag::Int(v));
         }
+        // A machine's slots, as a vanilla container's, with their count.
+        if !m.items.is_empty() {
+            map.insert("Items".into(), encode_items(&m.items));
+            map.insert(MACHINE_SLOTS.into(), Tag::Int(m.items.len() as i32));
+        }
+        if let Some(ticked) = m.ticked {
+            map.insert(MACHINE_TICKED.into(), Tag::Long(ticked));
+        }
         return Tag::Compound(map);
     }
     let components = match e {
@@ -697,7 +705,17 @@ pub fn decode_end_gateway(tag: &Tag) -> crate::containers::EndGateway {
         exact_teleport: number(tag.get("ExactTeleport")).unwrap_or(0) != 0,
     }
 }
-/// A mod's block entity: its compound without `id` and the position.
+/// A content mod's machine's slot count and last tick in its saved compound
+/// (`mod_machines`); its slots are `Items`.
+const MACHINE_SLOTS: &str = "horizon:slots";
+const MACHINE_TICKED: &str = "horizon:ticked";
+/// The slots of a saved content mod machine's block entity.
+pub fn machine_items(tag: &Tag) -> Option<Vec<Option<crate::items::ItemStack>>> {
+    let slots = number(tag.get(MACHINE_SLOTS))?;
+    Some(decode_items(tag.get("Items"), (slots as usize).min(256)))
+}
+/// A mod's block entity: its compound without `id` and the position, and a
+/// machine's slots and last tick.
 fn decode_mod_block_entity(id: String, tag: &Tag) -> Option<crate::containers::ModBlockEntity> {
     let Tag::Compound(map) = tag else {
         return None;
@@ -706,7 +724,22 @@ fn decode_mod_block_entity(id: String, tag: &Tag) -> Option<crate::containers::M
     for key in ["id", "x", "y", "z"] {
         nbt.remove(&key.into());
     }
-    Some(crate::containers::ModBlockEntity { id, nbt })
+    let mut items = Vec::new();
+    if let Some(slots) = number(nbt.remove(&MACHINE_SLOTS.into()).as_ref()) {
+        let slots = (slots as usize).min(256);
+        items = decode_items(nbt.remove(&"Items".into()).as_ref(), slots);
+    }
+    let ticked = match nbt.remove(&MACHINE_TICKED.into()) {
+        Some(Tag::Long(t)) => Some(t),
+        _ => None,
+    };
+    Some(crate::containers::ModBlockEntity {
+        id,
+        nbt,
+        items,
+        data: Vec::new(),
+        ticked,
+    })
 }
 pub fn decode_block_entity(tag: &Tag) -> Option<((i32, i32, i32), crate::containers::BlockEntity)> {
     use crate::containers::BlockEntity;
@@ -4878,6 +4911,60 @@ mod tests {
         assert_eq!(lod_palette_index(&states, 0, 4096, 4), None);
         put(&mut states, "data", Tag::LongArray(vec![0; 255]));
         assert_eq!(lod_palette_index(&states, 0, 4096, 4), None);
+    }
+
+    /// A content mod's machine keeps its slots and last tick through a
+    /// save; another mod's block entity keeps its compound as it was.
+    #[test]
+    fn machine_block_entities_keep_their_slots_and_tick() {
+        use crate::containers::{BlockEntity, ModBlockEntity};
+        let mut nbt = Compound::new();
+        nbt.insert("heat".into(), Tag::Int(7));
+        let machine = ModBlockEntity {
+            id: "ruby:grinder".into(),
+            nbt,
+            items: vec![
+                Some(crate::items::ItemStack::new("minecraft:coal", 3)),
+                None,
+                None,
+            ],
+            data: vec![1, 2, 3, 4],
+            ticked: Some(1234),
+        };
+        let tag = encode_block_entity(
+            (1, 64, -2),
+            &BlockEntity::Mod(Box::new(machine.clone())),
+            "ruby:grinder",
+        );
+        assert_eq!(machine_items(&tag).map(|i| i.len()), Some(3));
+        let (pos, back) = decode_block_entity(&tag).unwrap();
+        let BlockEntity::Mod(back) = back else {
+            panic!("{back:?}")
+        };
+        // What the screen draws is the mod's to set again; the rest is kept.
+        assert_eq!(
+            (pos, *back),
+            (
+                (1, 64, -2),
+                ModBlockEntity {
+                    data: Vec::new(),
+                    ..machine
+                }
+            )
+        );
+        let mut own = Compound::new();
+        own.insert("Items".into(), Tag::Int(5));
+        let other = ModBlockEntity {
+            id: "x:y".into(),
+            nbt: own.clone(),
+            ..Default::default()
+        };
+        let tag = encode_block_entity((0, 0, 0), &BlockEntity::Mod(Box::new(other)), "x:y");
+        let BlockEntity::Mod(back) = decode_block_entity(&tag).unwrap().1 else {
+            panic!()
+        };
+        assert_eq!((back.nbt, back.items.len(), back.ticked), (own, 0, None));
+        assert!(machine_items(&tag).is_none());
     }
 
     #[test]

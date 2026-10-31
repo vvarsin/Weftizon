@@ -151,6 +151,7 @@ mod minecarts;
 mod mob_blocks;
 mod mob_gear;
 mod mob_sounds;
+mod mod_machines;
 mod mods;
 mod mount_menu;
 mod mounts;
@@ -1392,6 +1393,8 @@ struct WorldRest {
     /// `SpinAttackEffectModel` (Riptide's spinning boxes).
     spin_attack: Option<horizon_client::mobs::Part>,
     stations: horizon_client::stations::StationData,
+    /// Content mods' machine blocks (game/mod_machines.rs).
+    machines: horizon_client::mod_machines::Machines,
 }
 
 /// The content tables a world's data packs change, loaded when the world
@@ -1489,6 +1492,9 @@ impl Resources {
     }
     fn stations(&self) -> &horizon_client::stations::StationData {
         &self.rest().stations
+    }
+    fn machines(&self) -> &horizon_client::mod_machines::Machines {
+        &self.rest().machines
     }
 }
 
@@ -4383,6 +4389,8 @@ impl Game<'_> {
             if first {
                 self.container_edge_sound(key, true);
             }
+        } else if self.open_machine(key, &name) {
+            // A content mod's machine: game/mod_machines.rs.
         } else if self.open_station(pos, &name) {
             // Workstation menus: game/stations.rs.
         } else {
@@ -16089,6 +16097,7 @@ fn load_world_rest(
         horizon_client::animate_tick::AnimateTables::load(root, registry_owner.registry, biomes)?;
     let fog = horizon_client::fog::FogTables::load(root, biomes);
     Ok(WorldRest {
+        machines: horizon_client::mod_machines::Machines::load(root),
         stations,
         items,
         recipes,

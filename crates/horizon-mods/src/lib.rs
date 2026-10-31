@@ -8,6 +8,7 @@ pub mod content;
 pub mod entity;
 #[cfg(feature = "index")]
 pub mod index;
+pub mod machine;
 pub mod manifest;
 pub mod modpack;
 

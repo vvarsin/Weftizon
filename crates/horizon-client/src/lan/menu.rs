@@ -16,6 +16,11 @@ pub trait Rules {
     fn max_stack(&self, item: &str) -> u32;
     /// The armor slot (0 head .. 3 feet) an item can be worn in.
     fn armor_index(&self, item: &str) -> Option<usize>;
+    /// The content mod's machine whose slots the open container is
+    /// (`mod_machines`): its groups' rules apply to the clicks.
+    fn machine(&self) -> Option<&horizon_mods::machine::Machine> {
+        None
+    }
 }
 
 /// An open block container.
@@ -202,9 +207,24 @@ impl View<'_> {
     fn enabled(&self, i: usize) -> bool {
         self.container.is_some() || i >= 5
     }
+    /// A machine's slot that refuses `stack` from a click: an output, or
+    /// one its group doesn't accept.
+    fn machine_refuses(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> bool {
+        let (Some(m), Some(c)) = (rules.machine(), &self.container) else {
+            return false;
+        };
+        let tags = &rules.items().item_tags;
+        i < c.len()
+            && !crate::mod_machines::accepts(m, i, &stack.item, |tag| {
+                tags.get(tag).is_some_and(|t| t.contains(&*stack.item))
+            })
+    }
     fn may_place(&self, i: usize, stack: &ItemStack, rules: &dyn Rules) -> bool {
         if self.container.is_none() && (5..=8).contains(&i) {
             return rules.armor_index(&stack.item) == Some(i - 5);
+        }
+        if self.machine_refuses(i, stack, rules) {
+            return false;
         }
         if self.shulker
             && self.container.as_ref().is_some_and(|c| i < c.len())
@@ -218,7 +238,14 @@ impl View<'_> {
         if self.container.is_none() && (5..=8).contains(&i) {
             return 1;
         }
-        rules.max_stack(&stack.item).max(1)
+        let max = rules.max_stack(&stack.item).max(1);
+        // A machine's group may hold fewer.
+        match (rules.machine(), &self.container) {
+            (Some(m), Some(c)) if i < c.len() => {
+                crate::mod_machines::limit(m, i).map_or(max, |l| l.min(max))
+            }
+            _ => max,
+        }
     }
     /// The ranges quick move uses: (container start..end, main, hotbar).
     fn player_ranges(&self) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
@@ -237,7 +264,7 @@ fn player_slot(n: usize) -> usize {
 /// Inventory.add-like merge of `stack` into slots `range` (moveItemStackTo).
 fn move_to(
     view: &mut View,
-    mut stack: ItemStack,
+    stack: ItemStack,
     range: std::ops::Range<usize>,
     reverse: bool,
     rules: &dyn Rules,
@@ -247,11 +274,21 @@ fn move_to(
     } else {
         range.collect()
     };
-    for &i in &order {
+    move_in_order(view, stack, &order, rules)
+}
+
+/// `move_to` over the slots in `order`.
+fn move_in_order(
+    view: &mut View,
+    mut stack: ItemStack,
+    order: &[usize],
+    rules: &dyn Rules,
+) -> Option<ItemStack> {
+    for &i in order {
         if stack.count == 0 {
             break;
         }
-        if !view.enabled(i) {
+        if !view.enabled(i) || view.machine_refuses(i, &stack, rules) {
             continue;
         }
         if let Some(mut existing) = view.get(i)
@@ -266,7 +303,7 @@ fn move_to(
             }
         }
     }
-    for &i in &order {
+    for &i in order {
         if stack.count == 0 {
             break;
         }
@@ -298,6 +335,13 @@ fn quick_move(view: &mut View, i: usize, rules: &dyn Rules) {
         if i < n {
             // Container to inventory, filling from the hotbar's end.
             move_to(view, stack, n..n + 36, true, rules)
+        } else if let Some(m) = rules.machine() {
+            // A machine fills the groups with an accepts rule first (Weft's).
+            let order: Vec<usize> = crate::mod_machines::fill_order(m)
+                .into_iter()
+                .filter(|&s| s < n)
+                .collect();
+            move_in_order(view, stack, &order, rules)
         } else {
             move_to(view, stack, 0..n, false, rules)
         }
@@ -460,6 +504,16 @@ fn pickup(view: &mut View, slot: i32, button: i32, rules: &dyn Rules) {
         }
         (Some(mut s), Some(mut c)) => {
             if !view.may_place(i, &c, rules) {
+                // AbstractContainerMenu.doClick: a slot that takes nothing (a
+                // machine's output) gives what fits onto a matching carried stack.
+                if s.same_item_same_components(&c) {
+                    let room = rules.max_stack(&c.item).max(1).saturating_sub(c.count);
+                    let moved = s.count.min(room);
+                    s.count -= moved;
+                    c.count += moved;
+                    view.set(i, (s.count > 0).then_some(s));
+                    view.guest.carried = Some(c);
+                }
                 return;
             }
             if s.same_item_same_components(&c) {
@@ -808,6 +862,73 @@ mod tests {
             Some(("minecraft:ender_pearl", 16))
         );
         assert_eq!(contents(&view.get(2)), []);
+    }
+
+    /// A content mod's machine's groups decide what clicks put where: its
+    /// output takes nothing but gives onto a matching carried stack, a group
+    /// with an accepts rule takes only that and fills first on a shift-click,
+    /// and a limit caps its slots.
+    #[test]
+    fn machine_menus_follow_their_groups() {
+        struct MachineRules(ItemRules, horizon_mods::machine::Machine);
+        impl Rules for MachineRules {
+            fn items(&self) -> &Items {
+                self.0.items()
+            }
+            fn max_stack(&self, item: &str) -> u32 {
+                self.0.max_stack(item)
+            }
+            fn armor_index(&self, item: &str) -> Option<usize> {
+                self.0.armor_index(item)
+            }
+            fn machine(&self) -> Option<&horizon_mods::machine::Machine> {
+                Some(&self.1)
+            }
+        }
+        let Some(items) = rules() else {
+            return;
+        };
+        let machine = serde_json::from_str(
+            r##"{"screen": "furnace", "groups": [{"name": "input", "limit": 16},
+                {"name": "fuel", "accepts": ["#minecraft:coals"]}, {"name": "output", "output": true}]}"##,
+        )
+        .unwrap();
+        let rules = MachineRules(items, machine);
+        let mut g = guest();
+        let mut slots = vec![None, None, Some(ItemStack::new("minecraft:iron_ingot", 5))];
+        let mut drag = None;
+        let mut view = View {
+            guest: &mut g,
+            container: Some(&mut slots),
+            shulker: false,
+        };
+        // Shift-clicks from the hotbar (menu slots 30 and 31): coal goes to
+        // the fuel, ore to the input, 16 of it.
+        view.guest.inventory[0] = Some(ItemStack::new("minecraft:coal", 10));
+        click(&mut view, &mut drag, 30, 0, input::QUICK_MOVE, &rules);
+        assert_eq!(
+            view.get(1).map(|s| (s.item.to_string(), s.count)),
+            Some(("minecraft:coal".into(), 10))
+        );
+        assert_eq!(view.get(0), None);
+        view.guest.inventory[1] = Some(ItemStack::new("minecraft:iron_ore", 40));
+        click(&mut view, &mut drag, 31, 0, input::QUICK_MOVE, &rules);
+        assert_eq!(view.get(0).map(|s| s.count), Some(16));
+        assert_eq!(view.guest.inventory[1].as_ref().map(|s| s.count), Some(24));
+        // Stone in hand: not fuel, and nothing goes into the output.
+        view.guest.carried = Some(ItemStack::new("minecraft:stone", 1));
+        click(&mut view, &mut drag, 1, 0, input::PICKUP, &rules);
+        click(&mut view, &mut drag, 2, 0, input::PICKUP, &rules);
+        assert_eq!(
+            view.guest.carried.as_ref().map(|s| &*s.item),
+            Some("minecraft:stone")
+        );
+        assert_eq!(view.get(2).map(|s| s.count), Some(5));
+        // Ingots in hand onto the output's ingots: they come up onto the hand.
+        view.guest.carried = Some(ItemStack::new("minecraft:iron_ingot", 3));
+        click(&mut view, &mut drag, 2, 0, input::PICKUP, &rules);
+        assert_eq!(view.guest.carried.as_ref().map(|s| s.count), Some(8));
+        assert_eq!(view.get(2), None);
     }
 
     #[test]
