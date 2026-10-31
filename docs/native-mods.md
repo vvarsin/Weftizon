@@ -86,6 +86,10 @@ mod declares ([Entities](#entities)): `native_entity_tick`, `native_entity_hurt`
 `native_entity_interact`, and helpers to read, move, hurt, heal, remove and animate an entity
 (`native_play_animation`). Bundles that use them need `"hooks": 16`.
 
+API 17 adds blocks, Weft's block `on_use` and `on_scheduled` and the World API's blocks ([Blocks](#blocks)):
+`native_use_block`, `native_block_tick`, and helpers to read a block, set it by name, change one property and
+schedule a tick. Bundles that use them need `"hooks": 17`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page. The first one shows a notice once (the first build downloads
@@ -321,3 +325,24 @@ declarations and a native mod's behaviour, as a Weft mod's `r.entity(..)` is. Th
   `native_heal_entity`, `native_remove_entity` (no death, no loot) and `native_play_animation(id, name, repeat)`
   (Weft's `play_animation`: a keyframe animation of the entity's file in place of idle and walk, once or over and
   over, `""` to stop; every player who sees the entity sees it).
+
+### Blocks
+
+API 17, `crates/horizon-client/src/game/native_blocks.rs`: code for blocks, a content mod's
+(`data/<id>/horizon/block/<name>.json`, [mods.md](mods.md#content-mods-api-02)) or any other, as a Weft mod's
+`r.block(..)` callbacks and its World API's blocks are. They run where the world is simulated, for every player of it.
+
+- **`native_use_block(stack, pos, face, state, claimed)`**: a player right clicks a block, where the block's own use
+  starts (Weft's `on_use` for blocks, and `question::USE_BLOCK`: check the block is yours, or claim any block to
+  protect it). Set `claimed` to take the click: the hand swings and neither the block's use (a door, a chest's menu)
+  nor the item's runs. Not heard while the player sneaks with something in either hand, since vanilla's blocks
+  don't react then either. The acting player's state is swapped in.
+- **`native_block_tick(pos, state)`**: a scheduled tick of a content mod's block came due (Weft's `on_scheduled`),
+  after its template's own tick, in vanilla's order of scheduled ticks.
+- Helpers, for the level the hook runs in: `native_block(pos)` (name and properties, `None` where nothing is
+  loaded), `native_set_block(pos, "ruby:lamp[lit=true]")` (as `/setblock`: neighbours update, block entities are
+  replaced), `native_set_block_property(pos, "lit", "true")` (Weft's `set_prop`) and
+  `native_schedule_block_tick(pos, delay)` (Weft's `schedule`, vanilla's `Level.scheduleTick`).
+- Weft's `on_neighbor`, `on_placed` and `on_broken` are the hooks already there: `native_neighbor_changed` (API 6),
+  `native_block_changed` (API 7, every committed change), `native_place_block` and `native_destroy_block` (API 14,
+  a player's). Weft has no random ticks; vanilla's still reach a mod's block through its template.

@@ -616,6 +616,38 @@ fn lava_meets_water() {
     );
 }
 
+/// Stepping block ticks one at a time says where each ran and for which
+/// state, and skips a tick whose block changed meanwhile, as the queue does.
+#[test]
+fn block_ticks_step_with_where_they_ran() {
+    let mut w = world!();
+    let (stone, dirt) = (w.id("stone", &[]), w.id("dirt", &[]));
+    let (a, b) = (BlockPos::new(0, 1, 0), BlockPos::new(2, 1, 0));
+    w.put(a, stone);
+    w.put(b, stone);
+    let behaviours = w.b();
+    behaviours.schedule_tick(&mut w.level, &mut w.ticks, a, 2);
+    behaviours.schedule_tick(&mut w.level, &mut w.ticks, b, 2);
+    // The block at b changes before its tick is due: it doesn't run.
+    w.put(b, dirt);
+    w.level.time = 2;
+    assert!(behaviours.scheduled_begin(&mut w.level, &mut w.ticks, false));
+    let mut ran = Vec::new();
+    while let Some(step) = behaviours.scheduled_block_step(&mut w.level, &mut w.ticks) {
+        ran.push(step);
+    }
+    behaviours.scheduled_finish(&mut w.ticks, false);
+    assert_eq!(ran, [Some((a, stone)), None]);
+    // Nothing is left for the next tick.
+    w.level.time = 3;
+    assert!(behaviours.scheduled_begin(&mut w.level, &mut w.ticks, false));
+    assert_eq!(
+        behaviours.scheduled_block_step(&mut w.level, &mut w.ticks),
+        None
+    );
+    behaviours.scheduled_finish(&mut w.ticks, false);
+}
+
 #[test]
 fn waterlogged_blocks_schedule_water() {
     let mut w = world!();

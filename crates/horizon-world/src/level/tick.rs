@@ -1677,17 +1677,29 @@ impl Behaviours {
             if TickTypeId(fluid as u32) == tick.kind {
                 sim.fluid_tick(tick.pos);
             }
-        } else {
-            let Ok(Some(tick)) = ticks.blocks.next_tick() else {
-                return false;
-            };
-            let mut sim = self.sim(level, ticks);
-            let state = sim.state(tick.pos);
-            if u32::from(self.block(state).0) == tick.kind.0 {
-                sim.tick_block(state, tick.pos);
-            }
+        } else if self.scheduled_block_step(level, ticks).is_none() {
+            return false;
         }
         true
+    }
+    /// `scheduled_step` for block ticks, saying where a tick ran and for
+    /// which state: `None` when none is left, `Some(None)` when the block
+    /// there changed since the tick was scheduled (it doesn't run).
+    pub fn scheduled_block_step<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+    ) -> Option<Option<(BlockPos, BlockStateId)>> {
+        let Ok(Some(tick)) = ticks.blocks.next_tick() else {
+            return None;
+        };
+        let mut sim = self.sim(level, ticks);
+        let state = sim.state(tick.pos);
+        if u32::from(self.block(state).0) != tick.kind.0 {
+            return Some(None);
+        }
+        sim.tick_block(state, tick.pos);
+        Some(Some((tick.pos, state)))
     }
     /// End a `scheduled_begin` phase.
     pub fn scheduled_finish(&self, ticks: &mut Ticks, fluids: bool) {

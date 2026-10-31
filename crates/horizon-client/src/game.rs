@@ -157,6 +157,7 @@ mod mounts;
 mod moving_pistons;
 mod music;
 mod names;
+mod native_blocks;
 mod native_entities;
 mod native_hooks;
 mod native_lifecycle;
@@ -3768,17 +3769,34 @@ impl Game<'_> {
             loop {
                 // Due ticks run against one level while each leaves nothing for
                 // the game to apply (level events, spilled items or orbs): the
-                // next one would see the same level built again.
+                // next one would see the same level built again. A mod's block
+                // ends the run too, so native mods hear its tick before the next.
+                let mut mod_tick = None;
                 let more = self.with_level(|b, level, ticks| {
                     loop {
-                        let more = b.scheduled_step(level, ticks, fluids);
-                        if !more || !level.events.is_empty() || !level.spill.is_empty() {
+                        let more = if fluids {
+                            b.scheduled_step(level, ticks, true)
+                        } else {
+                            let step = b.scheduled_block_step(level, ticks);
+                            mod_tick = step.flatten().filter(|&(_, state)| {
+                                native_blocks::is_mod_block(b.table.name(state))
+                            });
+                            step.is_some()
+                        };
+                        if !more
+                            || !level.events.is_empty()
+                            || !level.spill.is_empty()
+                            || mod_tick.is_some()
+                        {
                             break more;
                         }
                     }
                 });
                 if !self.level_events.is_empty() {
                     self.process_level_events()?;
+                }
+                if let Some(tick) = mod_tick {
+                    self.native_block_ticked(tick);
                 }
                 if !more {
                     break;
@@ -4905,6 +4923,11 @@ impl Game<'_> {
         if !(sneaking && hands_full)
             && let Some(hit) = block_hit
         {
+            // Native mods, where BlockState.useItemOn starts.
+            if self.native_use_blocks(hit.pos, hit.face) {
+                self.swing_arm();
+                return Ok(true);
+            }
             let held = self.held().cloned();
             if self.use_lectern(hit.pos, held.as_ref()) {
                 self.swing_arm();

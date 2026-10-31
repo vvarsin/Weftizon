@@ -159,6 +159,16 @@
       "name": "entity_interact",
       "version": 1,
       "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_interact"
+    },
+    {
+      "name": "use_block",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_use_block"
+    },
+    {
+      "name": "block_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_block_tick"
     }
   ]
 }

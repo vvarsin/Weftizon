@@ -6,6 +6,10 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 17 adds blocks (`native_use_block`, `native_block_tick`, and
+//! `native_block`, `native_set_block`, `native_schedule_block_tick`... in
+//! `native_blocks.rs`).
+//!
 //! API 16 adds content mods' entities (`native_entity_tick`,
 //! `native_entity_hurt`, `native_entity_died`, `native_entity_interact`,
 //! and `native_entity`, `native_play_animation`... in `native_entities.rs`).
@@ -86,7 +90,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 16;
+pub(crate) const NATIVE_HOOKS_API: u32 = 17;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.
@@ -594,6 +598,32 @@ impl Game<'_> {
         claimed: &mut bool,
     ) {
         let _ = (entity, id, stack, claimed);
+    }
+    /// A player right clicks the block `state` at `pos` holding `stack` in
+    /// `self.hand`, `face` the face clicked (`[0, 1, 0]` is the top): where
+    /// the block's own use starts (Weft's block `on_use` and
+    /// `question::USE_BLOCK`), before a door opens or a chest's menu. Not
+    /// heard while sneaking with something in either hand, as vanilla's
+    /// blocks then don't react. Set `claimed` to take the click: the hand
+    /// swings and neither the block's use nor the item's runs. Server-side,
+    /// for every player of the world (the helpers read the acting one). API 17.
+    pub(super) fn native_use_block(
+        &mut self,
+        stack: Option<&ItemStack>,
+        pos: [i32; 3],
+        face: [i32; 3],
+        state: BlockStateId,
+        claimed: &mut bool,
+    ) {
+        let _ = (stack, pos, face, state, claimed);
+    }
+    /// A scheduled tick of a content mod's block came due at `pos` (Weft's
+    /// `on_scheduled`): after the template's own tick ran, `state` being the
+    /// state it ran for. Schedule one with `native_schedule_block_tick`; one
+    /// the block's template schedules is heard too. Server-side, in the
+    /// order vanilla runs scheduled ticks. API 17.
+    pub(super) fn native_block_tick(&mut self, pos: [i32; 3], state: BlockStateId) {
+        let _ = (pos, state);
     }
 }
 

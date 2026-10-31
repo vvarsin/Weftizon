@@ -120,7 +120,16 @@ clients without the same mods (they need the same content, as for blocks).
   vanilla's lapis and iron block forms), `mod_content_tests.rs::declared_tools_tags_and_drops_reach_the_game`
   (tags, tool checks and loot through the game's loaders). Unlike Weft, a block without `drops` or a table
   drops nothing, so ported mods keep their own tables' meaning.
-- Block/item behaviour callbacks: use, place, break, neighbour change, scheduled tick, as hook points.
+- ✅ Block callbacks for code (API 17, `game/native_blocks.rs`): `native_use_block` (claimable, where the
+  block's own use starts: Weft's block `on_use` and `question::USE_BLOCK`), `native_block_tick` (a content
+  mod's block's scheduled tick, after the template's: Weft's `on_scheduled`; the run of due ticks stops after
+  it so the hook sees the level as vanilla's next tick would), and helpers `native_block`, `native_set_block`
+  (`ruby:lamp[lit=true]`, as `/setblock`), `native_set_block_property` (Weft's `set_prop`) and
+  `native_schedule_block_tick` (Weft's `schedule`). `on_neighbor`, `on_placed` and `on_broken` are API 6, 7
+  and 14's hooks. Players' docs: [native-mods.md#blocks](native-mods.md#blocks). Tests: block text and
+  property changes (`native_blocks.rs`), stepping ticks with where they ran (`horizon-world`
+  `level::tests::block_ticks_step_with_where_they_ran`), the catalog and hookability checks. Not verified
+  with a built native mod yet. Item callbacks are API 13's `native_use_item_on` and `native_use_item`.
 - Spawn eggs for declared entities (`"spawn_egg": {"colors": [..]}` → an item copying a vanilla egg with
   `minecraft:entity_data`). **Done early**: the content root generates `<id>_spawn_egg`, plus a simple
   two-colour egg model/texture from the colours; a custom `item_model` names the mod's own model and texture.
