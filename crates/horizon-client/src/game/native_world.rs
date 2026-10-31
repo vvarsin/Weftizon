@@ -408,6 +408,77 @@ impl Game<'_> {
     }
 }
 
+/// Explosions and hunting one player for native mods (API 71).
+#[allow(dead_code)]
+impl Game<'_> {
+    /// An explosion at `center` of `power` (TNT 4, a charged creeper 6, at
+    /// most 32), as `Level.explode`: it hurts and pushes what is near,
+    /// breaks blocks unless `break_blocks` is false (drops as TNT's do), and
+    /// lights fires when `fire`. In the level in place. False for a power or
+    /// position that isn't one. API 71.
+    pub(super) fn native_explode(
+        &mut self,
+        center: [f64; 3],
+        power: f32,
+        fire: bool,
+        break_blocks: bool,
+    ) -> bool {
+        if !center.iter().all(|v| v.is_finite()) || !(power.is_finite() && power > 0.0) {
+            return false;
+        }
+        let interaction = if break_blocks {
+            super::explosion::BlockInteraction::DestroyWithDecay
+        } else {
+            super::explosion::BlockInteraction::Keep
+        };
+        match self.server_explode(center, power.min(32.0), interaction, fire) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("a native mod's explosion at {center:?}: {e}");
+                false
+            }
+        }
+    }
+    /// Sends mob `id` after the player `uuid`: it targets them, and keeps
+    /// them over nearer players while they are a valid target (alive, not in
+    /// creative or spectator), as a mob keeps a player who hit it. A mob
+    /// that thinks with a brain (a piglin, a warden) gets them as its attack
+    /// target. False when the mob or the player isn't there. API 71.
+    pub(super) fn native_target_player(&mut self, id: u32, uuid: u128) -> bool {
+        let conn = self.lan.as_ref().and_then(|host| {
+            host.hub
+                .guests
+                .iter()
+                .find(|g| g.uuid == uuid && g.placed)
+                .map(|g| g.conn)
+        });
+        let local = conn.is_none()
+            && self.player.is_some()
+            && horizon_client::lan::playerdata::ints_uuid(self.acting_uuid()) == uuid;
+        if conn.is_none() && !local {
+            return false;
+        }
+        let Some(m) = self
+            .mobs
+            .iter_mut()
+            .find(|m| m.id == id && !m.removed && m.alive())
+        else {
+            return false;
+        };
+        m.ai.target = Some(horizon_client::mobs::Who::Player);
+        m.ai.last_hurt_by = Some(horizon_client::mobs::Who::Player);
+        m.ai.last_hurt_by_time = m.age as i32;
+        horizon_client::mobs::monster_brain::set_attack_target(
+            m,
+            Some(horizon_client::mobs::Who::Player),
+        );
+        if let (Some(conn), Some(host)) = (conn, self.lan.as_mut()) {
+            host.mob_players.insert(id, conn);
+        }
+        true
+    }
+}
+
 /// Creaking hearts in trees for native mods (API 69).
 #[allow(dead_code)]
 impl Game<'_> {

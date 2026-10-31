@@ -553,6 +553,9 @@ API 69 plants creaking hearts in trees for content mods' creaking variants
 API 70 adds hurting a player, a sound from any server hook, and light levels
 ([Players, sounds and light](#players-sounds-and-light)). Bundles that use them need `"hooks": 70`.
 
+API 71 adds explosions and sending a mob after one player
+([Explosions and hunted players](#explosions-and-hunted-players)). Bundles that use them need `"hooks": 71`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into
@@ -1068,6 +1071,21 @@ API 70, `native_world.rs`, found missing while building InvasionV2 on this API:
 
 Tested in a game (2026-10-31): InvasionV2's Nether Reactor hurt the player who lit it, played its sounds, and
 its waves glowed in glowstone light.
+
+### Explosions and hunted players
+
+API 71, `native_world.rs`, also found missing while building InvasionV2:
+
+- **`native_explode(center, power, fire, break_blocks)`**: an explosion as `Level.explode` makes one (TNT is
+  power 4, a charged creeper 6; at most 32). It hurts and pushes what is near, breaks blocks unless
+  `break_blocks` is false (they drop as TNT's do), and lights fires when `fire` is true.
+- **`native_target_player(id, uuid)`**: sends mob `id` after one player. The mob keeps that player over nearer
+  ones while the player is a valid target (alive, not in creative or spectator), as a mob keeps a player who hit
+  it. A mob with a brain (a piglin, a warden) gets the player as its attack target. False when the mob or the
+  player is not there.
+
+Tested in a game (2026-10-31): a diamond in the Nether Reactor's gold slots blew it up, and the guards it
+summons hunted the player who mined its shell.
 
 ### Creaking hearts in trees
 

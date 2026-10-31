@@ -167,6 +167,9 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
+//! API 71 adds explosions and sending a mob after one player
+//! (`native_explode`, `native_target_player` in `native_world.rs`).
+//!
 //! API 70 adds hurting a player and reading light for native mods
 //! (`native_hurt_player`, `native_light` in `native_world.rs`).
 //!
@@ -307,7 +310,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 70;
+pub(crate) const NATIVE_HOOKS_API: u32 = 71;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

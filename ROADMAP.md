@@ -105,6 +105,18 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
    - [ ] The Nether Reactor nexus: a crafted reactor block, right-clicked to hurt the player and start; it turns
      red, its cobblestone shell turns to glowing red obsidian top down, then its gold to obsidian; a wrong build
      turns the blocks around it to lava and the core to a diamond block; a right build starts the invasion.
+     (Tested 2026-10-31: right and wrong builds.) Added 2026-10-31: the layout is watched the whole sequence (a
+     missing block melts it); diamond in place of the gold explodes it; by wave 3 it grows a one-block obsidian
+     shell that invaders can dig and it regrows; a player who mines the shell is attacked by blue-tinted mobs the
+     reactor summons until the shell regrows, and a player who does it twice is hunted for good; after each wave
+     the blocks around it slowly turn into a netherrack spiral and it summons piglins that turn into zombified
+     piglins, then it calms down and the spiral turns to cobblestone, then stone bricks; it also grows ores and
+     ancient debris.
+   - [x] Explosions where a mod wants them (the reactor's diamond explosion): API 71 `native_explode`.
+   - [x] A mob sent after one player (the reactor's guards hunting the player who broke its shell): API 71
+     `native_target_player`.
+   - [x] A content mod's recipes in the recipe book, `/recipe` and the unlock popup (they crafted already; the
+     book and the network only read vanilla's). Tested 2026-10-31 with InvasionV2's pure netherite tools.
 3. **Weft's own events** (`w.emit`) and timed attributes (part 3).
 4. **Screen and HUD builders** (part 6).
 5. **Energy and systems** for machines (part 4).
