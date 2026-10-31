@@ -51,27 +51,46 @@ fn ingredient(v: &Value) -> Option<Ingredient> {
     }
 }
 
-/// Every recipe file, by recipe id (the registry's order).
-pub(super) fn recipes(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Value>) {
+/// Every recipe the server has, by recipe id (the registry's order): the
+/// game's own, the content mods' (`<namespace>:<name>`, as
+/// `crafting::Recipes` reads them), then the packs' over them.
+pub(super) fn all_recipes(
+    resources: &Path,
+    overlay: &horizon_world::loot::PackOverlay,
+) -> BTreeMap<String, Value> {
+    let mut out = BTreeMap::new();
+    recipes(
+        &resources.join("data/minecraft/recipe"),
+        "minecraft",
+        "",
+        &mut out,
+    );
+    for namespace in crate::mod_content::namespaces(resources) {
+        let dir = resources.join(format!("data/{namespace}/recipe"));
+        recipes(&dir, &namespace, "", &mut out);
+    }
+    overlay_recipes(overlay, &mut out);
+    out
+}
+
+/// Every recipe file of one namespace's folder, by recipe id.
+fn recipes(dir: &Path, namespace: &str, prefix: &str, out: &mut BTreeMap<String, Value>) {
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            recipes(&path, &format!("{prefix}{name}/"), out);
+            recipes(&path, namespace, &format!("{prefix}{name}/"), out);
         } else if let Some(stem) = name.strip_suffix(".json")
             && let Ok(v) = serde_json::from_slice(&std::fs::read(&path).unwrap_or_default())
         {
-            out.insert(format!("minecraft:{prefix}{stem}"), v);
+            out.insert(format!("{namespace}:{prefix}{stem}"), v);
         }
     }
 }
 
 /// The packs' recipe files over the game's own: the top pack's file for
 /// each id (`SimpleJsonResourceReloadListener`).
-pub(super) fn overlay_recipes(
-    overlay: &horizon_world::loot::PackOverlay,
-    out: &mut BTreeMap<String, Value>,
-) {
+fn overlay_recipes(overlay: &horizon_world::loot::PackOverlay, out: &mut BTreeMap<String, Value>) {
     for (id, files) in overlay.kind("recipe") {
         if let Ok(v) = serde_json::from_slice::<Value>(horizon_world::loot::PackOverlay::top(files))
         {
@@ -86,9 +105,7 @@ pub fn update_recipes(
     sync: &SyncData,
     overlay: &horizon_world::loot::PackOverlay,
 ) -> Vec<u8> {
-    let mut all = BTreeMap::new();
-    recipes(&resources.join("data/minecraft/recipe"), "", &mut all);
-    overlay_recipes(overlay, &mut all);
+    let all = all_recipes(resources, overlay);
     let tags: BTreeMap<&str, &[i32]> = sync
         .tags
         .registries
@@ -166,4 +183,36 @@ pub fn update_recipes(
         w.varint(0); // nor removed
     }
     w.data
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_server_has_the_content_mods_recipes() {
+        let root = std::env::temp_dir().join(format!("horizon-lan-recipes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("data/minecraft/recipe/sub")).unwrap();
+        std::fs::create_dir_all(root.join("data/ruby/recipe")).unwrap();
+        std::fs::create_dir_all(root.join("data/other/recipe")).unwrap();
+        std::fs::write(
+            root.join(horizon_items::content_namespaces::MARKER),
+            br#"["ruby"]"#,
+        )
+        .unwrap();
+        for file in [
+            "data/minecraft/recipe/stick.json",
+            "data/minecraft/recipe/sub/a.json",
+            "data/ruby/recipe/ruby_sword.json",
+            "data/other/recipe/x.json",
+        ] {
+            std::fs::write(root.join(file), "{}").unwrap();
+        }
+        let all = super::all_recipes(&root, &horizon_world::loot::PackOverlay::NONE);
+        std::fs::remove_dir_all(&root).unwrap();
+        // A namespace the content root does not list is no mod's.
+        assert_eq!(
+            all.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["minecraft:stick", "minecraft:sub/a", "ruby:ruby_sword"]
+        );
+    }
 }

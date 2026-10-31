@@ -92,6 +92,7 @@ fn creative_tabs_keep_vanilla_items_missing_from_search() {
         sounds: BTreeMap::new(),
         tabs: vec![&tab],
         names: BTreeMap::new(),
+        entities: Vec::new(),
     };
     let mut doc: J = serde_json::from_str(
         r#"{"tabs":[{"type":"SEARCH","items":["{count:1,id:\"minecraft:stone\"}"]}]}"#,
@@ -2397,6 +2398,7 @@ fn custom_entities_join_the_root() {
         entity_tags: Default::default(),
         villager_hats: Default::default(),
         pois: Default::default(),
+        species_placements: Default::default(),
     };
     let mut vertices = Vec::new();
     let atlas = |_: &str| Some([0.0, 0.0, 1.0, 1.0]);
@@ -2448,12 +2450,12 @@ fn custom_entities_join_the_root() {
         0.0,
     );
     hurt.health = 12.5;
-    let tag = crate::entity_nbt::mob_to_nbt(&hurt, [1, 2, 3, 4], None);
+    let tag = crate::entity_nbt::mob_to_nbt(&hurt, [1, 2, 3, 4], None, None);
     assert_eq!(
         crate::entity_nbt::kind(&tag).as_deref(),
         Some("ghosts:ghost")
     );
-    let back = crate::entity_nbt::mob_from_nbt(&tag, &types, 10).unwrap();
+    let back = crate::entity_nbt::mob_from_nbt(&tag, &types, 10, None).unwrap();
     assert_eq!((back.kind.id.as_str(), back.health), ("ghosts:ghost", 12.5));
     assert!(back.kind.custom.is_some());
     let _ = fs::remove_dir_all(&scratch);

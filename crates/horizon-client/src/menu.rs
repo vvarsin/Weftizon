@@ -1665,7 +1665,8 @@ impl Menu {
         let n = self.grid_size;
         let grid = self.containers[GRID].clone();
         if let Some((id, _)) = env.recipes.find(&grid, n) {
-            self.crafted.push((format!("minecraft:{id}"), grid.clone()));
+            self.crafted
+                .push((crate::crafting::recipe_id(id), grid.clone()));
         }
         let remaining = env
             .recipes

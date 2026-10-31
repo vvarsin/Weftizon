@@ -38,9 +38,7 @@ impl ServerAdvancements {
         let tree = Tree::shared(&resources.join("data"), overlay);
         let kids = tree.children();
         let layout = tree.layout();
-        let mut recipes = BTreeMap::new();
-        super::recipes::recipes(&resources.join("data/minecraft/recipe"), "", &mut recipes);
-        super::recipes::overlay_recipes(overlay, &mut recipes);
+        let recipes = super::recipes::all_recipes(resources, overlay);
         let mut groups = HashMap::new();
         for r in recipes.values() {
             if let Some(g) = r["group"].as_str().filter(|g| !g.is_empty()) {

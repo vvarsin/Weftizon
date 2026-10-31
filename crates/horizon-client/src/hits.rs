@@ -159,7 +159,7 @@ mod tests {
         let (health, rules) = (&resources.health, crate::health::HealthRules::default());
         let id = health.damage.id("minecraft:mob_attack").unwrap();
         let mut player = crate::motion::PlayerMotion::new(&resources, Vec3::ZERO).unwrap();
-        player.entity_id = REFUSED;
+        player.entity_id = REFUSED as i32;
         assert!(!player.hurt(health, rules, id, 3.0).unwrap());
         assert_eq!(player.health.health(), 20.0);
         assert_eq!(
@@ -170,7 +170,7 @@ mod tests {
             [("minecraft:mob_attack", 3.0)]
         );
         let mut player = crate::motion::PlayerMotion::new(&resources, Vec3::ZERO).unwrap();
-        player.entity_id = DOUBLED;
+        player.entity_id = DOUBLED as i32;
         assert!(player.hurt(health, rules, id, 3.0).unwrap());
         assert_eq!(player.health.health(), 14.0);
     }

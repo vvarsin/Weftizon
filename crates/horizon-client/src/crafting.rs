@@ -1107,6 +1107,15 @@ pub struct CustomRecipe {
     pub id: String,
     pub json: Arc<Value>,
 }
+/// The recipe id of a name in [`Recipes`]: vanilla's are kept by bare name
+/// (`stick`), a content mod's with its namespace (`ruby:ruby_sword`).
+pub fn recipe_id(name: &str) -> String {
+    if name.contains(':') {
+        name.to_owned()
+    } else {
+        format!("minecraft:{name}")
+    }
+}
 /// An item stack as a recipe's `result` names it (`ItemStackTemplate`); none
 /// with no `id` or a count outside 1 to 99.
 pub fn recipe_result(v: &Value) -> Option<ItemStack> {

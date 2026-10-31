@@ -324,7 +324,7 @@ impl Book {
                 Recipe::Special(special) => {
                     for shown in special.book_displays() {
                         entries.push(Entry {
-                            id: format!("minecraft:{name}"),
+                            id: crate::crafting::recipe_id(name),
                             display_id: -1,
                             category: crafting_category(&category),
                             group: group(&grp),
@@ -338,7 +338,7 @@ impl Book {
                 }
             };
             entries.push(Entry {
-                id: format!("minecraft:{name}"),
+                id: crate::crafting::recipe_id(name),
                 display_id: -1,
                 category: crafting_category(&category),
                 group: group(&grp),
@@ -359,7 +359,7 @@ impl Book {
                 _ => continue,
             };
             entries.push(Entry {
-                id: format!("minecraft:{}", c.id),
+                id: crate::crafting::recipe_id(&c.id),
                 display_id: -1,
                 category,
                 group: group(&c.group),
@@ -711,6 +711,20 @@ impl RecipeIndex {
             };
             insert(format!("minecraft:{name}"), &v);
         }
+        // Content mods' recipes, `<namespace>:<name>`, as the crafting
+        // manager reads them (`crafting::Recipes::load`): without them
+        // `/recipe` and the book do not know a mod's recipes.
+        for namespace in crate::mod_content::namespaces(root) {
+            let dir = root.join(format!("data/{namespace}/recipe"));
+            for (name, path) in crate::crafting::recipe_files(&dir).unwrap_or_default() {
+                if let Some(v) = std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                {
+                    insert(format!("{namespace}:{name}"), &v);
+                }
+            }
+        }
         // The world's packs' recipes over the game's own: the top pack's
         // file for each id replaces it (`SimpleJsonResourceReloadListener`).
         for (id, files) in overlay.kind("recipe") {
@@ -942,6 +956,40 @@ mod tests {
     fn ing(items: &[&str]) -> Ingredient {
         Ingredient::of(items.iter().map(|s| (*s).to_owned()).collect())
     }
+    #[test]
+    fn the_index_knows_a_content_mods_recipes() {
+        let root = std::env::temp_dir().join(format!("horizon-mod-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("data/minecraft/recipe")).unwrap();
+        std::fs::create_dir_all(root.join("data/mymod/recipe")).unwrap();
+        std::fs::write(
+            root.join(horizon_items::content_namespaces::MARKER),
+            br#"["mymod"]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("data/mymod/recipe/ruby_sword.json"),
+            r#"{"type":"minecraft:crafting_shaped","result":{"id":"mymod:ruby_sword"}}"#,
+        )
+        .unwrap();
+        // A namespace the root's marker does not list is not a content mod's.
+        std::fs::create_dir_all(root.join("data/other/recipe")).unwrap();
+        std::fs::write(
+            root.join("data/other/recipe/x.json"),
+            r#"{"type":"minecraft:crafting_shaped","result":{"id":"minecraft:stick"}}"#,
+        )
+        .unwrap();
+        let index = RecipeIndex::load(&root, &PackOverlay::NONE);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(index.contains("mymod:ruby_sword"));
+        assert_eq!(index.result("mymod:ruby_sword"), Some("mymod:ruby_sword"));
+        assert_eq!(
+            index.toast_station("mymod:ruby_sword"),
+            Some("minecraft:crafting_table")
+        );
+        assert!(!index.contains("other:x"));
+    }
+
     #[test]
     fn the_index_knows_each_recipes_toast_station_and_result() {
         let root = std::env::temp_dir().join(format!("horizon-toast-index-{}", std::process::id()));

@@ -9748,7 +9748,7 @@ impl Game<'_> {
                 }
                 crafted += 1;
                 self.stats.add("crafted", &made.0, made.1 as i32);
-                self.award_crafted(&[(format!("minecraft:{recipe}"), ingredients)]);
+                self.award_crafted(&[(horizon_client::crafting::recipe_id(&recipe), ingredients)]);
                 if !shift || crafted >= 64 {
                     break;
                 }

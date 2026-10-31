@@ -329,13 +329,13 @@ fn components_save_with_the_entity() {
     m.extra.components.insert("ruby:mana".into(), Tag::Int(7));
     m.extra.components.remove(&"ruby:owner".into());
     m.extra.components.insert("ruby:new".into(), Tag::Byte(1));
-    let saved = crate::entity_nbt::mob_to_nbt(&m, [0, 0, 0, 3], None);
+    let saved = crate::entity_nbt::mob_to_nbt(&m, [0, 0, 0, 3], None, None);
     let Some(Tag::Compound(on_disk)) = saved.get(COMPONENTS) else {
         panic!("{saved:?}")
     };
     assert_eq!(on_disk.len(), 2);
     let types = std::collections::HashMap::from([("ruby:bull".to_owned(), kind)]);
-    let back = crate::entity_nbt::mob_from_nbt(&saved, &types, 9).unwrap();
+    let back = crate::entity_nbt::mob_from_nbt(&saved, &types, 9, None).unwrap();
     // Its own values; the one it dropped comes back at its declared value.
     assert_eq!(
         back.extra.components,
@@ -349,7 +349,7 @@ fn components_save_with_the_entity() {
     );
     // A mob with none writes no key, even over a loaded compound that had one.
     let cow = Mob::new(4, crate::mobs::sensor_scan_tests::kind(), Vec3::ZERO, 0.0);
-    let plain = crate::entity_nbt::mob_to_nbt(&cow, [0, 0, 0, 4], Some(&saved));
+    let plain = crate::entity_nbt::mob_to_nbt(&cow, [0, 0, 0, 4], Some(&saved), None);
     assert!(plain.get(COMPONENTS).is_none());
 }
 

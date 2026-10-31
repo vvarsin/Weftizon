@@ -2313,6 +2313,7 @@ mod tests {
             step_sound: None,
             food: Arc::default(),
             tempt: Arc::default(),
+            custom: None,
         });
         let gliding = |previous: Vec3, current: Vec3| {
             let mut m = Mob::new(1, kind.clone(), Vec3::ZERO, 0.0);

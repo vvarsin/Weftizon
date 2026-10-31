@@ -938,6 +938,7 @@ mod tests {
             guest: &mut g,
             container: Some(&mut slots),
             shulker: false,
+            hidden: &[],
         };
         // Shift-clicks from the hotbar (menu slots 30 and 31): coal goes to
         // the fuel, ore to the input, 16 of it.

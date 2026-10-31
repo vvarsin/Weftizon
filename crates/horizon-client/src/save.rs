@@ -627,8 +627,10 @@ pub fn encode_block_entity(
         for (key, v) in [("x", p.0), ("y", p.1), ("z", p.2)] {
             map.insert(key.into(), Tag::Int(v));
         }
-        // A machine's slots, as a vanilla container's, with their count.
-        if !m.items.is_empty() {
+        // A machine's slots (`mod_machines` stamps its tick on every one),
+        // with their count, empty ones too. Another mod's block entity keeps
+        // only its `Items`, as it saved them.
+        if m.ticked.is_some() && !m.items.is_empty() {
             map.insert("Items".into(), encode_items(&m.items));
             map.insert(MACHINE_SLOTS.into(), Tag::Int(m.items.len() as i32));
         }
