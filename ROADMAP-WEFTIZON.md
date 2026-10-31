@@ -36,6 +36,8 @@ Done / substantially done:
 - loot modification via `horizon:add_to`
 - auto names for items, blocks, entities and spawn eggs
 - events/questions/damage chains API 18 (Warsin finished and pushed)
+- machines: content block `machine` with slot groups/menus, hopper rules, spill and save;
+  API 19 catch-up hook; implementation and tests done in the worktree, commit pending the kernel stall
 - TheAfterdark content port loads, custom dimension enters, legacy carver bug fixed
 - custom TheAfterdark worldgen feature types implemented; skipped placed features reduced from
   62 to 0; legacy 1.20.1 block-state (DataFixer), provider, placement, `random_patch` and removed
@@ -53,8 +55,9 @@ Still missing for full Weft power:
    - API 18 covers many built-in events/questions/chains, but not every Weft behavior.
 
 3. **Machines**
-   - Data-driven block entity + inventory + menu + screen.
-   - `core:energy`, systems, capabilities, mod networking, catch-up ticks.
+   - The data-driven machine block entity, inventory groups, menus, hopper rules, spill and
+     catch-up ticks are implemented/tested in the worktree (commit pending).
+   - Still missing: `core:energy`, systems, capabilities, mod networking and broader menu screens.
 
 4. **Liquids**
    - Flow, renewal, temperature, bucket items, reactions.
