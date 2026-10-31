@@ -729,6 +729,11 @@ impl Game<'_> {
         if self.dim == Dim::Overworld || self.player.is_none() {
             return Ok(());
         }
+        // A content mod's dimension respawns in that same level. Only the
+        // End/Nether use the vanilla away-from-Overworld path.
+        if matches!(self.dim, Dim::Custom(..)) {
+            return Ok(());
+        }
         self.end_portal_travel = true;
         let result = self.enter_dimension(Dim::Overworld);
         self.end_portal_travel = false;
