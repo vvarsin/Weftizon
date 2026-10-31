@@ -135,6 +135,49 @@ impl Game<'_> {
         self.with_level(|b, level, ticks| b.schedule_tick(level, ticks, at, delay));
         true
     }
+    /// Breaks the block at `pos` as a mob or an explosion does
+    /// (`Level.destroyBlock(pos, drop)`): its break particles and sound, its
+    /// drops without a tool when `drop`, a block entity's contents spilled,
+    /// and the fluid it held left in its place. False when it was air or
+    /// `pos` is not loaded. API 20.
+    pub(super) fn native_break_block(&mut self, pos: [i32; 3], drop: bool) -> bool {
+        if self.native_block(pos).is_none() {
+            return false;
+        }
+        let at = BlockPos::new(pos[0], pos[1], pos[2]);
+        let broken = self.with_level(|b, level, ticks| b.destroy_block(level, ticks, at, drop));
+        if let Err(e) = self.process_level_events() {
+            log::warn!("a native mod's block break at {pos:?}: {e}");
+        }
+        broken
+    }
+    /// How long the block at `pos` takes to break (its `destroy_time`:
+    /// stone 1.5, obsidian 50); `None` for a block nothing breaks (bedrock,
+    /// barriers: -1 in vanilla) or where no chunk is loaded. API 20.
+    pub(super) fn native_block_hardness(&self, pos: [i32; 3]) -> Option<f32> {
+        self.native_block(pos)?;
+        let hardness = self
+            .res
+            .facts()
+            .get(self.world.block(pos[0], pos[1], pos[2]))
+            .hardness;
+        (hardness >= 0.0).then_some(hardness)
+    }
+    /// Shows `breaker`'s crack on the block at `pos` to every player near
+    /// it, as a zombie breaking a door does (`Level.destroyBlockProgress`):
+    /// `progress` 0 to 9, anything else takes the crack away. One crack per
+    /// breaker; pass the breaking mob's id. A crack not changed for 400
+    /// ticks goes. API 20.
+    pub(super) fn native_block_crack(&mut self, breaker: u32, pos: [i32; 3], progress: i32) {
+        let event = horizon_client::mobs::MobEvent::DestroyProgress {
+            mob: breaker,
+            pos,
+            progress,
+        };
+        if let Err(e) = self.handle_mob_events(vec![event]) {
+            log::warn!("a native mod's block crack at {pos:?}: {e}");
+        }
+    }
 }
 
 #[cfg(test)]

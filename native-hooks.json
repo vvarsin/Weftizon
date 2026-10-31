@@ -219,6 +219,11 @@
       "name": "machine_tick",
       "version": 1,
       "target": "horizon_client::game::native_hooks::Game<'_>::native_machine_tick"
+    },
+    {
+      "name": "level_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_level_tick"
     }
   ]
 }

@@ -221,6 +221,64 @@ impl Game<'_> {
         m.play_animation(name, repeat);
         true
     }
+    /// Spawns a mob of type `kind` (`mymod:ghost`, `minecraft:zombie`;
+    /// no namespace is vanilla's) at `position` in this level, made as a
+    /// natural spawn makes it (its equipment, variant and difficulty rolls)
+    /// but persistent, so it never despawns (Weft's `spawn`). Every player
+    /// near it sees it. Its id, or None when `kind` is not a mob type, the
+    /// position is not a number, or it is a monster on Peaceful (as
+    /// `/summon` refuses it). API 20.
+    pub(super) fn native_spawn_entity(&mut self, kind: &str, position: [f64; 3]) -> Option<u32> {
+        if !position.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        let kind = if kind.contains(':') {
+            kind.to_owned()
+        } else {
+            format!("minecraft:{kind}")
+        };
+        let monster = self.res.mob_types().get(&kind)?.category == "monster";
+        if monster && self.ui.difficulty == 0 {
+            return None;
+        }
+        self.spawn_mob(&kind, position, true)
+    }
+    /// Sends it walking to `target` by itself, around obstacles, at `speed`
+    /// times its movement speed (Weft's `navigate`, vanilla's
+    /// `PathNavigation.moveTo`); 0 or less stops it. True when a path was
+    /// found. The path is the mob's own navigation: a goal that moves it
+    /// (melee, wander) may take it over on a later tick, as in vanilla, so
+    /// call it again as the target moves. API 20.
+    pub(super) fn native_navigate(&mut self, id: u32, target: [f64; 3], speed: f64) -> bool {
+        let Some(i) = self.mobs.iter().position(|m| m.id == id && !m.removed) else {
+            return false;
+        };
+        if !(speed.is_finite() && speed > 0.0) {
+            self.mobs[i].nav_stop();
+            return false;
+        }
+        if !target.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let mut mobs = std::mem::take(&mut self.mobs);
+        let found = mobs[i].nav_move_to(&self.mob_world_base(&[]), target, speed);
+        self.mobs = mobs;
+        found
+    }
+    /// Whether it still walks a path (`native_navigate`'s or its goals'):
+    /// false once it arrived, the path ran out or it got stuck. API 20.
+    pub(super) fn native_navigating(&self, id: u32) -> bool {
+        self.native_mob(id)
+            .is_some_and(|m| m.ai.nav.is_in_progress())
+    }
+    /// Whether the path it walks ends at its target (`Path.canReach`). A
+    /// target behind a wall gets a path to the nearest block it can reach:
+    /// false then, and a mob that should dig through knows to. API 20.
+    pub(super) fn native_path_reaches(&self, id: u32) -> bool {
+        self.native_mob(id)
+            .and_then(|m| m.ai.nav.path.as_ref())
+            .is_some_and(|p| p.reached)
+    }
     /// Value `name` (`mymod:mana`) of its per-entity components (Weft's
     /// `entity_component`): its type's declared value until a mod changes
     /// it, saved with it. None when it has no such value.

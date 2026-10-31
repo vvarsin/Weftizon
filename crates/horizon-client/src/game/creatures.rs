@@ -616,7 +616,11 @@ impl Game<'_> {
             self.tick_village_siege();
         }
         self.tick_raids();
-        self.tick_creature_entities()
+        self.tick_creature_entities()?;
+        // Native mods: this level's own tick, after its mobs (API 20).
+        let dimension = self.dim.id();
+        self.native_level_tick(dimension);
+        Ok(())
     }
     /// `DistanceManager.inEntityTickingRange` in an entity-ticking chunk
     /// (block coordinates), from every player's tickets (`update_chunk_tickets`).

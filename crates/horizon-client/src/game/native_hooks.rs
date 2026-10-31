@@ -6,6 +6,14 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 20 adds a level's own tick (`native_level_tick`) and the World API
+//! an invasion needs: spawning mobs, walking them to a place and reading
+//! their path (`native_spawn_entity`, `native_navigate`,
+//! `native_navigating`, `native_path_reaches` in `native_entities.rs`),
+//! breaking blocks with their cracks (`native_break_block`,
+//! `native_block_hardness`, `native_block_crack` in `native_blocks.rs`) and
+//! boss bars (`native_boss_bar`, `native_remove_boss_bar` in `bossbars.rs`).
+//!
 //! API 19 adds content mods' machines (`native_machine_tick`, and
 //! `native_machine_group` in `mod_machines.rs`).
 //!
@@ -100,7 +108,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 19;
+pub(crate) const NATIVE_HOOKS_API: u32 = 20;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.
@@ -715,6 +723,15 @@ impl Game<'_> {
     /// its cooldown. Server-side, the player's state swapped in. API 18.
     pub(super) fn native_enter_dimension(&mut self, dimension: &str, canceled: &mut bool) {
         let _ = (dimension, canceled);
+    }
+    /// Once a tick for each level the server ticks (`minecraft:overworld`,
+    /// a mod's dimension...), after its mobs ticked, with that level in
+    /// place: the helpers spawn, walk and change what is in it
+    /// (`native_spawn_entity`, `native_navigate`, `native_break_block`).
+    /// Where a mod runs a level's own clock: waves, events, timers. Not
+    /// called while the world is frozen or paused. Server-side. API 20.
+    pub(super) fn native_level_tick(&mut self, dimension: &str) {
+        let _ = dimension;
     }
 }
 

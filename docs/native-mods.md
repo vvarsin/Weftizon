@@ -95,6 +95,12 @@ API 18 adds Weft's built-in events, questions and value chains ([Events and ques
 `native_attack_entity`, `native_enter_dimension`, `native_hurt`, `native_damage` and `native_attack_damage`.
 Bundles that use them need `"hooks": 18`.
 
+API 19 adds content mods' machines (`native_machine_tick`). Bundles that use it need `"hooks": 19`.
+
+API 20 adds a level's own tick and the World API an invasion needs ([Levels, waves and boss bars](#levels-waves-and-boss-bars)):
+`native_level_tick`, and helpers to spawn a mob, walk it somewhere, tell whether its path reaches, break a block
+with its crack, read a block's hardness, and show a boss bar. Bundles that use them need `"hooks": 20`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page. The first one shows a notice once (the first build downloads
@@ -351,6 +357,33 @@ API 17, `crates/horizon-client/src/game/native_blocks.rs`: code for blocks, a co
 - Weft's `on_neighbor`, `on_placed` and `on_broken` are the hooks already there: `native_neighbor_changed` (API 6),
   `native_block_changed` (API 7, every committed change), `native_place_block` and `native_destroy_block` (API 14,
   a player's). Weft has no random ticks; vanilla's still reach a mod's block through its template.
+
+### Levels, waves and boss bars
+
+API 20: what a mod like Invasion Mod needs to run waves of mobs that walk to a target and dig through walls. All of
+it runs where the world is simulated, for every player of it.
+
+- **`native_level_tick(dimension)`**: once a tick for each level the server ticks (`minecraft:overworld`, a mod's
+  dimension...), after its mobs ticked, with that level in place, so the helpers below act on it. Not called while
+  the world is paused or frozen. Keep the wave's state in your bundle's own module.
+- Mobs (`native_entities.rs`): `native_spawn_entity(kind, position)` (Weft's `spawn`: a persistent mob, finalized as a
+  natural spawn is; `None` for a type that isn't a mob, or a monster on Peaceful), `native_navigate(id, target,
+  speed)` (Weft's `navigate`, vanilla's `PathNavigation.moveTo`: true when a path was found; speed 0 stops it),
+  `native_navigating(id)` (still walking; false once it arrived, ran out of path or got stuck) and
+  `native_path_reaches(id)` (the path ends at the target; false when a wall is in the way and the path stops at the
+  nearest block it can reach). A goal that moves the mob (melee, wander) can take its path over, as in vanilla: call
+  `native_navigate` again every few ticks.
+- Blocks (`native_blocks.rs`): `native_break_block(pos, drop)` (as a mob or an explosion breaks it:
+  particles, sound, drops without a tool when `drop`), `native_block_hardness(pos)` (stone 1.5, obsidian 50; `None`
+  for bedrock and barriers) and `native_block_crack(breaker, pos, progress)` (the crack stage 0 to 9 every player
+  near it sees, as a zombie's on a door; any other number clears it; one crack per breaker id).
+- Boss bars (`bossbars.rs`): `native_boss_bar(id, name, value, max, color)` makes or changes a custom bar shown to
+  every player (the world saves it, as `/bossbar` bars are saved); `native_remove_boss_bar(id)` takes it away.
+- Players: `native_server_players()` (API 8) gives their positions and dimensions; `native_broadcast` writes to all
+  of them.
+
+A digging mob: walk it to the target every 10 ticks; when `native_path_reaches` is false and `native_navigating`
+turns false, read the block in front of it, raise its crack over a time that follows its hardness, then break it.
 
 ### Events and questions
 
