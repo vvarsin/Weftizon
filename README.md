@@ -113,7 +113,7 @@ The client starts on the title screen. Command-line options (`--world`, `--seed`
 
 ## Roadmap
 
-What is being done now, what comes next and where you can help, in plain words and in technical detail: [ROADMAP.md](ROADMAP.md). [playhorizon.dev/hub](https://playhorizon.dev/hub) shows it with the work board, the journal of what shipped and how to help.
+Weftizon's fork roadmap: [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md). Horizon's upstream roadmap, inherited from the fork, is [ROADMAP.md](ROADMAP.md). [playhorizon.dev/hub](https://playhorizon.dev/hub) shows Horizon's board, journal and how to help.
 
 ## Contributing
 

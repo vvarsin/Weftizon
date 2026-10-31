@@ -406,19 +406,32 @@ impl Game<'_> {
         }
         types.sort();
         reg.entity_types = types;
-        let list = |dir: &str| -> Vec<String> {
-            let mut out: Vec<String> = std::fs::read_dir(root.join(dir))
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter_map(|e| {
-                    e.file_name()
-                        .to_str()?
-                        .strip_suffix(".json")
-                        .map(|n| format!("minecraft:{n}"))
-                })
-                .collect();
+        let list = |kind: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let Ok(namespaces) = std::fs::read_dir(root.join("data")) else {
+                return out;
+            };
+            for ns in namespaces.flatten() {
+                let Some(ns_name) = ns.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                let Ok(entries) = std::fs::read_dir(ns.path().join(kind)) else {
+                    continue;
+                };
+                for e in entries.flatten() {
+                    let Some(stem) = e
+                        .file_name()
+                        .to_str()
+                        .and_then(|n| n.strip_suffix(".json"))
+                        .map(str::to_owned)
+                    else {
+                        continue;
+                    };
+                    out.push(format!("{ns_name}:{stem}"));
+                }
+            }
             out.sort();
+            out.dedup();
             out
         };
         // The mob effect registry: every effect `/effect` and the
@@ -428,24 +441,31 @@ impl Game<'_> {
             .map(|e| format!("minecraft:{}", e.id))
             .collect();
         reg.effects.sort();
-        reg.enchantments = list("data/minecraft/enchantment");
-        reg.structures = list("data/minecraft/worldgen/structure");
-        reg.biomes = list("data/minecraft/worldgen/biome");
-        reg.clocks = list("data/minecraft/world_clock");
-        reg.dimensions = vec![
-            "minecraft:overworld".into(),
-            "minecraft:the_nether".into(),
-            "minecraft:the_end".into(),
-        ];
+        reg.enchantments = list("enchantment");
+        reg.structures = list("worldgen/structure");
+        reg.biomes = list("worldgen/biome");
+        reg.clocks = list("world_clock");
+        reg.dimensions = list("dimension");
+        for d in [
+            "minecraft:overworld",
+            "minecraft:the_nether",
+            "minecraft:the_end",
+        ] {
+            if !reg.dimensions.iter().any(|x| x == d) {
+                reg.dimensions.push(d.into());
+            }
+        }
+        reg.dimensions.sort();
+        reg.dimensions.dedup();
         reg.players = vec![PLAYER_NAME.into()];
         // Timelines of the overworld clock and their time markers.
         self.ui.markers.clear();
         self.ui.timelines.clear();
-        for name in list("data/minecraft/timeline") {
-            let path = root.join(format!(
-                "data/minecraft/timeline/{}.json",
-                name.trim_start_matches("minecraft:")
-            ));
+        for name in list("timeline") {
+            let Some((ns, stem)) = name.split_once(':') else {
+                continue;
+            };
+            let path = root.join(format!("data/{ns}/timeline/{stem}.json"));
             let Ok(v) = serde_json::from_slice::<serde_json::Value>(
                 &std::fs::read(path).unwrap_or_default(),
             ) else {

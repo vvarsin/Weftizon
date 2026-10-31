@@ -4,7 +4,7 @@ Minecraft: Java Edition 26.3 rewritten in Rust (wgpu), forked from Horizon and b
 Weft-style modding features. Vanilla is the specification wherever it has the feature. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
-The Weftizon modding roadmap is [docs/weft-modding-port.md](docs/weft-modding-port.md).
+The Weftizon roadmap is [ROADMAP-WEFTIZON.md](ROADMAP-WEFTIZON.md); the detailed Weft feature port is [docs/weft-modding-port.md](docs/weft-modding-port.md). [ROADMAP.md](ROADMAP.md) is upstream Horizon's roadmap, inherited from the fork.
 
 ## The Weftizon modding port
 
