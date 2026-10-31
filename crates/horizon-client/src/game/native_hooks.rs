@@ -167,6 +167,9 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
+//! API 70 adds hurting a player and reading light for native mods
+//! (`native_hurt_player`, `native_light` in `native_world.rs`).
+//!
 //! API 69 adds creaking hearts in trees for content mods' creaking variants
 //! (`native_plant_creaking_heart`, `native_creaking_for_log` in
 //! `native_world.rs`).
@@ -304,7 +307,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 69;
+pub(crate) const NATIVE_HOOKS_API: u32 = 70;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

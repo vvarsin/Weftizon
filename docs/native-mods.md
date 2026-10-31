@@ -550,6 +550,9 @@ API 68 adds spawning with gear, effects, lightning, weather, projectiles and blo
 API 69 plants creaking hearts in trees for content mods' creaking variants
 ([Creaking hearts in trees](#creaking-hearts-in-trees)). Bundles that use them need `"hooks": 69`.
 
+API 70 adds hurting a player, a sound from any server hook, and light levels
+([Players, sounds and light](#players-sounds-and-light)). Bundles that use them need `"hooks": 70`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into
@@ -1051,6 +1054,20 @@ they act on the level in place.
 Tested in a game (2026-10-31): a drowned summoned with a trident killed the player with it, a charged creeper
 glowed through the darkness the player was given, the thunder started, burning arrows flew, and the logs of a
 nearby tree were found.
+
+### Players, sounds and light
+
+API 70, `native_world.rs`, found missing while building InvasionV2 on this API:
+
+- **`native_hurt_player(uuid, amount, damage_type, attacker)`**: hurts a player as `/damage` does (armour and
+  effects count, creative players take none), also the one whose turn it is inside their own hook (a block they
+  right-click). `attacker` is a mob to credit the hit to.
+- **`native_sound(sound, at, source, volume, pitch)`**: a sound for the players near `at`, from any server hook;
+  `GameLevel::native_play_sound` (API 61) is for level hooks.
+- **`native_light(pos)`**: the block light and sky light at a position, 0 to 15 each.
+
+Tested in a game (2026-10-31): InvasionV2's Nether Reactor hurt the player who lit it, played its sounds, and
+its waves glowed in glowstone light.
 
 ### Creaking hearts in trees
 

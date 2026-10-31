@@ -308,6 +308,106 @@ impl Game<'_> {
     }
 }
 
+/// Players and light for native mods (API 70).
+#[allow(dead_code)]
+impl Game<'_> {
+    /// The player `uuid` as a command target: the one whose turn it is, or a
+    /// guest in play.
+    fn native_player_target(&self, uuid: u128) -> Option<Target> {
+        if self.lan_acting.is_some()
+            && horizon_client::lan::playerdata::ints_uuid(self.acting_uuid()) == uuid
+        {
+            return Some(Target::Player);
+        }
+        let host = self.lan.as_ref()?;
+        host.hub
+            .guests
+            .iter()
+            .find(|g| g.uuid == uuid && g.placed)
+            .map(|g| Target::Guest(g.conn))
+    }
+    /// Hurts the player `uuid` by `amount` of damage type `damage_type`
+    /// (`minecraft:magic`, `minecraft:generic`...), as `/damage` does: armour,
+    /// enchantments and effects count, creative players take none. `attacker`
+    /// is the mob the hit is credited to (death messages, thorns), if any.
+    /// Works inside a player's own hook (the one whose turn it is) too. False
+    /// when they aren't on, the type is unknown, or nothing was dealt.
+    /// API 70.
+    pub(super) fn native_hurt_player(
+        &mut self,
+        uuid: u128,
+        amount: f32,
+        damage_type: &str,
+        attacker: Option<u32>,
+    ) -> bool {
+        if !(amount.is_finite() && amount > 0.0) {
+            return false;
+        }
+        let ty = if damage_type.contains(':') {
+            damage_type.to_owned()
+        } else {
+            format!("minecraft:{damage_type}")
+        };
+        let Some(target) = self.native_player_target(uuid) else {
+            return false;
+        };
+        self.for_player(target, |g| {
+            !g.spectator() && g.hurt_player_from(amount, None, &ty, Some(attacker))
+        })
+        .unwrap_or(false)
+    }
+    /// Plays `sound` (`minecraft:block.beacon.activate`, a mod's own event) at
+    /// `at` in the level in place for every player near it, as
+    /// `GameLevel::native_play_sound` does from a level hook: `source` is the
+    /// sound slider (0 master, 4 blocks, 5 hostile...), `volume` 1 is heard
+    /// 16 blocks away. From any server hook. False for a name that isn't one
+    /// or a number that isn't one. API 70.
+    pub(super) fn native_sound(
+        &mut self,
+        sound: &str,
+        at: [f64; 3],
+        source: usize,
+        volume: f32,
+        pitch: f32,
+    ) -> bool {
+        let named = sound.split_once(':').is_some_and(|(ns, path)| {
+            !ns.is_empty()
+                && !path.is_empty()
+                && sound
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_.-/:".contains(&b))
+        });
+        if !named
+            || source >= horizon_client::settings::SOUND_SOURCES.len()
+            || !at.iter().all(|v| v.is_finite())
+            || !(volume.is_finite() && volume >= 0.0 && pitch.is_finite() && pitch >= 0.0)
+        {
+            return false;
+        }
+        self.creatures
+            .lan_sounds
+            .push(super::creatures::NativeSound {
+                dimension: self.dim.id(),
+                sound: sound.to_owned(),
+                at,
+                source: source as i32,
+                volume,
+                pitch,
+            });
+        true
+    }
+    /// The block light and sky light at `pos` (0 to 15 each) in the level in
+    /// place: glowstone's 15 next to it, fading a level a block. None where no
+    /// chunk is loaded. API 70.
+    pub(super) fn native_light(&self, pos: [i32; 3]) -> Option<(u8, u8)> {
+        if !self.world.loaded(pos[0], pos[2]) {
+            return None;
+        }
+        let l = self.world.light(pos[0], pos[1], pos[2]);
+        Some((l & 15, l >> 4))
+    }
+}
+
 /// Creaking hearts in trees for native mods (API 69).
 #[allow(dead_code)]
 impl Game<'_> {
