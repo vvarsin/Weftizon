@@ -71,15 +71,18 @@ Weft is MPL-2.0 and Horizon is MIT. Port from Weft's public docs and behaviour; 
    wave written into `native_level_tick`: 6 zombies spawned, walked to a player in a glass box, found their paths
    blocked, dug through the glass, and a boss bar counted them. Not yet built through the launcher as a
    horizon-mixins bundle. Left: the invasion mod itself, as a native mod with its own mob declarations.
-2. **Weft's own events** (`w.emit`) and timed attributes (part 3).
-3. **Screen and HUD builders** (part 6).
-4. **Energy and systems** for machines (part 4).
-5. **Liquids** (part 5).
-6. **Worldgen**: terrain presets, ores, scatter and spawns in mods' own biomes (part 5).
-7. **Assets and rendering** (part 7).
-8. **Items and recipes**: item use, place and wearable behaviour, custom recipe kinds, full loot modifiers (part 3).
-9. **Runtime SDK and loader** (part 9).
-10. **Debugging and tooling** (part 8).
+2. **InvasionV2 support** (API 21, done 2026-10-31): spawning with gear from saved data, potion effects on mobs and
+   players, fire, lightning, weather, projectiles, block search. Next: creaking variants by wood type with
+   Grafted-Creaking's textures and abilities, and planting creaking hearts into trees.
+3. **Weft's own events** (`w.emit`) and timed attributes (part 3).
+4. **Screen and HUD builders** (part 6).
+5. **Energy and systems** for machines (part 4).
+6. **Liquids** (part 5).
+7. **Worldgen**: terrain presets, ores, scatter and spawns in mods' own biomes (part 5).
+8. **Assets and rendering** (part 7).
+9. **Items and recipes**: item use, place and wearable behaviour, custom recipe kinds, full loot modifiers (part 3).
+10. **Runtime SDK and loader** (part 9).
+11. **Debugging and tooling** (part 8).
 
 ## 1. Custom entities and mobs: done
 

@@ -169,6 +169,7 @@ mod native_panel_recipes;
 mod native_recipes;
 mod native_server;
 mod native_shaders;
+mod native_world;
 mod native_world_read;
 mod natural_spawning;
 mod nautili;

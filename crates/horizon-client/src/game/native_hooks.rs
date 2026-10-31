@@ -6,6 +6,12 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 21 adds spawning from saved data, effects, fire, lightning, weather,
+//! projectiles and block search (`native_summon`, `native_mob_effect`,
+//! `native_player_effect`, `native_set_entity_fire`, `native_lightning`,
+//! `native_set_weather`, `native_shoot`, `native_find_blocks` in
+//! `native_world.rs`).
+//!
 //! API 20 adds a level's own tick (`native_level_tick`) and the World API
 //! an invasion needs: spawning mobs, walking them to a place and reading
 //! their path (`native_spawn_entity`, `native_navigate`,
@@ -108,7 +114,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 20;
+pub(crate) const NATIVE_HOOKS_API: u32 = 21;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

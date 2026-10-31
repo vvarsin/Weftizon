@@ -101,6 +101,10 @@ API 20 adds a level's own tick and the World API an invasion needs ([Levels, wav
 `native_level_tick`, and helpers to spawn a mob, walk it somewhere, tell whether its path reaches, break a block
 with its crack, read a block's hardness, and show a boss bar. Bundles that use them need `"hooks": 20`.
 
+API 21 adds spawning with gear, effects, lightning, weather, projectiles and block search
+([Gear, effects, weather and projectiles](#gear-effects-weather-and-projectiles)). Bundles that use them need
+`"hooks": 21`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page. The first one shows a notice once (the first build downloads
@@ -384,6 +388,33 @@ it runs where the world is simulated, for every player of it.
 
 A digging mob: walk it to the target every 10 ticks; when `native_path_reaches` is false and `native_navigating`
 turns false, read the block in front of it, raise its crack over a time that follows its hardness, then break it.
+
+### Gear, effects, weather and projectiles
+
+API 21, `crates/horizon-client/src/game/native_world.rs`. Call them from `native_level_tick` or another server hook;
+they act on the level in place.
+
+- **`native_summon(kind, position, nbt)`**: any entity from its saved data, as `/summon <kind> <pos> <nbt>`:
+  `{equipment:{mainhand:{id:"minecraft:trident",count:1}}}` (a drowned with a trident), `{powered:1b}` (a charged
+  creeper), `{Fire:2000s}`, `{active_effects:[...]}`, names, attributes, riders. Add `PersistenceRequired:1b` so it
+  never despawns. Like `/summon` with data, there are no natural equipment or variant rolls. Its id, or `None`.
+- **`native_mob_effect(id, effect, ticks, amplifier)`** and **`native_player_effect(uuid, effect, ticks,
+  amplifier)`**: as `/effect give` (`ticks` -1 is for ever). `minecraft:glowing` outlines a mob through walls.
+  Immune mobs refuse (a wither to wither).
+- **`native_set_entity_fire(id, ticks)`**: sets a mob on fire. Fire hurts it and rain puts it out: for a mob that
+  burns for ever, give it `fire_resistance` for -1 ticks and call this again every second.
+- **`native_lightning(position, visual_only)`**: a bolt; `visual_only` keeps only its flash and thunder.
+- **`native_set_weather(kind, ticks)`**: `clear`, `rain` or `thunder`, as `/weather`. Call it from the overworld's
+  level tick: its weather is the world's.
+- **`native_shoot(kind, from, direction, speed, owner, burning)`**: `arrow`, `trident`, `snowball`, `egg`,
+  `small_fireball`, `fireball`, `wither_skull`, `wind_charge` or `llama_spit`, shot as a mob shoots it. `owner` is
+  the mob it counts as shot by; `burning` lights it as Flame does (a burning arrow sets what it hits on fire).
+- **`native_find_blocks(center, radius, block, limit)`**: positions of `minecraft:obsidian` or of a tag
+  (`#minecraft:logs`) within `radius` (at most 32), nearest first. Only loaded chunks.
+
+Tested in a game (2026-10-31): a drowned summoned with a trident killed the player with it, a charged creeper
+glowed through the darkness the player was given, the thunder started, burning arrows flew, and the logs of a
+nearby tree were found.
 
 ### Events and questions
 
