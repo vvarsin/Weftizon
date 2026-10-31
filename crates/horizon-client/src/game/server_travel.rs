@@ -223,7 +223,9 @@ impl Game<'_> {
                 } else {
                     Dim::End
                 };
-                self.start_server_trip(host, conn, target, None);
+                if !self.native_travel_refused(host, conn, target) {
+                    self.start_server_trip(host, conn, target, None);
+                }
             }
             // Entity.setAsInsidePortal while cooling down restarts the cooldown.
             self.portals.player.cooldown = 10;
@@ -256,7 +258,7 @@ impl Game<'_> {
             return;
         };
         let plan = self.portal_plan(entry, at, WIDTH as f32, HEIGHT as f32, true);
-        if !self.may_enter(plan.dim) {
+        if !self.may_enter(plan.dim) || self.native_travel_refused(host, conn, plan.dim) {
             return;
         }
         self.start_server_trip(host, conn, plan.dim, Some(plan));
@@ -288,6 +290,13 @@ impl Game<'_> {
                 && riders
                     .iter()
                     .any(|c| !host.hub.guest(*c).is_some_and(|g| g.seen_credits))
+            {
+                continue;
+            }
+            // Native mods: a rider kept back keeps the vehicle here too.
+            if riders
+                .iter()
+                .any(|c| self.native_travel_refused(host, *c, plan.dim))
             {
                 continue;
             }

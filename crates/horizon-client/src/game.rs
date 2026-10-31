@@ -159,6 +159,7 @@ mod music;
 mod names;
 mod native_blocks;
 mod native_entities;
+mod native_events;
 mod native_hooks;
 mod native_lifecycle;
 mod native_menus;
@@ -9417,6 +9418,8 @@ impl Game<'_> {
             hand_damage + self.effect_attack_bonus()
         };
         let scale = self.attack_strength_scale();
+        // Native mods' attack damage chain, before anything scales it.
+        let damage = self.native_attack_amount(target_kind, damage);
         // getEnchantedDamage(target, damage, source) - damage, taken before the
         // attack strength scales the base damage.
         let enchant_bonus = self.enchanted_damage(target_kind, damage) - damage;
@@ -9614,7 +9617,10 @@ impl Game<'_> {
                 return false;
             }
         }
-        self.attack_mob(index);
+        // Native mods, before Player.attack.
+        if !self.native_attack_refused(self.mobs[index].id) {
+            self.attack_mob(index);
+        }
         // Minecraft.startAttack swings after the attack.
         self.swing_arm();
         true
@@ -14990,6 +14996,8 @@ impl<'a> Game<'a> {
         audio: Audio,
         prepared: Option<GameCpuResources>,
     ) -> Result<Self> {
+        // Every hit asks native mods first (native_events.rs).
+        horizon_client::hits::install(native_events::weigh_hit);
         let root = options.resources.clone();
         let registry = pack.assets.registry;
         // Until a world is opened the streamer is idle.

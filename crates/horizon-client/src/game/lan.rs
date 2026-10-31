@@ -1761,6 +1761,10 @@ impl Game<'_> {
                     }
                     HostEvent::Joined(conn) => {
                         self.lan_guest_joined(&mut host, conn, state.as_ref(), entities, spawn);
+                        if let Some(g) = host.hub.guest(conn) {
+                            let (uuid, name) = (g.uuid, g.name.clone());
+                            self.native_player_joined(uuid, &name);
+                        }
                         if self.options.dedicated.is_some()
                             && let Some(g) = host.hub.guest(conn)
                         {
@@ -1796,6 +1800,7 @@ impl Game<'_> {
                         }
                     }
                     HostEvent::Left(mut guest) => {
+                        self.native_player_left(guest.uuid, &guest.name);
                         // The container they had open loses an opener.
                         if let Some(pos) = guest.menu.as_ref().and_then(|m| m.pos)
                             && !guest.spectator()

@@ -343,6 +343,7 @@ impl Game<'_> {
         let host_combat = std::mem::replace(&mut self.combat, guest_combat);
         self.potions.swap_player(&mut g.effects, &mut play.potions);
         motion.position = Vec3::new(g.position[0], g.position[1], g.position[2]);
+        motion.entity_id = g.entity_id as u32;
         motion.ground.on_ground = g.on_ground;
         motion.yaw = g.yaw;
         motion.pitch = g.pitch;
@@ -2007,7 +2008,15 @@ impl Game<'_> {
             return;
         }
         if let Some(victim) = Self::pvp_victim(host, conn, id) {
-            if let Some(Some(strike)) = self.as_guest(host, conn, |g| g.pvp_strike())
+            let strike = self.as_guest(host, conn, |g| {
+                // Native mods, before Player.attack; the arm still swings.
+                if g.native_attack_refused(id as u32) {
+                    g.swing_arm();
+                    return None;
+                }
+                g.pvp_strike()
+            });
+            if let Some(Some(strike)) = strike
                 && self.pvp_land(host, victim, &strike)
             {
                 let host_on_ground = self.player.as_ref().map(|p| p.ground.on_ground);
@@ -3343,11 +3352,24 @@ impl Game<'_> {
             .map(|(i, _)| i)
             .collect();
         let mut taken = Vec::new();
+        let mut picked = Vec::new();
         for i in near.into_iter().rev() {
             let (stack, item_id) = (self.dropped[i].stack.clone(), self.dropped[i].id);
             let before = stack.count;
             let thrower = self.dropped[i].thrower;
-            let rest = self.as_guest(host, conn, |g| g.give(stack)).flatten();
+            let offered = stack.clone();
+            // Native mods may leave it on the ground this tick, asked in the
+            // turn that gives it.
+            let rest = match self.as_guest(host, conn, |g| {
+                (!g.native_pickup_refused(&offered)).then(|| g.give(stack))
+            }) {
+                Some(None) => continue,
+                given => given.flatten().flatten(),
+            };
+            let left = rest.as_ref().map_or(0, |r| r.count);
+            if left < before {
+                picked.push((offered, before - left));
+            }
             match rest {
                 None => {
                     let item = self.dropped.remove(i);
@@ -3377,6 +3399,10 @@ impl Game<'_> {
         // (handleTakeItemEntity).
         for (item, count) in taken {
             host.hub.take_item(item as i32, id, count as i32, position);
+        }
+        // Native mods hear what was picked up once the items are settled.
+        for (stack, count) in picked {
+            self.native_picked_up(host, conn, &stack, count);
         }
     }
 

@@ -6,6 +6,12 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 18 adds Weft's built-in events and questions (`native_pickup_item`,
+//! `native_item_picked_up`, `native_player_joined`, `native_player_left`,
+//! `native_attack_entity`, `native_enter_dimension`, `native_hurt`) and its
+//! value chains (`native_damage`, `native_attack_damage`), called from
+//! `native_events.rs`.
+//!
 //! API 17 adds blocks (`native_use_block`, `native_block_tick`, and
 //! `native_block`, `native_set_block`, `native_schedule_block_tick`... in
 //! `native_blocks.rs`).
@@ -74,6 +80,7 @@ use horizon_client::{
     containers::{BlockEntity, ModBlockEntity},
     extras::Corner,
     extras_hud::Corners,
+    hits::Hit,
     hud::{HudBatch, rgba},
     items::ItemStack,
     keybinds,
@@ -90,7 +97,7 @@ use winit::{event::MouseButton, keyboard::KeyCode};
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 17;
+pub(crate) const NATIVE_HOOKS_API: u32 = 18;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.
@@ -624,6 +631,68 @@ impl Game<'_> {
     /// order vanilla runs scheduled ticks. API 17.
     pub(super) fn native_block_tick(&mut self, pos: [i32; 3], state: BlockStateId) {
         let _ = (pos, state);
+    }
+    /// A player is about to pick up `stack` from an item on the ground
+    /// (Weft's `question::PICKUP_ITEM`). Set `canceled` to leave it there
+    /// this tick; it is asked again while they touch it. Server-side, for
+    /// every player of the world (the helpers read the acting one). API 18.
+    pub(super) fn native_pickup_item(&mut self, stack: &ItemStack, canceled: &mut bool) {
+        let _ = (stack, canceled);
+    }
+    /// A player picked up `count` of `stack` (Weft's `ITEM_PICKED_UP`):
+    /// all of it, or what fit, after it went into their inventory.
+    /// Server-side, the player's state swapped in. API 18.
+    pub(super) fn native_item_picked_up(&mut self, stack: &ItemStack, count: u32) {
+        let _ = (stack, count);
+    }
+    /// A player joined the world (Weft's `PLAYER_JOINED`), once the server
+    /// placed them in it: the window's own player in single player too.
+    /// Server-side. API 18.
+    pub(super) fn native_player_joined(&mut self, uuid: u128, name: &str) {
+        let _ = (uuid, name);
+    }
+    /// A player left the world, before the server saves and forgets them.
+    /// Server-side. API 18.
+    pub(super) fn native_player_left(&mut self, uuid: u128, name: &str) {
+        let _ = (uuid, name);
+    }
+    /// A player attacks entity `id`, a mob or another player (Weft's
+    /// `question::ATTACK`), before the hit's damage, knockback and effects.
+    /// Set `canceled` to stop the hit: the arm swings and nothing else
+    /// happens. Server-side, for every player of the world (the helpers read
+    /// the acting one). API 18.
+    pub(super) fn native_attack_entity(&mut self, id: u32, canceled: &mut bool) {
+        let _ = (id, canceled);
+    }
+    /// A player's melee damage on an entity of type `target`
+    /// (`minecraft:zombie`, `minecraft:player`...: Weft's
+    /// `chain::ATTACK_DAMAGE`): their attack damage before the charge,
+    /// enchantments and critical hit scale it. Change `amount`; each mod's
+    /// change sees the one before. Server-side, the player's state swapped
+    /// in. API 18.
+    pub(super) fn native_attack_damage(&mut self, target: &str, amount: &mut f32) {
+        let _ = (target, amount);
+    }
+    /// An entity is about to be hurt (Weft's `question::HURT`): any hit on a
+    /// mob or a player, whatever caused it. Set `canceled` to stop it: none
+    /// of it happens. Asked inside the hit, where the game is busy, so it
+    /// has no `Game`: decide from `hit` alone. Server-side. API 18.
+    pub(super) fn native_hurt(hit: &Hit<'_>, canceled: &mut bool) {
+        let _ = (hit, canceled);
+    }
+    /// What a hit nobody stopped deals (Weft's `chain::DAMAGE`), before
+    /// armour, enchantments and effects reduce it. Change `amount` (below
+    /// zero deals none); each mod's change sees the one before. No `Game`,
+    /// as for `native_hurt`. Server-side. API 18.
+    pub(super) fn native_damage(hit: &Hit<'_>, amount: &mut f32) {
+        let _ = (hit, amount);
+    }
+    /// A player is about to go through a portal into `dimension`
+    /// (`minecraft:the_nether`...: Weft's `question::ENTER_DIMENSION`). Set
+    /// `canceled` to keep them where they are; the portal asks again after
+    /// its cooldown. Server-side, the player's state swapped in. API 18.
+    pub(super) fn native_enter_dimension(&mut self, dimension: &str, canceled: &mut bool) {
+        let _ = (dimension, canceled);
     }
 }
 

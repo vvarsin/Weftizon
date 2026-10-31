@@ -648,6 +648,55 @@ impl DamageKind {
     pub fn bypasses_invulnerability(self) -> bool {
         matches!(self, DamageKind::OutOfWorld | DamageKind::GenericKill)
     }
+    /// Its damage type id; `player`: a player caused it (an explosion is
+    /// then `player_explosion`).
+    pub fn type_id(self, player: bool) -> &'static str {
+        use DamageKind as K;
+        match self {
+            K::PlayerAttack => "minecraft:player_attack",
+            K::MaceSmash => "minecraft:mace_smash",
+            K::Spear => "minecraft:spear",
+            K::MobAttack => "minecraft:mob_attack",
+            K::Arrow => "minecraft:arrow",
+            K::Thrown => "minecraft:thrown",
+            K::Fireball => "minecraft:fireball",
+            K::Explosion if player => "minecraft:player_explosion",
+            K::Explosion => "minecraft:explosion",
+            K::Fall => "minecraft:fall",
+            K::FallingBlock => "minecraft:falling_block",
+            K::FallingStalactite => "minecraft:falling_stalactite",
+            K::OnFire => "minecraft:on_fire",
+            K::InFire => "minecraft:in_fire",
+            K::Campfire => "minecraft:campfire",
+            K::Lava => "minecraft:lava",
+            K::Drown => "minecraft:drown",
+            K::DryOut => "minecraft:dry_out",
+            K::Magic => "minecraft:magic",
+            K::IndirectMagic => "minecraft:indirect_magic",
+            K::Sting => "minecraft:sting",
+            K::Cactus => "minecraft:cactus",
+            K::SweetBerryBush => "minecraft:sweet_berry_bush",
+            K::Generic => "minecraft:generic",
+            K::InWall => "minecraft:in_wall",
+            K::Thorns => "minecraft:thorns",
+            K::SonicBoom => "minecraft:sonic_boom",
+            K::Freeze => "minecraft:freeze",
+            K::OutOfWorld => "minecraft:out_of_world",
+            K::Cramming => "minecraft:cramming",
+            K::FallingAnvil => "minecraft:falling_anvil",
+            K::Fireworks => "minecraft:fireworks",
+            K::GenericKill => "minecraft:generic_kill",
+            K::LightningBolt => "minecraft:lightning_bolt",
+            K::OutsideBorder => "minecraft:outside_border",
+            K::Spit => "minecraft:spit",
+            K::Stalagmite => "minecraft:stalagmite",
+            K::Starve => "minecraft:starve",
+            K::HotFloor => "minecraft:hot_floor",
+            K::SulfurCubeHot => "minecraft:sulfur_cube_hot",
+            K::WindCharge => "minecraft:wind_charge",
+            K::Wither => "minecraft:wither",
+        }
+    }
 }
 /// A damage source: its type, the attacking entity and where it came from.
 #[derive(Clone, Copy, Debug)]
@@ -2443,6 +2492,22 @@ impl Mob {
         if source.is_fire() && (self.kind.flags.fire_immune) && !reflected {
             return false;
         }
+        // Native mods may stop the hit or change what it deals (Weft's
+        // `question::HURT` and `chain::DAMAGE`), before the mob reacts to it.
+        let by_player = source.attacker == Some(Who::Player);
+        let Some(amount) = crate::hits::weigh(&crate::hits::Hit {
+            entity: self.id,
+            entity_type: &self.kind.id,
+            damage_type: source.kind.type_id(by_player),
+            amount,
+            by_player,
+            attacker: match source.attacker {
+                Some(Who::Mob(id)) => Some(id),
+                _ => None,
+            },
+        }) else {
+            return false;
+        };
         if !ai::accepts_damage(self, &source, amount) {
             return false;
         }

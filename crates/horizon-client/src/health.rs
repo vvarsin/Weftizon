@@ -332,6 +332,24 @@ impl PlayerMotion {
             .damage
             .source::<()>(source, None, None, None)
             .ok_or("unknown resident damage source")?;
+        // Native mods may stop the hit or change what it deals (Weft's
+        // `question::HURT` and `chain::DAMAGE`), before the hurt begins.
+        let amount = if self.health.dead_or_dying() {
+            amount
+        } else {
+            let hit = crate::hits::Hit {
+                entity: self.entity_id,
+                entity_type: "minecraft:player",
+                damage_type: &source.definition().name,
+                amount,
+                by_player: false,
+                attacker: None,
+            };
+            let Some(amount) = crate::hits::weigh(&hit) else {
+                return Ok(BlockOutcome::default());
+            };
+            amount
+        };
         let armor = self.attribute("minecraft:armor").unwrap_or(0.0) as f32;
         let toughness = self.attribute("minecraft:armor_toughness").unwrap_or(0.0) as f32;
         let before = self.health.health() + self.health.absorption();

@@ -90,6 +90,11 @@ API 17 adds blocks, Weft's block `on_use` and `on_scheduled` and the World API's
 `native_use_block`, `native_block_tick`, and helpers to read a block, set it by name, change one property and
 schedule a tick. Bundles that use them need `"hooks": 17`.
 
+API 18 adds Weft's built-in events, questions and value chains ([Events and questions](#events-and-questions)):
+`native_pickup_item`, `native_item_picked_up`, `native_player_joined`, `native_player_left`,
+`native_attack_entity`, `native_enter_dimension`, `native_hurt`, `native_damage` and `native_attack_damage`.
+Bundles that use them need `"hooks": 18`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page. The first one shows a notice once (the first build downloads
@@ -346,3 +351,36 @@ API 17, `crates/horizon-client/src/game/native_blocks.rs`: code for blocks, a co
 - Weft's `on_neighbor`, `on_placed` and `on_broken` are the hooks already there: `native_neighbor_changed` (API 6),
   `native_block_changed` (API 7, every committed change), `native_place_block` and `native_destroy_block` (API 14,
   a player's). Weft has no random ticks; vanilla's still reach a mod's block through its template.
+
+### Events and questions
+
+API 18, `crates/horizon-client/src/game/native_events.rs`: Weft's built-in events (heard, nobody can stop them),
+questions (any mod may say no: set `canceled`, and any `canceled` wins) and value chains (each mod changes the
+amount in turn, seeing the change before it), for every player of the world where it is simulated. The acting
+player's state is swapped in, so `native_player` and the item helpers read them.
+
+| Weft | Hook | When |
+|---|---|---|
+| `question::PICKUP_ITEM` | `native_pickup_item(stack, canceled)` | a player touches an item on the ground it could take; asked each tick it touches it |
+| `ITEM_PICKED_UP` | `native_item_picked_up(stack, count)` | after it went into their inventory: `count` of it, all or what fit |
+| `PLAYER_JOINED` | `native_player_joined(uuid, name)` | the server added the player (the window's own player in single player too); `native_player_left` when they go, not when the server stops |
+| `question::ATTACK` | `native_attack_entity(id, canceled)` | a player's hit on a mob or another player, before its damage and knockback; the arm still swings |
+| `chain::ATTACK_DAMAGE` | `native_attack_damage(target, amount)` | a player's melee hit on an entity of type `target`: their attack damage before the charge, enchantments and critical hit scale it |
+| `question::HURT` | `native_hurt(hit, canceled)` | any hit on a mob or a player, whatever caused it (attacks, arrows, falls, fire, `/damage`...); a stopped hit does nothing at all |
+| `chain::DAMAGE` | `native_damage(hit, amount)` | what a hit nobody stopped deals, before armour, enchantments and effects reduce it; below zero deals none |
+| `question::ENTER_DIMENSION` | `native_enter_dimension(dimension, canceled)` | a player is about to go through a Nether or End portal, or ride through one (a rider kept back keeps the vehicle too); asked again after the portal's cooldown |
+
+`native_hurt` and `native_damage` have no `self`: they are asked inside the hit, while the game is busy with the
+mob or player, so they decide from the `Hit` alone (`horizon_client::hits::Hit`: the entity's id and type, the
+damage type, the amount, whether a player caused it and the mob that did). On a hit on a player, `by_player` and
+`attacker` are not filled in yet. A dead mob or player is not asked, and a hit a mod lets through can still do
+nothing (invulnerable time, a shield, a creative player: some of those checks come before the question, some after).
+
+The others map to hooks already there: `BLOCK_BROKEN` and `question::BREAK_BLOCK` are `native_destroy_block`
+(API 14), `BLOCK_PLACED` is `native_place_block` and `question::PLACE_BLOCK` claiming `native_use_item_on`,
+`question::USE_BLOCK` is `native_use_block` (API 17), `question::USE_ITEM` and `ITEM_USED` are
+`native_use_item` (API 13), `question::INTERACT_ENTITY` is `native_entity_interact` and `ENTITY_HURT` /
+`ENTITY_DIED` are `native_entity_hurt` / `native_entity_died` (API 16, a content mod's entities). Not asked yet:
+a player's hits on boats, minecarts, item frames, armour stands and the Ender Dragon (`native_attack_entity`),
+and travel that isn't through a portal (respawning, the End's credits). Weft's own events (`w.emit`) and timed
+attributes are not part of this API.

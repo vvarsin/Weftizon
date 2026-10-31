@@ -401,6 +401,10 @@ pub struct PlayerMotion {
     /// The level's world border, whose walls stop the player's movement
     /// from inside (the game keeps it current; None: no border).
     pub border: Option<horizon_core::geometry::border::BorderGeometry>,
+    /// Their entity's id where the world is simulated (a server's player;
+    /// 0 until the server gives one): what native mods hear a hit on them as
+    /// (`hits.rs`).
+    pub entity_id: u32,
 }
 fn attribute_error(error: impl std::fmt::Debug) -> io::Error {
     io::Error::other(format!("movement attribute: {error:?}"))
@@ -566,6 +570,7 @@ impl PlayerMotion {
             hurt_log: Vec::new(),
             attack_log: Vec::new(),
             border: None,
+            entity_id: 0,
         })
     }
     /// LivingEntity.aiStep: speeds too small to matter stop.

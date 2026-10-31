@@ -63,6 +63,7 @@ pub mod gizmos;
 pub mod gossip;
 pub mod health;
 pub mod heartbeat;
+pub mod hits;
 pub mod hotbar;
 pub mod hunger;
 pub mod inv_sort;

@@ -169,6 +169,51 @@
       "name": "block_tick",
       "version": 1,
       "target": "horizon_client::game::native_hooks::Game<'_>::native_block_tick"
+    },
+    {
+      "name": "pickup_item",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_pickup_item"
+    },
+    {
+      "name": "item_picked_up",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_item_picked_up"
+    },
+    {
+      "name": "player_joined",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_joined"
+    },
+    {
+      "name": "player_left",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_left"
+    },
+    {
+      "name": "attack_entity",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_attack_entity"
+    },
+    {
+      "name": "enter_dimension",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_enter_dimension"
+    },
+    {
+      "name": "attack_damage",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_attack_damage"
+    },
+    {
+      "name": "hurt",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_hurt"
+    },
+    {
+      "name": "damage",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_damage"
     }
   ]
 }

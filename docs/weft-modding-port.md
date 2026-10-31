@@ -43,7 +43,7 @@ behaviour; do not copy Weft source.
 | Items | texture, stack, durability, tools, damage, placed block, wearable, use | template copies with component patches | 3 |
 | Recipes / loot | shaped/shapeless, recipe kinds, loot pools, loot modification | 26.3 data-pack recipes and loot; no loot modifiers | 3 |
 | Components / tags | typed components, per-entity components, tags | vanilla components and tags; declarations join tags (`tags`, `template_tags`) | 3 |
-| Events / questions / chains / attributes | batched events, intercepts, value chains, timed attributes | native hooks only | 3 |
+| Events / questions / chains / attributes | batched events, intercepts, value chains, timed attributes | built-in events, questions and damage chains as native hooks (API 18); no timed attributes | 3 |
 | Commands / World API | typed command builders; blocks, entities, inventories, particles, sounds | native command hooks (API 8) | 3 |
 | Machines | block + block entity + inventory + menu + screen; systems; `core:energy` | block entities (API 15), menus (API 10) | 4 |
 | Liquids | flow, renewal, temperature, bucket, reactions | vanilla fluids | 5 |
@@ -143,8 +143,18 @@ clients without the same mods (they need the same content, as for blocks).
   Tests: `content.rs::items_declare_fuel_food_durability_and_tools`,
   `mod_content_tests.rs::declared_item_traits_reach_the_game` (fuel times through the providers, food,
   durability, attack modifiers and tool checks through the game's item table).
-- Events, questions, value chains and attributes as a hook-point family (`horizon_mods::events` names,
-  native handlers), the built-in events of Weft mapped to Horizon's call sites.
+- ✅ Weft's built-in events, questions and value chains for code (API 18, `game/native_events.rs`):
+  `native_pickup_item` (question) and `native_item_picked_up`, `native_player_joined` and `native_player_left`,
+  `native_attack_entity` (a player's hit on a mob or a player), `native_enter_dimension` (portals, riders
+  included), and for every hit on a mob or player `native_hurt` (`question::HURT`) and `native_damage`
+  (`chain::DAMAGE`, before armour), asked from the two places all damage goes through (`Mob::damage_with`,
+  `PlayerMotion::hurt_caused_by`) through `horizon_client::hits`; `native_attack_damage` (`chain::ATTACK_DAMAGE`,
+  a player's melee base damage). The other built-in events are API 13, 14, 16 and 17's hooks. Players' docs:
+  [native-mods.md#events-and-questions](native-mods.md#events-and-questions). Tests: `hits.rs` (a mob's and a
+  player's hits refused, changed, sanitised; the dead not asked), `native_events.rs` (no mod changes no hit), the
+  catalog checks, and a real horizon-mixins bundle (horizon-mixins `07dab17`) applied to the source: hooks with
+  and without `self` patch and compile, and the modded game's test saw cows' hits refused and pigs' doubled. Left: Weft's own events (`w.emit`), timed attributes, a player's hits on
+  boats, carts, frames, armour stands and the dragon, and `by_player`/`attacker` for hits on players.
 - Commands (typed builders over `horizon-command`) and a World API for native mods.
 - Loot modification: **done** (`"horizon:add_to"` + `pools` appends to another table); recipe kinds still later.
 
