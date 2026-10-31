@@ -99,6 +99,14 @@ impl DataPack {
             source: Source::Dir(root.to_path_buf()),
         }
     }
+    /// A content root's `data/` as a pack, for content mods' worldgen and
+    /// dimension files.
+    pub fn overlay(root: &Path) -> Self {
+        DataPack {
+            id: "content".into(),
+            source: Source::Dir(root.to_path_buf()),
+        }
+    }
 }
 /// The packs in `<world>/datapacks`, sorted by name.
 pub fn discover(world: &Path) -> Vec<DataPack> {

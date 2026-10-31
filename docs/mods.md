@@ -164,6 +164,15 @@ radius. `kernel_size` 0 is none.
     "top": "carve", "bottom": "none", "rigid_junctions": true, "inflate": true } }
 ```
 
+### Custom dimensions and biomes
+
+A content mod can add `data/<id>/dimension/<name>.json` (the level stem) and
+`data/<id>/dimension_type/<name>.json` (the build range and dimension type). The game
+registers these dimensions, and `/execute in <id>:<name>` can enter them. Biomes declared in
+`data/<id>/worldgen/biome/` load too. Custom noise settings, density functions and material
+rules are read from the mod's `worldgen` data, but feature algorithms that are Java classes
+still need native code.
+
 ### Custom entities
 
 A content mod adds mobs by declaring them in `data/<id>/horizon/entity/<name>.json`. Each copies a vanilla mob, its

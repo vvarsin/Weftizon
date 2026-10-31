@@ -276,19 +276,30 @@ impl Biomes {
             dry: colormap(root, "dry_foliage")?,
         };
         let mut list = Vec::new();
-        let mut names: Vec<_> = fs::read_dir(root.join("data/minecraft/worldgen/biome"))?
+        // Content mods put biomes in data/<id>/worldgen/biome/; read every
+        // namespace, not only vanilla's.
+        let mut names: Vec<(String, std::path::PathBuf)> = Vec::new();
+        let namespaces = fs::read_dir(root.join("data"))?
             .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "json"))
-            .collect();
+            .collect::<Vec<_>>();
+        for ns in namespaces {
+            let ns_name = ns.file_name().to_string_lossy().into_owned();
+            let Ok(dir) = fs::read_dir(ns.path().join("worldgen/biome")) else {
+                continue;
+            };
+            for entry in dir.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "json") {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .ok_or("bad biome")?;
+                    names.push((format!("{ns_name}:{stem}"), path));
+                }
+            }
+        }
         names.sort();
-        for path in names {
-            let name = format!(
-                "minecraft:{}",
-                path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or("bad biome")?
-            );
+        for (name, path) in names {
             let v: Value = serde_json::from_slice(&fs::read(&path)?)?;
             list.push(BiomeInfo::from_json(name, &v, &maps));
         }

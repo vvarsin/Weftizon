@@ -36,6 +36,7 @@ impl Game<'_> {
                 Dim::Overworld => Dimension::Overworld,
                 Dim::Nether => Dimension::Nether,
                 Dim::End => Dimension::End,
+                Dim::Custom(..) => Dimension::Overworld,
             },
             mode: self.mode,
         }

@@ -17,7 +17,7 @@ pub const SECTIONS: usize = (HEIGHT / 16) as usize;
 /// A level's build range and skylight, from its dimension type (`min_y`,
 /// `height`, `logical_height`, `has_skylight`), as `LevelHeightAccessor` and
 /// `SerializableChunkData.write` read them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LevelShape {
     pub sky_light: bool,
     pub min_y: i32,

@@ -134,8 +134,11 @@ clients without the same mods (they need the same content, as for blocks).
 
 - Liquid registry: flow speed and distance, renewal, temperature, bucket item, reactions; a template
   fluid (water/lava) keeps vanilla's code paths.
-- Biomes, dimensions and terrain presets from mods (today the worldgen loader reads structure bundles
-  only); ores and scatter features; spawns into mods' own biomes.
+- Biomes and dimensions: **content data now loads** (`data/<id>/worldgen/biome/`,
+  `data/<id>/dimension/`, `data/<id>/dimension_type/`); custom dimensions can be entered with
+  `/execute in`. Noise settings, density functions and material rules load from content data.
+  Custom feature algorithms still need native code; terrain presets/ores/scatter and spawns in
+  mods' own biomes are next.
 - Custom generators where data alone is insufficient (native).
 
 ## 6. Client APIs

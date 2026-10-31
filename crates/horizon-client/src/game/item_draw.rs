@@ -212,6 +212,7 @@ impl Game<'_> {
             Dim::Overworld => "minecraft:overworld",
             Dim::Nether => "minecraft:the_nether",
             Dim::End => "minecraft:the_end",
+            Dim::Custom(id, _) => id,
         };
         let key = (
             self.frames,

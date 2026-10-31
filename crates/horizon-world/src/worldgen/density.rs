@@ -177,7 +177,14 @@ impl Loader {
         name: &'static str,
         depth: usize,
     ) -> Result<FunctionId, DecodeError> {
-        self.decode(required(object, name)?, depth + 1)
+        let raw = optional(object, name)
+            .or_else(|| match name {
+                "left" => optional(object, "argument1"),
+                "right" => optional(object, "argument2"),
+                _ => None,
+            })
+            .ok_or(DecodeError::Field(name))?;
+        self.decode(raw, depth + 1)
     }
     fn optional_input(
         &mut self,
@@ -275,6 +282,21 @@ impl Loader {
                         },
                         input: self.input(&object, "input", depth)?,
                         multiple: self.optional_input(&object, "multiple", 1.0, depth)?,
+                    }
+                }
+                "minecraft:y_clamped_gradient" => {
+                    let from = integer(required(&object, "from_y")?)?;
+                    let to = integer(required(&object, "to_y")?)?;
+                    if from == to {
+                        return Err(DecodeError::Field("gradient coordinates"));
+                    }
+                    GraphNode::Gradient {
+                        axis: Axis::Y,
+                        tiling: TilingMode::ClampToEdge,
+                        from,
+                        to,
+                        low: noise_value(required(&object, "from_value")?)?,
+                        high: noise_value(required(&object, "to_value")?)?,
                     }
                 }
                 "minecraft:gradient" => {

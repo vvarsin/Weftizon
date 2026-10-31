@@ -758,6 +758,7 @@ impl Game<'_> {
             Dim::Overworld => 0,
             Dim::Nether => 1,
             Dim::End => 2,
+            Dim::Custom(..) => 3,
         });
         dims
     }

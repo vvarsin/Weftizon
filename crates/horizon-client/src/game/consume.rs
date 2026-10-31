@@ -2,7 +2,7 @@
 //! its particles and sounds, and `TeleportRandomlyConsumeEffect` (chorus
 //! fruit) for the local player. The level random stands in for the player's
 //! own, as for every other player draw.
-use super::{Dim, Game};
+use super::{Dim, Game, dim_shape};
 use horizon_client::{
     items::{ConsumeEffect, ItemInfo, ItemStack},
     mobs::Who,
@@ -296,10 +296,10 @@ impl TeleportConsumeWorld for Teleporter<'_, '_> {
         &mut self.0.world.random
     }
     fn min_y(&mut self, level: Dim) -> Result<i32, Infallible> {
-        Ok(self.0.level_shapes.get(level.id()).min_y)
+        Ok(dim_shape(&self.0.level_shapes, level).min_y)
     }
     fn logical_height(&mut self, level: Dim) -> Result<i32, Infallible> {
-        Ok(self.0.level_shapes.get(level.id()).logical_height)
+        Ok(dim_shape(&self.0.level_shapes, level).logical_height)
     }
     fn is_passenger(&mut self) -> Result<bool, Infallible> {
         Ok(self.0.riding.is_some())

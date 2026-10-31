@@ -2274,29 +2274,102 @@ enum Dim {
     Overworld,
     Nether,
     End,
+    /// A content mod's dimension: its id and the build range of its
+    /// dimension type. The id is interned so `Dim` stays Copy.
+    Custom(&'static str, horizon_client::chunk::LevelShape),
 }
+/// Dimensions a content mod declares in `data/<id>/dimension_type/*.json`,
+/// by id. Loaded from the content root before the game starts.
+static CUSTOM_DIMS: std::sync::OnceLock<
+    HashMap<String, (&'static str, horizon_client::chunk::LevelShape)>,
+> = std::sync::OnceLock::new();
 impl Dim {
     fn id(self) -> &'static str {
         match self {
             Self::Overworld => "minecraft:overworld",
             Self::Nether => "minecraft:the_nether",
             Self::End => "minecraft:the_end",
+            Self::Custom(id, _) => id,
+        }
+    }
+    /// A known dimension id: a vanilla one or a content mod's registered one.
+    fn lookup(id: &str) -> Option<Self> {
+        match id {
+            "minecraft:overworld" => Some(Self::Overworld),
+            "minecraft:the_nether" => Some(Self::Nether),
+            "minecraft:the_end" => Some(Self::End),
+            _ => CUSTOM_DIMS
+                .get()
+                .and_then(|m| m.get(id))
+                .map(|&(interned, shape)| Self::Custom(interned, shape)),
         }
     }
     fn from_id(id: &str) -> Self {
-        match id {
-            "minecraft:the_nether" => Self::Nether,
-            "minecraft:the_end" => Self::End,
-            _ => Self::Overworld,
-        }
+        Self::lookup(id).unwrap_or(Self::Overworld)
     }
-    /// The level's shape in a world of vanilla's dimension types.
-    fn shape(self) -> horizon_client::save::LevelShape {
-        use horizon_client::save::LevelShape;
+    /// The level's shape: vanilla constants or a content mod's dimension type.
+    fn shape(self) -> horizon_client::chunk::LevelShape {
+        use horizon_client::chunk::LevelShape;
         match self {
             Self::Overworld => LevelShape::OVERWORLD,
             Self::Nether => LevelShape::NETHER,
             Self::End => LevelShape::END,
+            Self::Custom(_, shape) => shape,
+        }
+    }
+    /// Read `data/<ns>/dimension_type/<path>.json` files from a content root
+    /// and intern their ids. Invalid shapes are logged and skipped.
+    fn load_custom(root: &std::path::Path) {
+        CUSTOM_DIMS.get_or_init(|| {
+            let mut map = HashMap::new();
+            let Ok(data) = std::fs::read_dir(root.join("data")) else {
+                return map;
+            };
+            for ns in data.flatten() {
+                let Ok(dir) = std::fs::read_dir(ns.path().join("dimension_type")) else {
+                    continue;
+                };
+                let ns_name = ns.file_name().to_string_lossy().into_owned();
+                for file in dir.flatten() {
+                    let path = file.path();
+                    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    let Ok(bytes) = std::fs::read(&path) else {
+                        continue;
+                    };
+                    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                        continue;
+                    };
+                    let int = |k: &str| v[k].as_i64().and_then(|n| i32::try_from(n).ok());
+                    let Some(min_y) = int("min_y") else {
+                        continue;
+                    };
+                    let Some(height) = int("height") else {
+                        continue;
+                    };
+                    let logical = int("logical_height").unwrap_or(height);
+                    let sky = v["has_skylight"].as_bool().unwrap_or(true);
+                    let Ok(shape) =
+                        horizon_client::chunk::LevelShape::new(min_y, height, logical, sky)
+                    else {
+                        log::warn!(
+                            "Horizon: dimension type {}: shape {min_y}..{height} refused",
+                            path.display()
+                        );
+                        continue;
+                    };
+                    let id = format!("{ns_name}:{stem}");
+                    let interned: &'static str = Box::leak(id.clone().into_boxed_str());
+                    map.insert(id, (interned, shape));
+                }
+            }
+            map
+        });
+        if let Some(map) = CUSTOM_DIMS.get()
+            && !map.is_empty()
+        {
+            log::info!("Horizon: {} content-mod dimension(s) registered", map.len());
         }
     }
 }
@@ -2310,6 +2383,18 @@ fn facing_offset(facing: &str) -> [i32; 3] {
         _ => [0, -1, 0],
     }
 }
+/// The shape a level uses: vanilla dimension types from the world's packs,
+/// or a content mod's custom dimension type.
+fn dim_shape(
+    shapes: &horizon_client::chunk::LevelShapes,
+    dim: Dim,
+) -> horizon_client::chunk::LevelShape {
+    match dim {
+        Dim::Custom(_, shape) => shape,
+        _ => shapes.get(dim.id()),
+    }
+}
+
 /// How far along `dir` (within `reach`) a ray from `eye` enters `b`.
 fn ray_box(eye: [f64; 3], dir: [f64; 3], reach: f64, b: Aabb) -> Option<f64> {
     let (min, max) = (b.min_position(), b.max_position());
@@ -3236,6 +3321,7 @@ impl Game<'_> {
             Dim::Overworld => LevelDimension::Overworld,
             Dim::Nether => LevelDimension::Nether,
             Dim::End => LevelDimension::End,
+            Dim::Custom(..) => LevelDimension::Overworld,
         };
         let rules = self.level_rules();
         let fire_players: Vec<[f64; 3]> = self
@@ -8882,6 +8968,7 @@ impl Game<'_> {
                 Dim::Nether => 0.1,
                 Dim::End => 0.25,
                 Dim::Overworld => 0.0,
+                Dim::Custom(..) => 0.0,
             };
             let darken = self.sky_darken();
             let a = alpha;
@@ -10097,7 +10184,7 @@ impl Game<'_> {
             &self.settings,
             world_root,
             dim,
-            self.level_shapes.get(dim.id()),
+            dim_shape(&self.level_shapes, dim),
             seed,
         )?;
         self.end.set_locator(locator);
@@ -10145,7 +10232,7 @@ impl Game<'_> {
         let (streaming, save) =
             self.make_streaming(&self.world_root.clone(), target, self.level.seed)?;
         let mut world = World::new(self.res.facts().air, self.level.seed);
-        world.shape = self.level_shapes.get(target.id());
+        world.shape = dim_shape(&self.level_shapes, target);
         world.fast_lava = target == Dim::Nether;
         world.game_time = self.world.game_time;
         world.day_time = self.world.day_time;
@@ -16855,6 +16942,7 @@ pub fn run() -> Result<()> {
         &early_settings.mods.enabled,
         &options.dev_mods,
     );
+    Dim::load_custom(&options.resources);
     let loaded = load_resources(
         options.resources.clone(),
         &vanilla_root,
@@ -17076,6 +17164,26 @@ mod tests {
     use super::*;
     use horizon_client::container_screen::{Button, Clicks, Release, Target};
     use horizon_client::keymapping::{KeyAction, SPRINT, ToggleKeys};
+
+    /// Content mods' dimension types register and are looked up by id.
+    #[test]
+    fn custom_dimension_types_register() {
+        let dir = std::env::temp_dir().join(format!("horizon-custom-dim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("data/testdim/dimension_type")).unwrap();
+        std::fs::write(
+            dir.join("data/testdim/dimension_type/test.json"),
+            r#"{"min_y":-64,"height":384,"logical_height":384,"has_skylight":true}"#,
+        )
+        .unwrap();
+        Dim::load_custom(&dir);
+        let d = Dim::lookup("testdim:test").unwrap();
+        assert_eq!(d.id(), "testdim:test");
+        assert_eq!(d.shape().min_y, -64);
+        assert_eq!(d.shape().height, 384);
+        assert!(Dim::lookup("testdim:missing").is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     /// A key bound to key.attack keeps attacking while it is held: each
     /// repeat clicks like the press (#3243).

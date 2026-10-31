@@ -55,6 +55,7 @@ impl Game<'_> {
             Dim::Overworld => 0,
             Dim::Nether => -1,
             Dim::End => 1,
+            Dim::Custom(..) => 0,
         };
         let path = Self::shader_packs_dir().join(&name);
         if horizon_shader_api::package::is_pack(&path) {

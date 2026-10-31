@@ -1016,16 +1016,25 @@ const TAG_BUNDLES: [&str; 2] = ["block-tags.json", "worldgen/block_tags.json"];
 /// The worldgen loader's bundle of biome tags.
 const BIOME_TAGS: &str = "worldgen/biome_tags.json";
 /// Worldgen registries a content mod may add to, and the bundle the
-/// worldgen loader reads each from (id → the file's text): what structure
-/// mods hold. Biomes, noise and density functions change the terrain and
-/// are not read from mods.
-const WORLDGEN_BUNDLES: [(&str, &str); 6] = [
+/// worldgen loader reads each from (id → the file's text). This covers the
+/// registries a dimension needs: biomes, noise settings, density functions,
+/// presets, features and structures.
+const WORLDGEN_BUNDLES: [(&str, &str); 15] = [
+    ("biome", "worldgen/biomes.json"),
+    ("block_state_provider", "worldgen/state_providers.json"),
+    ("carver", "worldgen/carvers.json"),
+    ("configured_feature", "worldgen/features.json"),
+    ("density_function", "worldgen/densities.json"),
+    ("material_condition", "worldgen/conditions.json"),
+    ("material_rule", "worldgen/rules.json"),
+    ("noise", "worldgen/noises.json"),
+    ("noise_settings", "worldgen/settings.json"),
+    ("placed_feature", "worldgen/placed_features.json"),
+    ("processor_list", "worldgen/processor_lists.json"),
     ("structure", "worldgen/structures.json"),
     ("structure_set", "worldgen/structure_sets.json"),
     ("template_pool", "worldgen/template_pools.json"),
-    ("processor_list", "worldgen/processor_lists.json"),
-    ("configured_feature", "worldgen/features.json"),
-    ("placed_feature", "worldgen/placed_features.json"),
+    ("world_preset", "worldgen/world_presets.json"),
 ];
 
 /// The registry of `command-registries.json` that each bundle's ids join,

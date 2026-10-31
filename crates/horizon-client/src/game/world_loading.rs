@@ -117,8 +117,8 @@ impl WorldRequest {
             level.position = None;
         }
         let dim = Dim::from_id(&level.dimension);
-        let shapes = level_shapes(&save_root, res.biomes());
-        let shape = shapes.get(dim.id());
+        let shapes = level_shapes(&options.resources, &save_root, res.biomes());
+        let shape = dim_shape(&shapes, dim);
         let (mut streaming, save, locator) = make_streaming(
             res, pack, options, settings, &save_root, dim, shape, level.seed,
         )?;
@@ -326,10 +326,12 @@ pub(super) fn preload_server_loot(resources: &std::path::Path) {
 /// The worldgen entries of the world's enabled data packs, logging what
 /// the generator leaves out of them.
 fn world_worldgen_overrides(
+    resources: &std::path::Path,
     world_root: &std::path::Path,
     biomes: &horizon_client::biome::Biomes,
 ) -> horizon_world::worldgen::overrides::WorldgenOverrides {
-    let packs = horizon_client::datapack::discover(world_root);
+    let mut packs = vec![horizon_client::datapack::DataPack::overlay(resources)];
+    packs.extend(horizon_client::datapack::discover(world_root));
     let enabled = horizon_client::datapack::enabled_ids(world_root, &packs);
     let enabled: Vec<_> = enabled
         .iter()
@@ -347,11 +349,13 @@ fn world_worldgen_overrides(
 /// enabled data packs' over vanilla's. A type the codec refuses keeps the
 /// vanilla shape, with a warning.
 pub(super) fn level_shapes(
+    resources: &std::path::Path,
     world_root: &std::path::Path,
     biomes: &horizon_client::biome::Biomes,
 ) -> horizon_client::chunk::LevelShapes {
     use horizon_client::chunk::{LevelShape, LevelShapes};
-    let packs = horizon_client::datapack::discover(world_root);
+    let mut packs = vec![horizon_client::datapack::DataPack::overlay(resources)];
+    packs.extend(horizon_client::datapack::discover(world_root));
     let enabled = horizon_client::datapack::enabled_ids(world_root, &packs);
     let enabled: Vec<_> = enabled
         .iter()
@@ -437,7 +441,7 @@ pub(super) fn make_streaming(
         let structures =
             horizon_client::save::WorldGen::read(world_root).is_none_or(|w| w.structures);
         let preset = horizon_client::save::WorldGen::preset(world_root);
-        let overrides = world_worldgen_overrides(world_root, res.biomes());
+        let overrides = world_worldgen_overrides(&options.resources, world_root, res.biomes());
         let inner = Arc::new(VanillaTerrain::for_world_with(&options.resources.join("worldgen"), &overrides, pack.assets.registry, res.biomes(), seed, preset, dim.id(), structures).map_err(|e| {
                 if overrides.is_empty() {
                     format!("{e}\nPrepare the worldgen bundle with the launcher, or: horizon-prepare --prepare")
