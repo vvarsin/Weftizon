@@ -130,6 +130,25 @@ fn sample_int(provider: &IntProvider, random: &mut impl RandomSource) -> Result<
     provider.sample(random)
 }
 
+fn nested_to_place(raw: &RawValue, bindings: &FeatureBlockBindings<'_>) -> Result<BlockStateId, DecodeError> {
+    let mut value = value(raw)?;
+    for _ in 0..8 {
+        if let Some(to_place) = value.get("to_place") {
+            return state_value(to_place, bindings);
+        }
+        if let Some(config) = value.get("config") {
+            value = config.clone();
+            continue;
+        }
+        if let Some(feature) = value.get("feature") {
+            value = feature.clone();
+            continue;
+        }
+        break;
+    }
+    Err(DecodeError::Field("nested feature to_place"))
+}
+
 fn supports_from(
     object: &Object,
     bindings: &FeatureBlockBindings<'_>,
@@ -362,7 +381,13 @@ impl ModPondFeature {
         }
         *remaining -= 1;
         let object: Object = serde_json::from_str(json)?;
-        let to_place = block_state(required(&object, "to_place")?, bindings)?;
+        let to_place = if let Some(raw) = super::optional(&object, "to_place") {
+            block_state(raw, bindings)?
+        } else if let Some(raw) = super::optional(&object, "feature") {
+            nested_to_place(raw, bindings)?
+        } else {
+            return Err(DecodeError::Field("mod patch to_place"));
+        };
         let slab = block_state(required(&object, "slab_to_place")?, bindings)?;
         Ok(Self { to_place, slab })
     }

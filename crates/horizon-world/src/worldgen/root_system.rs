@@ -8,6 +8,7 @@ use super::{
     feature_graph::{FeatureExecutionError, PlacedFeatureDefinition},
     int_range,
     placement::{PlacementContext, PlacementQueryError},
+    optional,
     required,
     state_provider::BlockStateProvider,
     tree::{TreeDecoder, TreeResult, kind, read, sample_state, write},
@@ -63,11 +64,17 @@ impl RootSystemFeature {
         let int = |name: &'static str, low: i32, high: i32| {
             int_range(required(&object, name)?, name, low, high)
         };
+        let int_opt = |name: &'static str, low: i32, high: i32| -> Result<i32, DecodeError> {
+            Ok(optional(&object, name)
+                .map(|raw| int_range(raw, name, low, high))
+                .transpose()?
+                .unwrap_or(0))
+        };
         Ok(Self {
             tree: Box::new(tree),
             required_vertical_space: int("required_vertical_space_for_tree", 1, 64)?,
-            level_test_distance: int("level_test_distance", 0, 16)?,
-            max_level_deviation: int("max_level_deviation", 0, 64)?,
+            level_test_distance: int_opt("level_test_distance", 0, 16)?,
+            max_level_deviation: int_opt("max_level_deviation", 0, 64)?,
             root_radius: int("root_radius", 1, 64)?,
             root_replaceable: decoder.block_set(required(&object, "root_replaceable")?)?,
             root_provider: decoder.provider(required(&object, "root_state_provider")?)?,

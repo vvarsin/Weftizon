@@ -124,9 +124,9 @@ What did not work:
   `waterloggable_random_patch`, and cave plants. The port now loads the 1.20.1
   `worldgen/configured_feature` folder and flattens its `config` object; legacy `Name`/`Properties`
   block states, nested provider `value` objects, and `random_offset` placement modifiers are
-  accepted as aliases. From 62 skipped placed features the count is now 12; the remaining ones
-  are mostly coral patches, root-system variants, `amethyst_spiral`, and a missing
-  `minecraft:seagrass_simple` feature reference.
+  accepted as aliases. From 62 skipped placed features the count is now 8; the remaining ones are
+  `amethyst_spiral`, two state-provider edge cases, the coral patches, and a missing
+  26.3 feature reference for the legacy `minecraft:seagrass_simple`.
 - **Teleport block behaviour.** `TeleportBlockEntity` and the teleport logic are Java code.
   The content block is only a static block; it needs a native block-entity mod.
 - **Old structure path.** The mod uses `data/the_afterdark/structures/` (plural); Horizon's

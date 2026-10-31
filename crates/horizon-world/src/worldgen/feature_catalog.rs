@@ -142,6 +142,10 @@ impl FeatureCatalog {
         work: &mut Expansion,
     ) -> Result<String, DecodeError> {
         let name = identifier(name)?;
+        let name = match name.as_str() {
+            "minecraft:seagrass_simple" => "minecraft:seagrass_short".to_owned(),
+            _ => name,
+        };
         let key = (placed, name.clone());
         if work.active.contains(&key) {
             return Err(DecodeError::Registry(format!(

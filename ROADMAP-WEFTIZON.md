@@ -38,7 +38,7 @@ Done / substantially done:
 - events/questions/damage chains API 18 (Warsin finished and pushed)
 - TheAfterdark content port loads, custom dimension enters, legacy carver bug fixed
 - custom TheAfterdark worldgen feature types partially implemented; skipped placed features
-  reduced from 62 to 12; legacy 1.20.1 block-state/provider/placement aliases accepted
+  reduced from 62 to 8; legacy 1.20.1 block-state/provider/placement aliases accepted
 - modder docs and porting-gotchas docs
 
 Still missing for full Weft power:
@@ -98,8 +98,8 @@ Not done:
   can stay decorative unless gameplay parity is wanted
 - fire/lava/dripstone/grass-burn mixins
 - catalyst loot modification
-- 12 custom/legacy placed features still skipped (coral patches, root-system variants,
-  amethyst_spiral, a missing seagrass feature reference)
+- 8 custom/legacy placed features still skipped (`amethyst_spiral`, coral patches, two
+  state-provider edge cases, a missing legacy seagrass feature reference)
 - config behavior
 - full terrain/biome visual parity in the custom dimension
 

@@ -532,7 +532,12 @@ impl TreeFeature {
             .map(|raw| serde_json::from_str::<bool>(raw.get()))
             .transpose()?
             .unwrap_or(false);
-        let below_trunk_provider = decoder.provider(required(&object, "below_trunk_provider")?)?;
+        let below_trunk_provider = match optional(&object, "below_trunk_provider") {
+            Some(raw) => decoder.provider(raw)?,
+            None => decoder.provider(
+                &RawValue::from_string(r#"{"id":"minecraft:dirt"}"#.to_owned()).unwrap(),
+            )?,
+        };
         Ok(Self {
             trunk_provider,
             trunk_placer,

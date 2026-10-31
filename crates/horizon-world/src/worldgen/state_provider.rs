@@ -346,9 +346,13 @@ impl BlockStateProvider {
         }
         *remaining -= 1;
         let object: Object = serde_json::from_str(json)?;
-        let kind = identifier(&serde_json::from_str::<String>(
-            required(&object, "type")?.get(),
-        )?)?;
+        let kind = if let Some(raw) = object.get("type") {
+            identifier(&serde_json::from_str::<String>(raw.get())?)?
+        } else if object.contains_key("fallback") && object.contains_key("rules") {
+            "minecraft:rule_based".to_owned()
+        } else {
+            return Err(DecodeError::Field("block state provider type"));
+        };
         Ok(Self(match kind.as_str() {
             "minecraft:rule_based" | "minecraft:rule_based_state_provider" => {
                 let fallback = optional(&object, "fallback")

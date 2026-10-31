@@ -692,6 +692,15 @@ impl FeatureDefinition {
                 remaining,
             )
             .map(Self::ModFall),
+            "minecraft:random_patch" => {
+                mod_features::ModPatchFeature::decode(
+                    json,
+                    blocks.ok_or(DecodeError::Field("random patch bindings"))?,
+                    depth,
+                    remaining,
+                )
+                .map(Self::ModPatch)
+            }
             "the_afterdark:waterloggable_random_patch" => mod_features::ModPatchFeature::decode(
                 json,
                 blocks.ok_or(DecodeError::Field("patch bindings"))?,
