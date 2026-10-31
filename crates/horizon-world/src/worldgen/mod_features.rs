@@ -116,6 +116,12 @@ fn sample_int(provider: &IntProvider, random: &mut impl RandomSource) -> Result<
     provider.sample(random)
 }
 
+/// A random patch's offset on one axis: `nextInt(bound) - nextInt(bound)`,
+/// with `bound` its spread plus one, so within `[-spread, spread]`.
+fn spread_offset(random: &mut impl RandomSource, bound: i32) -> Result<i32, InvalidBound> {
+    Ok(random.next_int_bound(bound)? - random.next_int_bound(bound)?)
+}
+
 fn nested_to_place(
     raw: &RawValue,
     bindings: &FeatureBlockBindings<'_>,
@@ -500,15 +506,23 @@ impl ModPatchFeature {
         origin: [i32; 3],
     ) -> Result<bool, FeatureExecutionError<W::Error>> {
         let tries = sample_int(&self.tries, random).map_err(FeatureExecutionError::Random)?;
+        // 1.20.1 RandomPatchFeature: the spreads are read once; each try
+        // lands at nextInt(spread + 1) - nextInt(spread + 1) on x, y, then z.
+        let xz = sample_int(&self.xz_spread, random)
+            .map_err(FeatureExecutionError::Random)?
+            .wrapping_add(1);
+        let y = sample_int(&self.y_spread, random)
+            .map_err(FeatureExecutionError::Random)?
+            .wrapping_add(1);
         let mut remaining = 1_048_576;
         for _ in 0..tries.clamp(0, 1024) {
             if remaining == 0 {
                 return Err(FeatureExecutionError::WorkLimit);
             }
             remaining -= 1;
-            let dx = sample_int(&self.xz_spread, random).map_err(FeatureExecutionError::Random)?;
-            let dz = sample_int(&self.xz_spread, random).map_err(FeatureExecutionError::Random)?;
-            let dy = sample_int(&self.y_spread, random).map_err(FeatureExecutionError::Random)?;
+            let dx = spread_offset(random, xz).map_err(FeatureExecutionError::Random)?;
+            let dy = spread_offset(random, y).map_err(FeatureExecutionError::Random)?;
+            let dz = spread_offset(random, xz).map_err(FeatureExecutionError::Random)?;
             let p = [
                 origin[0].wrapping_add(dx),
                 origin[1].wrapping_add(dy),
@@ -602,10 +616,16 @@ pub fn pillar_material(kind: &str) -> Result<&'static str, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        feature_catalog::FeatureCatalog, feature_graph::FeatureDefinition,
-        state_provider::test_registry, tags::TagDefinitions,
+        anchor::WorldGenerationContext,
+        feature_catalog::FeatureCatalog,
+        feature_graph::FeatureDefinition,
+        placement::{PlacementContext, PlacementQueryError},
+        state_provider::test_registry,
+        tags::TagDefinitions,
     };
     use super::*;
+    use crate::heightmap::HeightmapType;
+    use horizon_core::random::LegacyRandom;
     use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
@@ -645,5 +665,91 @@ mod tests {
         let grass = state_value(&serde_json::json!("minecraft:grass"), &bindings).unwrap();
         assert_eq!(grass, state("minecraft:short_grass"));
         assert!(state_value(&serde_json::json!("minecraft:not_a_block"), &bindings).is_err());
+    }
+
+    /// Air everywhere, remembering the blocks set.
+    struct Recorder {
+        air: BlockStateId,
+        set: BTreeMap<[i32; 3], BlockStateId>,
+    }
+    impl FeatureWorld for Recorder {
+        type Error = std::convert::Infallible;
+        fn block(&mut self, p: [i32; 3]) -> Result<BlockStateId, Self::Error> {
+            Ok(self.set.get(&p).copied().unwrap_or(self.air))
+        }
+        fn set_block(
+            &mut self,
+            p: [i32; 3],
+            state: BlockStateId,
+            _: i32,
+        ) -> Result<bool, Self::Error> {
+            self.set.insert(p, state);
+            Ok(true)
+        }
+    }
+    impl PlacementContext for Recorder {
+        fn world_seed(&mut self) -> Result<i64, PlacementQueryError> {
+            Ok(0)
+        }
+        fn block_state(&mut self, p: [i32; 3]) -> Result<BlockStateId, PlacementQueryError> {
+            Ok(self.set.get(&p).copied().unwrap_or(self.air))
+        }
+        fn generation(&self) -> WorldGenerationContext {
+            WorldGenerationContext::new(-64, 384, 63)
+        }
+        fn min_y(&mut self) -> Result<i32, PlacementQueryError> {
+            Ok(-64)
+        }
+        fn height(&mut self, _: HeightmapType, _: i32, _: i32) -> Result<i32, PlacementQueryError> {
+            Err(PlacementQueryError::Unavailable)
+        }
+    }
+
+    #[test]
+    fn waterloggable_patch_spreads_its_tries_as_random_patch_does() {
+        let registry = test_registry(&[
+            ("minecraft:air", &[]),
+            ("minecraft:cave_air", &[]),
+            ("minecraft:void_air", &[]),
+            ("minecraft:short_grass", &[]),
+        ]);
+        let bindings = FeatureBlockBindings::new(&registry, BTreeSet::new()).unwrap();
+        let grass = registry.default_state("minecraft:short_grass").unwrap();
+        let config =
+            r#"{"tries":96,"xz_spread":7,"y_spread":3,"to_place":"minecraft:short_grass"}"#;
+        let patch = ModPatchFeature::decode(config, &bindings, 0, &mut 16).unwrap();
+        let mut world = Recorder {
+            air: bindings.air[0],
+            set: BTreeMap::new(),
+        };
+        let origin = [100, 10, -50];
+        let mut random = LegacyRandom::new(42);
+        assert!(patch.place(&mut world, &mut random, origin).unwrap());
+
+        // Each try at nextInt(8) - nextInt(8), nextInt(4) - nextInt(4),
+        // nextInt(8) - nextInt(8) from the origin, in that order; a try on a
+        // block already placed changes nothing.
+        let mut expected_random = LegacyRandom::new(42);
+        let mut expected = BTreeSet::new();
+        for _ in 0..96 {
+            let mut offset = |bound| {
+                expected_random.next_int_bound(bound).unwrap()
+                    - expected_random.next_int_bound(bound).unwrap()
+            };
+            let (dx, dy, dz) = (offset(8), offset(4), offset(8));
+            expected.insert([origin[0] + dx, origin[1] + dy, origin[2] + dz]);
+        }
+        assert_eq!(random.next_long(), expected_random.next_long());
+        let placed: BTreeSet<[i32; 3]> = world.set.keys().copied().collect();
+        assert_eq!(placed, expected);
+        assert!(world.set.values().all(|&s| s == grass));
+        // A patch, not one block: the tries spread within the spreads.
+        assert!(placed.len() > 40, "{} blocks", placed.len());
+        assert!(placed.iter().all(|p| {
+            (p[0] - origin[0]).abs() <= 7
+                && (p[1] - origin[1]).abs() <= 3
+                && (p[2] - origin[2]).abs() <= 7
+        }));
+        assert!(placed.iter().any(|p| p[1] != origin[1]));
     }
 }
