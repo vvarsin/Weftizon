@@ -1921,6 +1921,9 @@ impl Game<'_> {
             }
             None => playerdata::load(g, &root),
         };
+        // A level this game has (a content mod's dimension that is still
+        // installed), else the overworld.
+        g.dimension = super::Dim::from_id(&g.dimension).id().to_owned();
         if !known || force {
             g.game_mode = default_mode;
         }
@@ -1944,7 +1947,7 @@ impl Game<'_> {
         // (`PlayerList.placeNewPlayer`); the in-frame game has one.
         let back = self.dim;
         let level = super::Dim::from_id(&g.dimension);
-        let elsewhere = self.options.dedicated.is_some() && level != back;
+        let elsewhere = self.server_levels() && level != back;
         if !elsewhere {
             g.dimension = in_place;
         }

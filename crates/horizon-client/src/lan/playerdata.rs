@@ -100,9 +100,12 @@ pub fn apply(guest: &mut Guest, level: &Level) {
     });
     guest.saved_vehicle = level.root_vehicle;
     guest.recipe_book = level.recipe_book.clone();
-    guest.dimension = match level.dimension.as_str() {
-        d @ ("minecraft:the_nether" | "minecraft:the_end") => d.to_owned(),
-        _ => "minecraft:overworld".to_owned(),
+    // The saved level, a content mod's dimension included; the game turns an
+    // id it has no level for into the overworld (`Dim::from_id`).
+    guest.dimension = if level.dimension.is_empty() {
+        "minecraft:overworld".to_owned()
+    } else {
+        level.dimension.clone()
     };
     if level.ender_items.len() == 27 {
         guest.ender_items = level.ender_items.clone();

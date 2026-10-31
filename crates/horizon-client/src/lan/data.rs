@@ -92,6 +92,28 @@ fn walk(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Value>) {
     }
 }
 
+/// The entries of registry folder `path` (`dimension_type`) in every
+/// namespace of `resources/data` but vanilla's, as `namespace:name`, sorted.
+fn mod_entries(resources: &Path, path: &str) -> Vec<(String, Value)> {
+    let Ok(read) = std::fs::read_dir(resources.join("data")) else {
+        return Vec::new();
+    };
+    let mut namespaces: Vec<String> = read
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|ns| ns != "minecraft")
+        .collect();
+    namespaces.sort();
+    let mut out = Vec::new();
+    for ns in namespaces {
+        let mut found = BTreeMap::new();
+        walk(&resources.join("data").join(&ns).join(path), "", &mut found);
+        out.extend(found.into_iter().map(|(n, v)| (format!("{ns}:{n}"), v)));
+    }
+    out
+}
+
 /// A JSON value as the NBT that vanilla's NbtOps would produce from the codec
 /// (integers are ints, other numbers doubles, booleans bytes).
 pub fn json_to_nbt(v: &Value) -> Tag {
@@ -139,10 +161,19 @@ impl SyncData {
             let path = key.trim_start_matches("minecraft:");
             let mut found = BTreeMap::new();
             walk(&root.join(path), "", &mut found);
-            let (names, json): (Vec<_>, Vec<_>) = found
+            let (mut names, mut json): (Vec<_>, Vec<_>) = found
                 .into_iter()
                 .map(|(n, v)| (format!("minecraft:{n}"), v))
                 .unzip();
+            // Content mods' dimension types (`data/<id>/dimension_type/`),
+            // after vanilla's: a client needs their height to lay out the
+            // chunks of a mod's dimension.
+            if *key == "minecraft:dimension_type" {
+                for (name, value) in mod_entries(resources, path) {
+                    names.push(name);
+                    json.push(value);
+                }
+            }
             dynamic.registries.insert(
                 (*key).to_owned(),
                 names.iter().map(|n| (n.clone(), None)).collect(),
@@ -168,6 +199,33 @@ impl SyncData {
         };
         sync.recipes = super::recipes::update_recipes(resources, &sync, overlay);
         Ok(sync)
+    }
+
+    /// The height of level `dimension`: vanilla's three from `levels` (with
+    /// the world's data packs), a content mod's from its dimension type's
+    /// data, else the overworld's.
+    pub fn level_shape(&self, dimension: &str, levels: &LevelShapes) -> crate::chunk::LevelShape {
+        if dimension.starts_with("minecraft:") {
+            return levels.get(dimension);
+        }
+        let json = self
+            .registries
+            .iter()
+            .find(|(k, _)| k == "minecraft:dimension_type")
+            .and_then(|(_, e)| {
+                e.names
+                    .iter()
+                    .position(|n| n == dimension)
+                    .map(|i| &e.json[i])
+            });
+        let int = |j: &Value, k: &str| j[k].as_i64().and_then(|v| i32::try_from(v).ok());
+        json.and_then(|j| {
+            let (min_y, height) = (int(j, "min_y")?, int(j, "height")?);
+            let logical = int(j, "logical_height").unwrap_or(height);
+            let sky = j["has_skylight"].as_bool().unwrap_or(true);
+            crate::chunk::LevelShape::new(min_y, height, logical, sky).ok()
+        })
+        .unwrap_or_else(|| levels.get(dimension))
     }
 
     /// The id of a name in a built-in or synchronized registry.
@@ -201,6 +259,9 @@ impl SyncData {
                         let changed = (key == "minecraft:dimension_type")
                             .then(|| changed_dimension_type(name, json, levels))
                             .flatten();
+                        // The vanilla pack a client knows has no mod's entry:
+                        // its data always goes.
+                        let known_pack = known_pack && name.starts_with("minecraft:");
                         RegistryEntry {
                             id: name.clone(),
                             data: match changed {

@@ -365,7 +365,7 @@ impl Hub {
             .unwrap_or(0);
         let clock_ids = (0..sync.dynamic.len("minecraft:world_clock") as i32).collect();
         let mut encoder = encoder;
-        encoder.set_dimension(config.levels.get(&config.dimension));
+        encoder.set_dimension(sync.level_shape(&config.dimension, &config.levels));
         Self {
             lan,
             config,
@@ -2837,8 +2837,8 @@ impl Hub {
             .sync
             .id("minecraft:dimension_type", dimension)
             .unwrap_or(0);
-        self.encoder
-            .set_dimension(self.config.levels.get(dimension));
+        let shape = self.sync.level_shape(dimension, &self.config.levels);
+        self.encoder.set_dimension(shape);
     }
 
     /// ServerPlayer.teleport(TeleportTransition) into the level the hub now

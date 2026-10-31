@@ -1826,8 +1826,8 @@ impl Game<'_> {
             return;
         };
         if Dim::from_id(&host.hub.guests[gi].dimension) != dim {
-            // Only a dedicated server keeps its players in different levels.
-            if self.options.dedicated.is_some() {
+            // Only a server keeps its players in different levels.
+            if self.server_levels() {
                 self.level_teleports
                     .push(super::server_travel::LevelTeleport {
                         conn: own,

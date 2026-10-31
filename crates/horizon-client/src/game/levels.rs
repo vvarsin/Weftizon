@@ -147,11 +147,12 @@ impl Game<'_> {
             &self.settings,
             &self.world_root,
             dim,
-            self.level_shapes.get(dim.id()),
+            super::dim_shape(&self.level_shapes, dim),
             self.level.seed,
         )?;
         let mut world = World::new(self.res.facts().air, self.level.seed);
-        world.shape = self.level_shapes.get(dim.id());
+        // A content mod's dimension keeps its own dimension type's height.
+        world.shape = super::dim_shape(&self.level_shapes, dim);
         world.fast_lava = dim == Dim::Nether;
         Ok(Parked {
             world,
@@ -481,6 +482,12 @@ impl Game<'_> {
         }
     }
 
+    /// This `Game` is a server that keeps one level per dimension and each
+    /// player in their own: a dedicated server, or single player's server
+    /// thread. The deprecated in-frame game and a LAN host have one level.
+    pub(super) fn server_levels(&self) -> bool {
+        self.serving.is_some() || self.options.dedicated.is_some()
+    }
     /// The levels this server tick runs, in `MinecraftServer.levels` order
     /// (the Overworld, the Nether, the End): every level with a player in
     /// it, forced chunks or a `/pregen` task, or the Overworld while idle.
@@ -489,7 +496,20 @@ impl Game<'_> {
             .lan
             .as_ref()
             .map_or(&[][..], |h| h.hub.guests.as_slice());
-        let mut dims: Vec<Dim> = [Dim::Overworld, Dim::Nether, Dim::End]
+        // Vanilla's three, then content mods' dimensions someone is in or
+        // that are open (the level in place, parked ones): a mod's level
+        // ticks, streams and saves as vanilla's do.
+        let mut candidates = vec![Dim::Overworld, Dim::Nether, Dim::End];
+        let custom = std::iter::once(self.dim)
+            .chain(self.levels.parked.keys().copied())
+            .chain(guests.iter().filter_map(|g| Dim::lookup(&g.dimension)))
+            .filter(|d| matches!(d, Dim::Custom(..)));
+        for d in custom {
+            if !candidates.contains(&d) {
+                candidates.push(d);
+            }
+        }
+        let mut dims: Vec<Dim> = candidates
             .into_iter()
             .filter(|d| {
                 let forced = if *d == self.dim {

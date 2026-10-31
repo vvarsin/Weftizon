@@ -1471,7 +1471,7 @@ impl Game<'_> {
             _ => None,
         };
         let at = self.target_level(t);
-        let Some(conn) = conn.filter(|_| at != level && self.options.dedicated.is_some()) else {
+        let Some(conn) = conn.filter(|_| at != level && self.server_levels()) else {
             return false;
         };
         self.level_teleports
