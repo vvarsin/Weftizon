@@ -375,7 +375,10 @@ tells every player who sees the entity, and one who comes near later, at the poi
 
 A broken declaration, model or animation file refuses the mod, with the file and the reason. `/summon <id>:<name>`
 summons it, worlds save it under its id, and its name is the translation `entity.<id>.<name>`. Content mods'
-entities get network ids after vanilla's, so a server and its players need the same mods. A declared entity's
+entities get network ids after vanilla's, so a server and its players need the same mods. An entity burns in
+daylight only if its own id is in the `minecraft:burn_in_daylight` entity type tag, as in vanilla: a zombie or
+skeleton template does not make it burn. Add it to `data/minecraft/tags/entity_type/burn_in_daylight.json` to
+burn. A declared entity's
 spawn egg is generated as item `<id>_spawn_egg`, copying a vanilla egg and carrying its `minecraft:entity_data`:
 `"spawn_egg": {"colors": [10, 20]}`. The colours make a simple egg item model and texture automatically;
 `"item_model": "mymod:item/ghost_spawn_egg"` names your own model and texture instead. Add the item name

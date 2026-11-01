@@ -422,6 +422,9 @@ impl MobTypes {
             crate::items::load_tags(root, "item", &horizon_world::loot::PackOverlay::NONE)
                 .unwrap_or_default();
         sulfur_cube::load_archetype_items(&item_tags);
+        let entity_tags =
+            crate::items::load_tags(root, "entity_type", &horizon_world::loot::PackOverlay::NONE)
+                .unwrap_or_default();
         let tag = |name: &str| -> Arc<[String]> {
             let mut v: Vec<String> = item_tags
                 .get(&format!("minecraft:{name}"))
@@ -529,6 +532,12 @@ impl MobTypes {
             }
             let def = species::def(template.species);
             let mut t = make(def, &e.id, template.model.clone());
+            // Mob.burnUndead reads the `burn_in_daylight` entity type tag by
+            // type: a mod's mob burns only if its own id is in it, not
+            // because its template's is.
+            t.flags.burns_in_day = entity_tags
+                .get("minecraft:burn_in_daylight")
+                .is_some_and(|ids| ids.iter().any(|id| *id == e.id));
             let item_tag = |tag: &str| -> Vec<String> {
                 item_tags.get(tag).into_iter().flatten().cloned().collect()
             };
