@@ -1149,6 +1149,15 @@ impl Game<'_> {
             self.set_bed_occupied(bed, false);
         }
         let killer = self.last_hurt_by_player.remove(&m.id);
+        // A player's kill, whatever dealt it (a blow, an arrow, a trident):
+        // native mods hear who (`native_mob_killed`).
+        if m.ai.last_hurt_by_player > 0
+            && let Some(who) = killer
+            && let Some(uuid) = self.player_uuid_of(who)
+        {
+            let player = horizon_client::lan::playerdata::ints_uuid(uuid);
+            self.native_mob_killed(player, m.id, &super::native_hooks::mob_kind(m));
+        }
         // TamableAnimal.die, before the rest of LivingEntity.die.
         self.tell_owner_pet_died(m, killer);
         self.love_cause.remove(&m.id);

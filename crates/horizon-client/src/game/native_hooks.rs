@@ -1576,9 +1576,9 @@ impl Game<'_> {
     ) {
         let _ = (dimension, entity, kind, pos, loaded_from_disk, canceled);
     }
-    /// `player`'s melee blow killed the mob `entity` of `kind` (other deaths
-    /// aren't told yet). It only hears, after the blow landed. Server-side.
-    /// API 40.
+    /// `player` killed the mob `entity` of `kind`: a blow, an arrow or
+    /// anything else the player last hurt it with (`LivingEntity.die`'s
+    /// killer credit). It only hears, as the mob dies. Server-side. API 40.
     pub(super) fn native_mob_killed(&mut self, player: u128, entity: u32, kind: &str) {
         let _ = (player, entity, kind);
     }
@@ -2578,7 +2578,11 @@ impl Game<'_> {
 
 /// A mob's kind as the hook points name it (`minecraft:zombie`).
 pub(super) fn mob_kind(mob: &horizon_client::mobs::Mob) -> String {
-    ["minecraft:", mob.kind.id.trim_start_matches("minecraft:")].concat()
+    // A mod's entity keeps its own namespace (`invasionv2:skeleton_guard`).
+    if mob.kind.id.contains(':') {
+        return mob.kind.id.to_string();
+    }
+    ["minecraft:", &mob.kind.id].concat()
 }
 
 /// Where the game calls the hook points.
@@ -2722,12 +2726,6 @@ impl Game<'_> {
             self.persist.joins_canceled += 1;
         }
         !canceled
-    }
-    /// The acting player's blow killed mob `index`.
-    pub(super) fn native_kill_event(&mut self, index: usize) {
-        let (entity, kind) = (self.mobs[index].id, mob_kind(&self.mobs[index]));
-        let player = self.native_acting_id();
-        self.native_mob_killed(player, entity, &kind);
     }
     /// The acting player's hit landed on mob `index`, holding `stack`.
     pub(super) fn native_hurt_enemy_event(&mut self, stack: &ItemStack, index: usize) {

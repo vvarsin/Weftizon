@@ -224,7 +224,7 @@ held stack, `native_inventory_tick` runs each tick for every stack a player carr
 that use them need `"hooks": 39`.
 
 API 40 adds [mod messages](#mod-messages) between a mod's server and client halves, and hearing players and mobs on the
-server for every player: `native_player_died`, `native_mob_spawned`, `native_mob_killed` (a player's melee blow, a sweep or a spear thrust too),
+server for every player: `native_player_died`, `native_mob_spawned`, `native_mob_killed` (any kill a player is credited with: a blow, a sweep, a spear thrust, an arrow),
 `native_item_dropped` (a throw; not the items scattered when a player dies) and `native_item_picked_up` (`canceled` leaves the stack on the ground). They name a player by UUID. Bundles that use them
 need `"hooks": 40`.
 
