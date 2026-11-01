@@ -225,6 +225,19 @@ impl Game<'_> {
         else {
             return false;
         };
+        // A ravager has no arms: it rams with its head, its bite's
+        // animation (`Ravager.handleEntityEvent` 4), as it does at a foe.
+        if m.species() == horizon_client::mobs::Species::Ravager {
+            if m.extra.counter == 0 {
+                m.extra.counter = 10;
+                m.outbox.push(horizon_client::mobs::MobEvent::EntityEvent {
+                    mob: m.id,
+                    event: 4,
+                    at: [m.position.x, m.position.y, m.position.z],
+                });
+            }
+            return true;
+        }
         m.swing();
         true
     }
