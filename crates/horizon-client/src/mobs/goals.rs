@@ -102,6 +102,28 @@ impl GoalSelector {
         self.goals.clear();
         self.locked = [None; 4];
     }
+    /// `GoalSelector.removeGoal` by name: every goal of this name goes,
+    /// a running one with it (its flags are free again). Whether one went.
+    pub fn remove(&mut self, name: &str) -> bool {
+        let mut removed = false;
+        let mut i = 0;
+        while i < self.goals.len() {
+            if self.goals[i].goal.name() != name {
+                i += 1;
+                continue;
+            }
+            self.goals.remove(i);
+            removed = true;
+            for slot in &mut self.locked {
+                *slot = match *slot {
+                    Some(at) if at == i => None,
+                    Some(at) if at > i => Some(at - 1),
+                    other => other,
+                };
+            }
+        }
+        removed
+    }
     pub fn running_names(&self) -> Vec<&'static str> {
         self.goals
             .iter()
@@ -2889,5 +2911,21 @@ mod built_by_player_tests {
         let mut zombie = mob(Species::Zombie);
         zombie.extra.player_created = true;
         assert!(!zombie.built_by_player());
+    }
+}
+#[cfg(test)]
+mod remove_goal_tests {
+    use super::*;
+
+    #[test]
+    fn removing_a_goal_by_name_leaves_the_others() {
+        let mut g = GoalSelector::default();
+        g.add(0, Float);
+        g.add(8, Stroll::new(0.6));
+        g.add(9, LookAtPlayer::new(8.0));
+        assert!(g.remove("RandomStroll"));
+        assert!(!g.has("RandomStroll"));
+        assert!(g.has("Float") && g.has("LookAtPlayer"));
+        assert!(!g.remove("RandomStroll"));
     }
 }

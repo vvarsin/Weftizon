@@ -600,6 +600,11 @@ API 81 adds `native_back_off(id, from, speed, ticks)`: mob `id` backs away from 
 while it looks at it, as a piglin with a crossbow backs off (a strafe backwards, vanilla's speed 0.75), so a shield it
 holds up stays toward its foe. A path or a step it is given stops it. Bundles that use it need `"hooks": 81`.
 
+API 82 adds `native_remove_goal(id, name)`: takes every goal named `name` off mob `id`, as `GoalSelector.removeGoal`
+does, running or not. The names are the goals' own (`RandomStroll`, or `Stroll` where it avoids water, is a mob's wandering), so a mod can steer a vanilla mob
+its own way, such as a pillager that marches instead of strolling. False when there is no such mob or goal. Bundles
+that use it need `"hooks": 82`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

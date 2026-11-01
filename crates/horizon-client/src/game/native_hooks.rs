@@ -167,6 +167,8 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
+//! API 82 adds taking a goal off a mob (`native_remove_goal` in
+//! `native_mod_entities.rs`).
 //! API 81 adds backing a mob away while it faces a point
 //! (`native_back_off` in `native_mod_entities.rs`).
 //! API 80 adds making a mob crawl (`native_set_crawling` in
@@ -341,7 +343,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 81;
+pub(crate) const NATIVE_HOOKS_API: u32 = 82;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

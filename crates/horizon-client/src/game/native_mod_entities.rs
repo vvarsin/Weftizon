@@ -283,6 +283,18 @@ impl Game<'_> {
         m.nav_step_to(target, speed);
         true
     }
+    /// Takes every goal named `name` off mob `id` (`GoalSelector.removeGoal`;
+    /// the names are the goals' own: `RandomStroll` or `Stroll` is a mob's wandering), so a
+    /// mod can steer a vanilla mob its own way: a pillager that marches
+    /// instead of strolling. False when the mob isn't there or has no such
+    /// goal. API 82.
+    #[allow(dead_code)]
+    pub(super) fn native_remove_goal(&mut self, id: u32, name: &str) -> bool {
+        let Some(m) = self.mobs.iter_mut().find(|m| m.id == id && !m.removed) else {
+            return false;
+        };
+        m.ai.goals.remove(name)
+    }
     /// Mob `id` backs away from `from` for `ticks` ticks while it faces it
     /// (piglins' `BackUpIfTooClose`: it looks at it and strafes backwards),
     /// so a shield it holds up stays toward its foe. `speed` is the strafe
