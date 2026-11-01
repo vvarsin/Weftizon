@@ -505,6 +505,27 @@ impl Game<'_> {
         horizon_client::mobs::monster_brain::set_attack_target(m, Some(Who::Mob(target)));
         true
     }
+    /// Puts `item` (`minecraft:iron_sword`, None for nothing) in mob `id`'s
+    /// main hand, as `Mob.setItemSlot`: players see it, and a skeleton
+    /// switches between its bow and melee goals by it
+    /// (`AbstractSkeleton.reassessWeaponGoal`). False when the mob isn't
+    /// there or the item doesn't exist. API 73.
+    pub(super) fn native_set_held(&mut self, id: u32, item: Option<&str>) -> bool {
+        if let Some(item) = item
+            && self.res.items().get(item).is_none()
+        {
+            return false;
+        }
+        let Some(m) = self
+            .mobs
+            .iter_mut()
+            .find(|m| m.id == id && !m.removed && m.alive())
+        else {
+            return false;
+        };
+        m.extra.set_main_hand(item.map(Into::into));
+        true
+    }
 }
 
 /// Creaking hearts in trees for native mods (API 69).
