@@ -571,8 +571,8 @@ knocks it down for the axe's `disable_blocking_seconds`, with the break sound, a
 the mob is not there, holds no shield, or an axe keeps the shield down. Bundles that use it need
 `"hooks": 74`.
 
-API 75 adds `native_block_blocks_motion(pos)`: false for a block with no collision shape (air, vines,
-grass, flowers, fluids), true for every other block, None where no chunk is loaded. A mod that digs
+API 75 adds `native_block_blocks_motion(pos)` (`BlockState.blocksMotion`): false for air, vines,
+grass, flowers, water, lava and cobwebs, true for every other block, None where no chunk is loaded. A mod that digs
 through the world uses it to leave what does not stand in the way. Bundles that use it need `"hooks": 75`.
 
 API 76 adds `native_swing(id)`: mob `id` swings its arm, as a zombie breaking a door does, and players

@@ -182,18 +182,24 @@ impl Game<'_> {
         m.swing();
         true
     }
-    /// Whether the block at `pos` can stop a mob: false for a block with
-    /// no collision shape in any context (air, vines, grass, flowers,
-    /// fluids), true for every other block. `None` where no chunk is
-    /// loaded. API 75.
+    /// Whether the block at `pos` can stop a mob (`BlockState.blocksMotion`):
+    /// false for air, vines, grass, flowers, water and lava, cobwebs. `None`
+    /// where no chunk is loaded. API 75.
     #[allow(dead_code)]
     pub(super) fn native_block_blocks_motion(&self, pos: [i32; 3]) -> Option<bool> {
         self.native_block_at(pos)?;
-        let state = self.world.block(pos[0], pos[1], pos[2]);
+        // BlockState.blocksMotion: solid (legacySolid), but not a cobweb or
+        // a bamboo sapling. Water and lava are not solid.
+        let facts = self
+            .res
+            .facts()
+            .get(self.world.block(pos[0], pos[1], pos[2]));
         Some(
-            self.collision
-                .collision_block(state)
-                .is_ok_and(|b| !b.empty_shape),
+            facts.legacy_solid
+                && !matches!(
+                    &*facts.name,
+                    "minecraft:cobweb" | "minecraft:bamboo_sapling"
+                ),
         )
     }
     /// Shows `breaker`'s crack on the block at `pos` to every player near
