@@ -283,6 +283,27 @@ impl Game<'_> {
         m.nav_step_to(target, speed);
         true
     }
+    /// Mob `id` backs away from `from` for `ticks` ticks while it faces it
+    /// (piglins' `BackUpIfTooClose`: it looks at it and strafes backwards),
+    /// so a shield it holds up stays toward its foe. `speed` is the strafe
+    /// (vanilla's 0.75). False when the mob isn't there. API 81.
+    #[allow(dead_code)]
+    pub(super) fn native_back_off(
+        &mut self,
+        id: u32,
+        from: [f64; 3],
+        speed: f32,
+        ticks: u32,
+    ) -> bool {
+        if !(speed.is_finite() && speed > 0.0) || !from.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let Some(m) = self.mobs.iter_mut().find(|m| m.id == id && !m.removed) else {
+            return false;
+        };
+        m.nav_back_off(from, speed, i64::from(ticks));
+        true
+    }
     /// Whether it still walks a path (`native_navigate`'s or its goals'):
     /// false once it arrived, the path ran out or it got stuck. API 67.
     pub(super) fn native_navigating(&self, id: u32) -> bool {

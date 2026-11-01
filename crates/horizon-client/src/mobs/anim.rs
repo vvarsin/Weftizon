@@ -832,7 +832,13 @@ fn template_setup(
             } else {
                 right
             };
-            let off = if player && m.extra.off_hand.is_some() && !pose.affects_offhand() {
+            // A mob that holds a shield up in its off hand (a native mod's,
+            // `native_mob_shield`) raises it as a player does.
+            let off_block = using_off && m.extra.blocking;
+            let off = if (player || off_block)
+                && m.extra.off_hand.is_some()
+                && !pose.affects_offhand()
+            {
                 if off_spear.is_some() {
                     ArmPose::Spear
                 } else if using_off && m.extra.blocking {

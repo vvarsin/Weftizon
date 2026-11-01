@@ -61,6 +61,10 @@ pub struct Navigation {
     /// control is aimed at it every tick until the mob stands there, or
     /// for 40 ticks at most (the tick it gives up).
     step_to: Option<([f64; 3], i64)>,
+    /// A native mod's back-off (`native_back_off`): the mob looks at the
+    /// point and strafes backwards every tick, as `BackUpIfTooClose` does,
+    /// until the tick it stops.
+    back_off: Option<([f64; 3], f32, i64)>,
 }
 impl Default for Navigation {
     fn default() -> Self {
@@ -93,6 +97,7 @@ impl Default for Navigation {
             below_surface: false,
             climb_to: None,
             step_to: None,
+            back_off: None,
         }
     }
 }
@@ -379,9 +384,16 @@ impl Mob {
         self.ai.nav.speed_modifier = speed;
         self.ai.nav.step_to = Some((target, self.ai.nav.tick + 40));
     }
+    /// Backs away from `from` for `ticks` ticks, facing it (`native_back_off`):
+    /// a shield it holds up stays between it and its foe.
+    pub fn nav_back_off(&mut self, from: [f64; 3], speed: f32, ticks: i64) {
+        self.nav_stop();
+        self.ai.nav.back_off = Some((from, speed, self.ai.nav.tick + ticks));
+    }
     pub fn nav_stop(&mut self) {
         self.ai.nav.path = None;
         self.ai.nav.step_to = None;
+        self.ai.nav.back_off = None;
     }
     fn recompute_path(&mut self, w: &MobWorld) {
         if w.game_time - self.ai.nav.time_last_recompute <= 20 || !self.can_update_path() {
@@ -477,6 +489,17 @@ impl Mob {
             return;
         }
         if self.ai.nav.is_done() {
+            // A mod's back-off: BackUpIfTooClose's tick.
+            if let Some((from, speed, until)) = self.ai.nav.back_off {
+                if self.ai.nav.tick >= until {
+                    self.ai.nav.back_off = None;
+                } else {
+                    self.look_at(from);
+                    self.ai.mov.strafe(-speed, 0.0);
+                    self.yaw = super::control::rotate_if_necessary(self.yaw, self.head_yaw, 0.0);
+                    return;
+                }
+            }
             // A mod's single step: straight at the block's centre, the move
             // control jumping a block up on the way.
             if let Some((t, until)) = self.ai.nav.step_to {

@@ -596,6 +596,10 @@ API 80 adds `native_set_crawling(id, on)`: mob `id` crawls as a player does out 
 its box 0.6 blocks high, a humanoid's swim stroke), so it fits a gap one block high; `false` stands it up
 again, only where it has room (false back while it doesn't). Bundles that use it need `"hooks": 80`.
 
+API 81 adds `native_back_off(id, from, speed, ticks)`: mob `id` backs away from the point `from` for `ticks` ticks
+while it looks at it, as a piglin with a crossbow backs off (a strafe backwards, vanilla's speed 0.75), so a shield it
+holds up stays toward its foe. A path or a step it is given stops it. Bundles that use it need `"hooks": 81`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into
