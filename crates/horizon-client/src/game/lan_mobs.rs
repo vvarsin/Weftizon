@@ -153,7 +153,6 @@ impl Game<'_> {
                 v.hero = false;
                 v.velocity = Vec3::new(moved[0], moved[1], moved[2]);
                 v.uuid = horizon_client::lan::playerdata::uuid_ints(uuid);
-                v.allies = Default::default();
                 v.remote = true;
                 views.push((conn, v));
             }
