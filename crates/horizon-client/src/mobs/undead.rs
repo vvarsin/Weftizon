@@ -892,12 +892,17 @@ pub fn perform_ranged_attack(m: &mut Mob, who: Who, cx: &mut Cx, power: f32) {
         Some(Who::Mob(m.id)),
     );
     p.set_bonus(super::gear::arrow_bonus(m));
-    p.shoot(
-        &mut arrow_random,
-        [xd, yd + dist * 0.2, zd],
-        1.6,
-        (14 - id * 4) as f32,
-    );
+    // A mod's sharpshooter (`perfect_aim`): no spread, and the arc that
+    // makes up for the arrow's fall over its flight (gravity 0.05 a tick
+    // at 1.6 blocks a tick) instead of AbstractSkeleton's 0.2 a block.
+    let perfect = m.kind.custom.as_ref().is_some_and(|c| c.perfect_aim);
+    let (aim, spread) = if perfect {
+        let ticks = (xd * xd + yd * yd + zd * zd).sqrt() / 1.6;
+        ([xd, yd + 0.5 * 0.05 * ticks * ticks, zd], 0.0)
+    } else {
+        ([xd, yd + dist * 0.2, zd], (14 - id * 4) as f32)
+    };
+    p.shoot(&mut arrow_random, aim, 1.6, spread);
     cx.events.push(MobEvent::Projectile(p));
     let pitch = 1.0 / (m.random.next_float() * 0.4 + 0.8);
     cx.events.push(MobEvent::Sound(

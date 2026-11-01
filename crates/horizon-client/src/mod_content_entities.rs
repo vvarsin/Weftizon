@@ -127,6 +127,7 @@ pub(super) fn build(
                 solid: e.solid,
                 kinematic: e.kinematic,
                 melee_swing: e.melee_swing,
+                perfect_aim: e.perfect_aim,
                 carry_height: e.carry_height,
                 overlay: e
                     .overlay
