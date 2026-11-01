@@ -578,10 +578,10 @@ through the world uses it to leave what does not stand in the way. Bundles that 
 API 76 adds `native_swing(id)`: mob `id` swings its arm, as a zombie breaking a door does, and players
 around see it. False when the mob is not there. Bundles that use it need `"hooks": 76`.
 
-API 77 adds `native_step_to(id, target, speed)`: mob `id` walks onto the block at `target` itself
-(`PathNavigation.createPath(pos, 0)`, accuracy 0). `native_navigate` uses accuracy 1, so it treats the next
-block as already reached; use this to move a mob one block at a time. True when a path was found. Bundles
-that use it need `"hooks": 77`.
+API 77 adds `native_step_to(id, target, speed)`: mob `id` steps onto the block at `target`, straight at its
+centre: its move control aims there every tick (`MoveControl.setWantedPosition`, jumping a block up on the
+way) until it stands there, or for 2 seconds. Its path stops. `native_navigate` (accuracy 1) counts the next
+block as reached already; use this to move a mob one block. Bundles that use it need `"hooks": 77`.
 
 ## What the launcher does
 

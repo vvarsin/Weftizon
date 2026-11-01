@@ -57,6 +57,10 @@ pub struct Navigation {
     pub below_surface: bool,
     /// WallClimberNavigation.pathToPosition
     climb_to: Option<[i32; 3]>,
+    /// A native mod's step onto one block (`native_step_to`): the move
+    /// control is aimed at it every tick until the mob stands there, or
+    /// for 40 ticks at most (the tick it gives up).
+    step_to: Option<([f64; 3], i64)>,
 }
 impl Default for Navigation {
     fn default() -> Self {
@@ -88,6 +92,7 @@ impl Default for Navigation {
             avoid_sun: false,
             below_surface: false,
             climb_to: None,
+            step_to: None,
         }
     }
 }
@@ -367,8 +372,16 @@ impl Mob {
         }
         path.is_some() && self.nav_move_to_path(w, path, speed)
     }
+    /// A single step onto the block at `target` (`native_step_to`): the
+    /// path stops and the move control aims there each tick, 40 at most.
+    pub fn nav_step_to(&mut self, target: [f64; 3], speed: f64) {
+        self.nav_stop();
+        self.ai.nav.speed_modifier = speed;
+        self.ai.nav.step_to = Some((target, self.ai.nav.tick + 40));
+    }
     pub fn nav_stop(&mut self) {
         self.ai.nav.path = None;
+        self.ai.nav.step_to = None;
     }
     fn recompute_path(&mut self, w: &MobWorld) {
         if w.game_time - self.ai.nav.time_last_recompute <= 20 || !self.can_update_path() {
@@ -464,6 +477,18 @@ impl Mob {
             return;
         }
         if self.ai.nav.is_done() {
+            // A mod's single step: straight at the block's centre, the move
+            // control jumping a block up on the way.
+            if let Some((t, until)) = self.ai.nav.step_to {
+                let (dx, dz) = (t[0] - self.position.x, t[2] - self.position.z);
+                let there = dx * dx + dz * dz < 0.2 * 0.2 && (t[1] - self.position.y).abs() < 1.0;
+                if there || self.ai.nav.tick >= until {
+                    self.ai.nav.step_to = None;
+                } else {
+                    let speed = self.ai.nav.speed_modifier;
+                    self.ai.mov.set_wanted(t[0], t[1], t[2], speed);
+                }
+            }
             return;
         }
         if self.can_update_path() {

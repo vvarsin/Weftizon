@@ -265,26 +265,23 @@ impl Game<'_> {
         self.mobs = mobs;
         found
     }
-    /// Sends it walking onto the block at `target` itself, at `speed` times
-    /// its movement speed (`PathNavigation.createPath(pos, 0)`): accuracy
-    /// 0, where `native_navigate`'s accuracy 1 counts the next block as
-    /// reached already. For a mob going one block at a time. True when a
-    /// path was found. API 77.
+    /// Steps it onto the block at `target`, straight at its centre, at
+    /// `speed` times its movement speed: its move control aims there every
+    /// tick (`MoveControl.setWantedPosition`, jumping a block up on the way)
+    /// until it stands there, or for 2 seconds. Its path stops. A path
+    /// (`native_navigate`, accuracy 1) counts the next block as reached
+    /// already; this moves a mob one block. False when the mob isn't there.
+    /// API 77.
     #[allow(dead_code)]
     pub(super) fn native_step_to(&mut self, id: u32, target: [f64; 3], speed: f64) -> bool {
         if !(speed.is_finite() && speed > 0.0) || !target.iter().all(|v| v.is_finite()) {
             return false;
         }
-        let Some(i) = self.mobs.iter().position(|m| m.id == id && !m.removed) else {
+        let Some(m) = self.mobs.iter_mut().find(|m| m.id == id && !m.removed) else {
             return false;
         };
-        let at = target.map(|v| v.floor() as i32);
-        let mut mobs = std::mem::take(&mut self.mobs);
-        let w = self.mob_world_base(&[]);
-        let path = mobs[i].create_path_to(&w, at, 0);
-        let found = mobs[i].nav_move_to_path(&w, path, speed);
-        self.mobs = mobs;
-        found
+        m.nav_step_to(target, speed);
+        true
     }
     /// Whether it still walks a path (`native_navigate`'s or its goals'):
     /// false once it arrived, the path ran out or it got stuck. API 67.

@@ -167,8 +167,8 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
-//! API 77 adds walking a mob onto one exact block (`native_step_to` in
-//! `native_mod_entities.rs`), a path of accuracy 0, for steps of one block.
+//! API 77 adds stepping a mob onto one block (`native_step_to` in
+//! `native_mod_entities.rs`): its move control aims there each tick.
 //!
 //! API 76 adds swinging a mob's arm (`native_swing` in
 //! `native_blocks.rs`), as a zombie breaking a door does.
