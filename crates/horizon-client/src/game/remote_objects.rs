@@ -157,6 +157,19 @@ impl Game<'_> {
             return;
         }
         let id = id as u32;
+        if let Some(t) = self.tnts.iter_mut().find(|t| t.id == id) {
+            // PrimedTnt.onSyncedDataUpdated: DATA_FUSE_ID, DATA_BLOCK_STATE_ID.
+            for (index, _, value) in values {
+                match (index, value) {
+                    (8, Value::Int(fuse)) => t.fuse = *fuse,
+                    (9, Value::Id(s)) => {
+                        t.block_state = Some(horizon_world::registry::BlockStateId(*s as u32));
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
         for (index, _, value) in values {
             if let (8, Value::Item(stack)) = (index, value)
                 && self.ominous_spawners.iter().any(|s| s.id == id)

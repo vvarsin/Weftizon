@@ -418,6 +418,17 @@ impl Game<'_> {
                                 Some(Tag::Short(f)) => i32::from(*f),
                                 _ => 80,
                             };
+                            // block_state (TNT when absent) and explosion_power,
+                            // clamped to 0..=128 as PrimedTnt reads it.
+                            let block_state =
+                                tag.get("block_state").and_then(|t| self.state_from_nbt(t));
+                            let power = match tag.get("explosion_power") {
+                                Some(Tag::Float(p)) => f32::from_bits(*p).clamp(0.0, 128.0),
+                                Some(Tag::Double(p)) => {
+                                    (f64::from_bits(*p) as f32).clamp(0.0, 128.0)
+                                }
+                                _ => super::tnt::PrimedTnt::POWER,
+                            };
                             self.tnts.push(super::tnt::PrimedTnt {
                                 id: 0,
                                 position,
@@ -425,6 +436,8 @@ impl Game<'_> {
                                 velocity: entity_nbt::motion(&tag),
                                 fuse,
                                 on_ground: matches!(tag.get("OnGround"), Some(Tag::Byte(1))),
+                                block_state,
+                                power,
                             });
                         }
                     }

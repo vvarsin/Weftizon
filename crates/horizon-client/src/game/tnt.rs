@@ -19,8 +19,16 @@ pub(super) struct PrimedTnt {
     pub velocity: Vec3,
     pub fuse: i32,
     pub on_ground: bool,
+    /// `PrimedTnt.DATA_BLOCK_STATE_ID`: the block it looks like (TNT when
+    /// None), from its `block_state` NBT.
+    pub block_state: Option<horizon_world::registry::BlockStateId>,
+    /// `PrimedTnt.explosionPower`: 4 by default, `explosion_power` in NBT
+    /// (0 to 128).
+    pub power: f32,
 }
 impl PrimedTnt {
+    /// `PrimedTnt.DEFAULT_EXPLOSION_POWER`.
+    pub(super) const POWER: f32 = 4.0;
     const SIZE: f64 = 0.98;
     pub(super) fn bounds(&self) -> Aabb {
         let h = Self::SIZE / 2.0;
@@ -148,6 +156,8 @@ impl Game<'_> {
             velocity: Vec3::new(-rot.sin() * 0.02, f64::from(0.2f32), -rot.cos() * 0.02),
             fuse,
             on_ground: false,
+            block_state: None,
+            power: PrimedTnt::POWER,
         });
     }
     /// `PrimedTnt.tick` for every primed TNT, in order; an expired fuse
@@ -177,6 +187,7 @@ impl Game<'_> {
                     t.position.z,
                 ];
                 let bounds = t.bounds();
+                let power = t.power;
                 let in_water = self.bounds_in_water(bounds);
                 self.tnts.remove(i);
                 count -= 1;
@@ -184,7 +195,7 @@ impl Game<'_> {
                 let interaction = self.destroy_type("tnt_explosion_drop_decay");
                 self.combat.explosion_in_water = in_water;
                 let result = self.with_hive_emptying_blast(|g| {
-                    g.server_explode(center, 4.0, interaction, false)
+                    g.server_explode(center, power, interaction, false)
                 });
                 self.combat.explosion_in_water = false;
                 result?;
@@ -228,37 +239,42 @@ impl Game<'_> {
         if self.tnts.is_empty() {
             return;
         }
-        let Some(state) = self.pack.assets.registry.default_state("minecraft:tnt") else {
+        let Some(tnt) = self.pack.assets.registry.default_state("minecraft:tnt") else {
             return;
         };
-        // Face sprites from the block model: up, down, north, south, west, east.
-        let Ok(models) = self
-            .pack
-            .render
-            .model_catalog
-            .collect(state, BlockPos::new(0, 0, 0))
-        else {
-            return;
-        };
-        let mut sprites = [None; 6];
-        for face in models.iter().flat_map(|(_, m)| m.faces.iter()) {
-            use horizon_assets::model::Direction as D;
-            let index = match face.quad.facing {
-                D::Up => 0,
-                D::Down => 1,
-                D::North => 2,
-                D::South => 3,
-                D::West => 4,
-                D::East => 5,
+        // Face sprites from the block model of the state it shows
+        // (DATA_BLOCK_STATE_ID): up, down, north, south, west, east.
+        let sprites_of = |state| {
+            let mut sprites = [None; 6];
+            let Ok(models) = self
+                .pack
+                .render
+                .model_catalog
+                .collect(state, BlockPos::new(0, 0, 0))
+            else {
+                return sprites;
             };
-            if sprites[index].is_none() {
-                sprites[index] = self
-                    .pack
-                    .layer_names
-                    .get(&face.layer)
-                    .and_then(|name| self.gui.atlas.sprites.get(name).copied());
+            for face in models.iter().flat_map(|(_, m)| m.faces.iter()) {
+                use horizon_assets::model::Direction as D;
+                let index = match face.quad.facing {
+                    D::Up => 0,
+                    D::Down => 1,
+                    D::North => 2,
+                    D::South => 3,
+                    D::West => 4,
+                    D::East => 5,
+                };
+                if sprites[index].is_none() {
+                    sprites[index] = self
+                        .pack
+                        .layer_names
+                        .get(&face.layer)
+                        .and_then(|name| self.gui.atlas.sprites.get(name).copied());
+                }
             }
-        }
+            sprites
+        };
+        let tnt_sprites = sprites_of(tnt);
         let range = super::entity_culling::default_range(
             glam::DVec3::splat(PrimedTnt::SIZE),
             self.view_scale(),
@@ -324,6 +340,10 @@ impl Game<'_> {
                     0.6,
                 ),
             ];
+            let sprites = match t.block_state {
+                Some(state) if state != tnt => sprites_of(state),
+                _ => tnt_sprites,
+            };
             for ((corners, shade), sprite) in faces.into_iter().zip(sprites) {
                 let Some(r) = sprite else { continue };
                 let c = (255.0 * shade) as u32;
@@ -507,6 +527,8 @@ mod tests {
             velocity: Vec3::ZERO,
             fuse: 80,
             on_ground: true,
+            block_state: None,
+            power: PrimedTnt::POWER,
         };
         tnt.velocity = bounce_velocity(Direction::Up, tnt.velocity);
         tnt.on_ground = false;
@@ -547,6 +569,8 @@ mod tests {
             velocity: Vec3::ZERO,
             fuse: 80,
             on_ground: false,
+            block_state: None,
+            power: PrimedTnt::POWER,
         };
         tnt.tick(&world, &collision, &assets, &facts).unwrap();
         assert_eq!(

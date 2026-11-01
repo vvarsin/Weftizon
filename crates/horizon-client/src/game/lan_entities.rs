@@ -494,6 +494,11 @@ impl Game<'_> {
             if t.fuse != 80 {
                 e.meta.push((8, serializer::INT, Value::Int(t.fuse)));
             }
+            // PrimedTnt.DATA_BLOCK_STATE_ID, TNT by default.
+            if let Some(s) = t.block_state {
+                e.meta
+                    .push((9, serializer::BLOCK_STATE, Value::Id(s.0 as i32)));
+            }
             e.precise = t.on_ground;
             out.push(e);
         }

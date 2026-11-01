@@ -286,6 +286,8 @@ impl Game<'_> {
                 velocity,
                 fuse: 80,
                 on_ground: false,
+                block_state: None,
+                power: super::tnt::PrimedTnt::POWER,
             }),
             // FallingBlockEntity.recreateFromPacket: the block state is the data.
             "minecraft:falling_block" => self.falling.push(FallingBlock {
