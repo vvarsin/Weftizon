@@ -6030,9 +6030,10 @@ impl Game<'_> {
             // LivingEntity.updatingUsingItem: the ticks the item has been
             // used before this one. Another player's use particles; a mob's
             // drawn bow only needs the count (its pull follows it).
-            if player {
+            {
                 // AvatarRenderer.getArmPose: the used item's BLOCK animation
-                // (an item with `blocks_attacks`) raises the arm.
+                // (an item with `blocks_attacks`) raises the arm; a mob that
+                // holds a shield up (a native mod's) raises it the same way.
                 let used = if m.extra.using_off_hand {
                     &m.extra.off_hand
                 } else {
