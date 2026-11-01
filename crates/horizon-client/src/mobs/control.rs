@@ -160,6 +160,13 @@ impl Mob {
             return super::turtle::move_control(self);
         }
         let attr_speed = self.movement_speed();
+        // A mob holding a shield up (a native mod's `native_mob_shield`)
+        // slows to a fifth, as a player using an item does.
+        let attr_speed = if self.extra.blocking && self.extra.using_item > 0 {
+            attr_speed * 0.2
+        } else {
+            attr_speed
+        };
         match self.ai.mov.kind {
             MoveKind::Custom => super::ai::custom_move_control(self, w, events),
             MoveKind::Ground => self.ground_move_tick(w, attr_speed),
