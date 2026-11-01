@@ -23,6 +23,12 @@ pub(in crate::game) enum DataRef {
 fn empty() -> Tag {
     Tag::Compound(Compound::new())
 }
+fn get_key<'a>(tag: &'a Tag, key: &str) -> Option<&'a Tag> {
+    match tag {
+        Tag::Compound(c) => c.get(&JavaString::from(key)),
+        _ => None,
+    }
+}
 fn set_key(tag: &mut Tag, key: &str, value: Tag) {
     if let Tag::Compound(c) = tag {
         c.insert(JavaString::from(key), value);
@@ -201,9 +207,36 @@ impl Game<'_> {
                     *slot = new;
                 }
             }
+            // An unsimulated entity (a display, a marker): its compound is
+            // all it is, read again each tick (a display's new transformation
+            // and its interpolation reach the players), and its place.
+            Target::Other(id) => {
+                let Some(o) = self.others.iter_mut().find(|o| o.id == id) else {
+                    return Err(stale());
+                };
+                if let Some(Tag::List(p)) = get_key(&tag, "Pos")
+                    && let [Tag::Double(x), Tag::Double(y), Tag::Double(z)] = p.as_slice()
+                {
+                    o.position = horizon_core::geometry::Vec3::new(
+                        f64::from_bits(*x),
+                        f64::from_bits(*y),
+                        f64::from_bits(*z),
+                    );
+                }
+                if let Some(Tag::List(r)) = get_key(&tag, "Rotation")
+                    && let [Tag::Float(yaw), Tag::Float(pitch)] = r.as_slice()
+                {
+                    (o.yaw, o.pitch) = (f32::from_bits(*yaw), f32::from_bits(*pitch));
+                }
+            }
             _ => return Err(stale()),
         }
-        if let Target::Mob(id) | Target::Item(id) | Target::Stand(id) | Target::Frame(id) = t {
+        if let Target::Mob(id)
+        | Target::Item(id)
+        | Target::Stand(id)
+        | Target::Frame(id)
+        | Target::Other(id) = t
+        {
             self.persist.raw.insert(id, tag);
         }
         Ok(())
