@@ -572,6 +572,7 @@ impl MobTypes {
                 sound("death", t.sounds[2]),
             ];
             extra.step = e.sounds.get("step").map(|s| custom::intern(s));
+            extra.voice = e.sounds.get("ambient").map(|s| custom::intern(s));
             if let Some(first) = e.textures.first() {
                 t.texture = first.clone();
             }
@@ -3252,9 +3253,30 @@ impl Mob {
     /// Mob.playSound with LivingEntity.getVoicePitch.
     pub fn voice(&mut self, event: &'static str, events: &mut Vec<MobEvent>) {
         let pitch = self.voice_pitch();
+        let event = self.template_voice(event);
         // Entity.playSound: at the entity's feet.
         let at = [self.position.x, self.position.y, self.position.z];
         events.push(MobEvent::Sound(event, at, ai::sound_volume(self), pitch));
+    }
+}
+impl Mob {
+    /// `event` as this mob voices it: a content mod's mob with its own
+    /// ambient sound says that instead of its template's voice lines (the
+    /// sounds of the template's own `entity.<kind>.` set: a brute's angry
+    /// grunt, a strider's chirp), and keeps every other sound.
+    pub fn template_voice(&self, event: &'static str) -> &'static str {
+        let Some(c) = &self.kind.custom else {
+            return event;
+        };
+        let Some(voice) = c.voice else {
+            return event;
+        };
+        let kind = c.template.strip_prefix("minecraft:").unwrap_or(c.template);
+        let own = event
+            .strip_prefix("entity.")
+            .and_then(|rest| rest.strip_prefix(kind))
+            .is_some_and(|rest| rest.starts_with('.'));
+        if own { voice } else { event }
     }
 }
 /// Model geometry for a mob, posed for its animation state, as camera-relative

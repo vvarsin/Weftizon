@@ -387,6 +387,10 @@ pub struct Custom {
     /// Its template's id (`minecraft:zombie`): the vanilla class whose
     /// synched data it carries.
     pub template: &'static str,
+    /// Its declared ambient sound, which also replaces the template's other
+    /// voice lines (a piglin brute's angry grunt): a skeleton brute with a
+    /// wither skeleton's voice never grunts like a pig.
+    pub voice: Option<&'static str>,
     pub textures: Vec<String>,
     pub glows: Vec<Option<String>>,
     pub emissive: Option<String>,

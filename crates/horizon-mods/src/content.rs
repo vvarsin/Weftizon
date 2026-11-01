@@ -783,9 +783,13 @@ impl Content {
                 "minecraft:item_name".into(),
                 serde_json::json!({ "translate": format!("item.{ns}.{path}_spawn_egg") }),
             );
-            let model = egg.item_model.clone().or_else(|| {
-                (!egg.colors.is_empty()).then(|| format!("{ns}:item/{path}_spawn_egg"))
-            });
+            // `item_model` names an item model definition,
+            // `assets/<ns>/items/<path>.json`: the content root writes the
+            // generated egg's as `items/<path>_spawn_egg.json`.
+            let model = egg
+                .item_model
+                .clone()
+                .or_else(|| (!egg.colors.is_empty()).then(|| format!("{ns}:{path}_spawn_egg")));
             if let Some(model) = model {
                 components.insert(
                     "minecraft:item_model".into(),
@@ -1515,7 +1519,7 @@ capabilities = ["registries"]
         );
         assert_eq!(
             egg.components["minecraft:item_model"],
-            serde_json::json!("ruby:item/bull_spawn_egg")
+            serde_json::json!("ruby:bull_spawn_egg")
         );
         assert_eq!(
             (e.solid, e.kinematic, e.carry_height),

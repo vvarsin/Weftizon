@@ -90,7 +90,7 @@ fn creative_tabs_keep_vanilla_items_missing_from_search() {
         states: 0,
         defaults: BTreeMap::new(),
         sounds: BTreeMap::new(),
-        tabs: vec![&tab],
+        tabs: vec![tab.clone()],
         names: BTreeMap::new(),
         entities: Vec::new(),
     };
@@ -2140,7 +2140,7 @@ fn custom_entities_join_the_root() {
     );
     assert_eq!(
         items["ghosts:ghost_spawn_egg"]["minecraft:item_model"],
-        "ghosts:item/ghost_spawn_egg"
+        "ghosts:ghost_spawn_egg"
     );
     assert!(
         out.join("assets/ghosts/items/ghost_spawn_egg.json")

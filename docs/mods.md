@@ -137,7 +137,9 @@ doesn't have are left out):
 ```
 
 They come after vanilla's tabs, ten to a page as NeoForge pages them; the
-buttons above the inventory turn the pages. The title is a lang key or English
+buttons above the inventory turn the pages. A mod that declares no tab gets one
+named after it with all its items, blocks' items and spawn eggs, so every
+installed mod's items are a page turn away. The title is a lang key or English
 text: `"title": "itemGroup.ruby"` uses that key from the mod's lang files, and a
 lang file's `itemGroup.<mod id>.<file name>` (`creative_tab/gems.json` →
 `itemGroup.ruby.gems`) translates any title. A mod's items join the search tab

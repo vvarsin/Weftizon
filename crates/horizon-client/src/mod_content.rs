@@ -34,6 +34,31 @@ pub struct ContentMod {
     pub content: Content,
 }
 
+/// The creative tab of a mod that declares none: every item it adds (its
+/// items, its blocks' items and its entities' spawn eggs) under its name, so
+/// an installed mod's items are on the creative inventory's pages as other
+/// loaders show them. None for a mod that adds no item.
+fn default_tab(m: &ContentMod) -> Option<CreativeTab> {
+    // `content.items` holds its entities' spawn eggs already.
+    let mut items: Vec<String> = m.content.items.iter().map(|i| i.id.clone()).collect();
+    items.extend(
+        m.content
+            .blocks
+            .iter()
+            .filter(|b| b.item)
+            .map(|b| b.id.clone()),
+    );
+    let mut seen = BTreeSet::new();
+    items.retain(|i| seen.insert(i.clone()));
+    let icon = items.first()?.clone();
+    Some(CreativeTab {
+        id: format!("{}:items", m.id),
+        title: title_case(&m.id),
+        icon,
+        items,
+    })
+}
+
 /// The mods' mob effects in registry order: by id, as items are. Their
 /// network ids follow vanilla's in this order.
 pub fn mob_effects(mods: &[ContentMod]) -> Vec<&MobEffect> {
@@ -461,8 +486,9 @@ struct Plan<'a> {
     sounds: BTreeMap<String, J>,
     /// Declared entities as (id, template), in mod and id order.
     entities: Vec<(String, String)>,
-    /// The mods' creative tabs, in mod order.
-    tabs: Vec<&'a CreativeTab>,
+    /// The mods' creative tabs, in mod order: a mod that declares none gets
+    /// one of all its items ([`default_tab`]).
+    tabs: Vec<CreativeTab>,
     /// The mods' English names of their items and blocks (`item.<ns>.<path>`,
     /// `block.<ns>.<path>`), for the search tab.
     names: BTreeMap<String, String>,
@@ -889,7 +915,11 @@ impl<'a> Plan<'a> {
         let mut tabs = Vec::new();
         let mut lang = BTreeMap::new();
         for m in &sorted {
-            tabs.extend(m.content.creative_tabs.iter());
+            if m.content.creative_tabs.is_empty() {
+                tabs.extend(default_tab(m));
+            } else {
+                tabs.extend(m.content.creative_tabs.iter().cloned());
+            }
             for ns in &m.content.namespaces {
                 let Ok(bytes) = m.content.file(&format!("assets/{ns}/lang/en_us.json")) else {
                     continue;
