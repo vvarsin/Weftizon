@@ -58,6 +58,9 @@ large_enum_variant = "allow"
 # And gfx-rs/wgpu#10714: on Windows, Vulkan waits for the acquire fence only in
 # FIFO (VSync), where it was meant to pace frames; with VSync off it made every
 # frame wait for the GPU to finish the one before (#4604).
+# And gfx-rs/wgpu#10484: Vulkan staging buffers (map-write, copy-source only)
+# go to host memory, not resizable-BAR VRAM, where NVIDIA's CPU writes ran at
+# ~17 MB/s and made every upload a frame spike.
 # Drop this and the folder once a wgpu release has these fixes.
 [patch.crates-io]
 wgpu-hal = { path = "third_party/wgpu-hal" }

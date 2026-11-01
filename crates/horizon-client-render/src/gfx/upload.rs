@@ -86,8 +86,39 @@ impl Uploads {
         );
     }
     /// Copy `bytes` into `target` at `offset`, as `Queue::write_buffer`
-    /// would, in the encoder's order.
+    /// would, in the encoder's order. With `HORIZON_SPIKES` on, a copy slower
+    /// than 20 ms (`HORIZON_SLOW_UPLOAD_MS`) is logged with its size and caller.
+    #[track_caller]
     pub fn buffer(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::Buffer,
+        offset: u64,
+        bytes: &[u8],
+    ) {
+        if !crate::spans::enabled() {
+            return self.copy(encoder, target, offset, bytes);
+        }
+        let started = std::time::Instant::now();
+        self.copy(encoder, target, offset, bytes);
+        let took = started.elapsed();
+        static LIMIT: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+        let limit = *LIMIT.get_or_init(|| {
+            std::env::var("HORIZON_SLOW_UPLOAD_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20.0)
+        });
+        if took.as_secs_f64() * 1000.0 >= limit {
+            log::info!(
+                "Horizon: slow upload {:.1} ms, {} bytes, from {}",
+                took.as_secs_f64() * 1000.0,
+                bytes.len(),
+                std::panic::Location::caller()
+            );
+        }
+    }
+    fn copy(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::Buffer,

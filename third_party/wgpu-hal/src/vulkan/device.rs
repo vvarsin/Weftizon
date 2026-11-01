@@ -1005,9 +1005,20 @@ impl crate::Device for super::Device {
         let is_cpu_read = desc.usage.contains(wgt::BufferUses::MAP_READ);
         let is_cpu_write = desc.usage.contains(wgt::BufferUses::MAP_WRITE);
 
+        // A staging buffer (written by the CPU, only ever copied from by the
+        // GPU) lives in host memory. gpu-allocator's `CpuToGpu` ranks
+        // DEVICE_LOCAL | HOST_VISIBLE (resizable BAR) first, and on NVIDIA the
+        // CPU's writes into that memory ran at about 17 MB/s in a windowed
+        // game (gfx-rs/wgpu#10484): 370 ms for 6.5 MB of clouds. `GpuToCpu`
+        // is host-visible system memory; the GPU's one copy out of it per
+        // frame costs far less than writing BAR memory.
+        let staging_only = is_cpu_write
+            && !is_cpu_read
+            && (desc.usage - (wgt::BufferUses::MAP_WRITE | wgt::BufferUses::COPY_SRC)).is_empty();
         let location = match (is_cpu_read, is_cpu_write) {
             (true, true) => gpu_allocator::MemoryLocation::CpuToGpu,
             (true, false) => gpu_allocator::MemoryLocation::GpuToCpu,
+            (false, true) if staging_only => gpu_allocator::MemoryLocation::GpuToCpu,
             (false, true) => gpu_allocator::MemoryLocation::CpuToGpu,
             (false, false) => gpu_allocator::MemoryLocation::GpuOnly,
         };
