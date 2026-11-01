@@ -561,6 +561,7 @@ impl MobTypes {
                 solid: e.solid,
                 melee_swing: e.melee_swing,
                 perfect_aim: e.perfect_aim,
+                block_chance: e.block_chance,
                 kinematic: e.kinematic,
                 carry_height: e.carry_height,
                 overlay: e.overlay.clone(),
@@ -2769,6 +2770,11 @@ impl Mob {
         };
         let angle = (to[0] * view[0] + to[1] * view[1]).clamp(-1.0, 1.0).acos();
         if angle > std::f64::consts::FRAC_PI_2 {
+            return false;
+        }
+        // A content mod's mob may block less than always (`block_chance`).
+        let chance = self.kind.custom.as_ref().map_or(1.0, |c| c.block_chance);
+        if chance < 1.0 && self.random.next_float() >= chance {
             return false;
         }
         self.extra.just_blocked = true;

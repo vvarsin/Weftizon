@@ -65,6 +65,8 @@ pub struct Entry {
     pub melee_swing: bool,
     #[serde(default)]
     pub perfect_aim: bool,
+    #[serde(default = "one")]
+    pub block_chance: f32,
     pub carry_height: Option<f64>,
     /// Atlas names of a layer over the body as lit as the skin, shown in
     /// turn, `overlay_ticks` each; empty for none.
@@ -419,6 +421,8 @@ pub struct Custom {
     pub melee_swing: bool,
     /// Shoots with no spread, arcing onto the target.
     pub perfect_aim: bool,
+    /// How often its raised shield stops a hit (1 always, as vanilla).
+    pub block_chance: f32,
     pub carry_height: Option<f64>,
     /// A layer over the body as lit as the skin, its frames in turn.
     pub overlay: Vec<String>,
