@@ -505,6 +505,24 @@ impl Game<'_> {
         horizon_client::mobs::monster_brain::set_attack_target(m, Some(Who::Mob(target)));
         true
     }
+    /// Makes mob `id` drop its target (`Mob.setTarget(null)`), and forget
+    /// who last hurt it, so it goes back to what it was doing. A mob that
+    /// thinks with a brain loses its attack target too. False when the mob
+    /// isn't there. API 78.
+    #[allow(dead_code)]
+    pub(super) fn native_clear_target(&mut self, id: u32) -> bool {
+        let Some(m) = self
+            .mobs
+            .iter_mut()
+            .find(|m| m.id == id && !m.removed && m.alive())
+        else {
+            return false;
+        };
+        m.ai.target = None;
+        m.ai.last_hurt_by = None;
+        horizon_client::mobs::monster_brain::set_attack_target(m, None);
+        true
+    }
     /// Puts `item` (`minecraft:iron_sword`, None for nothing) in mob `id`'s
     /// main hand, as `Mob.setItemSlot`: players see it, and a skeleton
     /// switches between its bow and melee goals by it

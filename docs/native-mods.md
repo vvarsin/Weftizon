@@ -583,6 +583,10 @@ centre: its move control aims there every tick (`MoveControl.setWantedPosition`,
 way) until it stands there, or for 2 seconds. Its path stops. `native_navigate` (accuracy 1) counts the next
 block as reached already; use this to move a mob one block. Bundles that use it need `"hooks": 77`.
 
+API 78 adds `native_clear_target(id)`: mob `id` drops its target (`Mob.setTarget(null)`) and forgets who last
+hurt it, so it goes back to what it was doing. False when the mob is not there. Bundles that use it need
+`"hooks": 78`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

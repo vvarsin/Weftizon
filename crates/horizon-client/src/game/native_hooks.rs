@@ -167,6 +167,9 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
+//! API 78 adds making a mob drop its target (`native_clear_target` in
+//! `native_world.rs`).
+//!
 //! API 77 adds stepping a mob onto one block (`native_step_to` in
 //! `native_mod_entities.rs`): its move control aims there each tick.
 //!
@@ -330,7 +333,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 77;
+pub(crate) const NATIVE_HOOKS_API: u32 = 78;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.
