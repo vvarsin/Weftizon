@@ -7140,10 +7140,12 @@ impl Game<'_> {
     /// both Shifts, or both Controls, are.
     fn heal_hold_latches(&mut self) {
         let (shift, control) = (self.modifiers.shift_key(), self.modifiers.control_key());
+        // Only the physical keys: `keys` holds the mappings' default keys, and
+        // its Left Shift is key.sneak wherever it is bound (Left Control,
+        // say), which the loop below lets go by its own binding.
         if !shift {
             for key in [KeyCode::ShiftLeft, KeyCode::ShiftRight] {
                 self.physical_keys.remove(&key);
-                self.keys.remove(&key);
             }
         }
         if !control {
