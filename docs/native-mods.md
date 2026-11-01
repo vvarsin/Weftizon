@@ -575,6 +575,9 @@ API 75 adds `native_block_blocks_motion(pos)`: false for a block with no collisi
 grass, flowers, fluids), true for every other block, None where no chunk is loaded. A mod that digs
 through the world uses it to leave what does not stand in the way. Bundles that use it need `"hooks": 75`.
 
+API 76 adds `native_swing(id)`: mob `id` swings its arm, as a zombie breaking a door does, and players
+around see it. False when the mob is not there. Bundles that use it need `"hooks": 76`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

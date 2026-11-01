@@ -167,6 +167,21 @@ impl Game<'_> {
             .hardness;
         (hardness >= 0.0).then_some(hardness)
     }
+    /// Swings mob `id`'s arm (`LivingEntity.swing`), which players around
+    /// see: a zombie hacking at a door, a mob mining its way. False when the
+    /// mob isn't there. API 76.
+    #[allow(dead_code)]
+    pub(super) fn native_swing(&mut self, id: u32) -> bool {
+        let Some(m) = self
+            .mobs
+            .iter_mut()
+            .find(|m| m.id == id && !m.removed && m.alive())
+        else {
+            return false;
+        };
+        m.swing();
+        true
+    }
     /// Whether the block at `pos` can stop a mob: false for a block with
     /// no collision shape in any context (air, vines, grass, flowers,
     /// fluids), true for every other block. `None` where no chunk is
