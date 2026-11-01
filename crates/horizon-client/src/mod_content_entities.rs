@@ -126,6 +126,7 @@ pub(super) fn build(
                 components: e.components.clone(),
                 solid: e.solid,
                 kinematic: e.kinematic,
+                melee_swing: e.melee_swing,
                 carry_height: e.carry_height,
                 overlay: e
                     .overlay

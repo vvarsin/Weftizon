@@ -873,7 +873,9 @@ fn template_setup(
             if player {
                 player_model_visibility(p, m.extra.hidden_model_parts, m.extra.spectator);
             }
-            if m.ai.aggressive && !bow {
+            // A mod's mob declared `melee_swing` keeps the plain one-arm swing.
+            let swings = m.kind.custom.as_ref().is_some_and(|c| c.melee_swing);
+            if m.ai.aggressive && !bow && !swings {
                 // SkeletonModel melee pose.
                 let sw = s.swing;
                 let s2 = (sw * PI).msin();

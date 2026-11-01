@@ -393,6 +393,9 @@ A declaration can also make an entity a platform: `"solid": true` blocks players
 `"kinematic": true` makes it a moving platform that carries a player standing on top; `carry_height` is the
 height above its top a player may ride. Weft's block decks (`blocks(&DECK)`) are still later.
 
+`"melee_swing": true` makes an entity whose template raises both arms to fight (a skeleton holding a sword, a
+zombie) hold its weapon in one hand and swing that arm, as a vindicator or a piglin does.
+
 #### Entity behaviour
 
 `goals` and `targets` give a declared entity an AI of its own, from a fixed vocabulary (Weft's `goals(..)`); each

@@ -92,6 +92,7 @@ pub(crate) struct EntityFile {
     spawn_egg: Option<SpawnEgg>,
     solid: Option<bool>,
     kinematic: Option<bool>,
+    melee_swing: Option<bool>,
     carry_height: Option<f64>,
     /// A layer drawn over the body as lit as the skin: one texture or frames.
     overlay: Option<crate::creaking::OverlayFile>,
@@ -174,6 +175,9 @@ pub struct Entity {
     pub solid: bool,
     /// Weft's `kinematic()`: a moving platform; players on top move with it.
     pub kinematic: bool,
+    /// A template that raises both arms to fight (a skeleton, a zombie)
+    /// swings one arm instead, as a vindicator or a piglin does.
+    pub melee_swing: bool,
     /// How high above its top a player may ride it (Weft's `carry_height`).
     pub carry_height: Option<f64>,
     /// A layer over the body as lit as the skin (`overlay`).
@@ -474,6 +478,7 @@ impl Entity {
             spawn_egg: decl.spawn_egg,
             solid: decl.solid.unwrap_or(false),
             kinematic: decl.kinematic.unwrap_or(false),
+            melee_swing: decl.melee_swing.unwrap_or(false),
             carry_height: decl.carry_height,
             overlay,
             creaking: decl.creaking,

@@ -559,6 +559,7 @@ impl MobTypes {
                 scale: e.scale,
                 loot_table: e.loot_table.clone(),
                 solid: e.solid,
+                melee_swing: e.melee_swing,
                 kinematic: e.kinematic,
                 carry_height: e.carry_height,
                 overlay: e.overlay.clone(),

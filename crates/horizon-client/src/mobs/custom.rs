@@ -61,6 +61,8 @@ pub struct Entry {
     pub solid: bool,
     #[serde(default)]
     pub kinematic: bool,
+    #[serde(default)]
+    pub melee_swing: bool,
     pub carry_height: Option<f64>,
     /// Atlas names of a layer over the body as lit as the skin, shown in
     /// turn, `overlay_ticks` each; empty for none.
@@ -411,6 +413,8 @@ pub struct Custom {
     /// Weft's `solid()` and `kinematic()` platform flags.
     pub solid: bool,
     pub kinematic: bool,
+    /// Fights with a one-arm swing, not the template's raised arms.
+    pub melee_swing: bool,
     pub carry_height: Option<f64>,
     /// A layer over the body as lit as the skin, its frames in turn.
     pub overlay: Vec<String>,
