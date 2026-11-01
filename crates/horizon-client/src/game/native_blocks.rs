@@ -167,6 +167,20 @@ impl Game<'_> {
             .hardness;
         (hardness >= 0.0).then_some(hardness)
     }
+    /// Whether the block at `pos` can stop a mob: false for a block with
+    /// no collision shape in any context (air, vines, grass, flowers,
+    /// fluids), true for every other block. `None` where no chunk is
+    /// loaded. API 75.
+    #[allow(dead_code)]
+    pub(super) fn native_block_blocks_motion(&self, pos: [i32; 3]) -> Option<bool> {
+        self.native_block_at(pos)?;
+        let state = self.world.block(pos[0], pos[1], pos[2]);
+        Some(
+            self.collision
+                .collision_block(state)
+                .is_ok_and(|b| !b.empty_shape),
+        )
+    }
     /// Shows `breaker`'s crack on the block at `pos` to every player near
     /// it, as a zombie breaking a door does (`Level.destroyBlockProgress`):
     /// `progress` 0 to 9, anything else takes the crack away. One crack per
