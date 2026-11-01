@@ -578,6 +578,11 @@ through the world uses it to leave what does not stand in the way. Bundles that 
 API 76 adds `native_swing(id)`: mob `id` swings its arm, as a zombie breaking a door does, and players
 around see it. False when the mob is not there. Bundles that use it need `"hooks": 76`.
 
+API 77 adds `native_step_to(id, target, speed)`: mob `id` moves straight toward `target`, with no path
+(`MoveControl.setWantedPosition`), jumping a block up on the way. Use it for a step onto the next block,
+which `native_navigate` treats as already reached. It stops the mob's navigation. Bundles that use it need
+`"hooks": 77`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into
