@@ -785,7 +785,9 @@ impl Goal for BowAttack {
             return;
         };
         let d = m.distance_sqr(t.position);
-        let sees = m.sees(cx.w, who);
+        // A sharpshooter counts a blocked arrow path as not seeing: it walks
+        // toward its target until the shot is clear, not stands drawn.
+        let sees = m.sees(cx.w, who) && clear_shot(m, cx.w, who);
         if sees != (self.see_time > 0) {
             self.see_time = 0;
         }
@@ -859,6 +861,31 @@ impl Goal for BowAttack {
 pub fn bow_power(ticks: i32) -> f32 {
     let t = ticks as f32 / 20.0;
     ((t * t + t * 2.0) / 3.0).min(1.0)
+}
+/// Whether a sharpshooter's (`perfect_aim`) arrow would get to `who`: its
+/// arc, from where the arrow starts to the target's lower third, clear of
+/// blocks. Seeing eye to eye is not enough: the arrow flies lower and
+/// curves, and hit a ledge in between. Always true for other mobs.
+pub fn clear_shot(m: &Mob, w: &super::MobWorld, who: Who) -> bool {
+    if !m.kind.custom.as_ref().is_some_and(|c| c.perfect_aim) {
+        return true;
+    }
+    let Some(t) = w.target_info(who) else {
+        return false;
+    };
+    let start = Vec3::new(m.position.x, m.eye_y() - 0.1, m.position.z);
+    let height = t.bounds.max_position().y - t.bounds.min_position().y;
+    let end = Vec3::new(t.position.x, t.position.y + height / 3.0, t.position.z);
+    // The arc's top, halfway: the fall made up for over half the flight.
+    let ticks = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2) + (end.z - start.z).powi(2))
+        .sqrt()
+        / 1.6;
+    let mid = Vec3::new(
+        (start.x + end.x) / 2.0,
+        (start.y + end.y) / 2.0 + 0.05 * ticks * ticks / 8.0,
+        (start.z + end.z) / 2.0,
+    );
+    w.line_of_sight(start, mid) && w.line_of_sight(mid, end)
 }
 /// AbstractSkeleton.performRangedAttack: aim 20% above the target's lower
 /// third, speed 1.6, uncertainty 14 - 4 * difficulty.
