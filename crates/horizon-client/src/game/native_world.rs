@@ -477,6 +477,34 @@ impl Game<'_> {
         }
         true
     }
+    /// Sends mob `id` after another mob `target` (a defender after an
+    /// invader): it targets it as a mob targets one that hit it
+    /// (`Mob.setTarget`), and a mob that thinks with a brain gets it as its
+    /// attack target. The mob drops it once it dies. False when either is not
+    /// there, or they are the same mob. API 72.
+    pub(super) fn native_target_mob(&mut self, id: u32, target: u32) -> bool {
+        use horizon_client::mobs::Who;
+        if id == target
+            || !self
+                .mobs
+                .iter()
+                .any(|m| m.id == target && !m.removed && m.alive())
+        {
+            return false;
+        }
+        let Some(m) = self
+            .mobs
+            .iter_mut()
+            .find(|m| m.id == id && !m.removed && m.alive())
+        else {
+            return false;
+        };
+        m.ai.target = Some(Who::Mob(target));
+        m.ai.last_hurt_by = Some(Who::Mob(target));
+        m.ai.last_hurt_by_time = m.age as i32;
+        horizon_client::mobs::monster_brain::set_attack_target(m, Some(Who::Mob(target)));
+        true
+    }
 }
 
 /// Creaking hearts in trees for native mods (API 69).

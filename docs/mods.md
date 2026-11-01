@@ -378,8 +378,11 @@ spawn egg is generated as item `<id>_spawn_egg`, copying a vanilla egg and carry
 `"spawn_egg": {"colors": [10, 20]}`. The colours make a simple egg item model and texture automatically;
 `"item_model": "mymod:item/ghost_spawn_egg"` names your own model and texture instead. Add the item name
 to the lang (`item.<mod>.<name>_spawn_egg`). If no key is present, the content root adds a default
-name for the item, block, entity and spawn egg; your own lang value wins. Not yet: armour and
-held items on a model of the mod's own, and the template's extra layers (a sheep's wool) on one.
+name for the item, block, entity and spawn egg; your own lang value wins. A model of the mod's own wears
+the template's armour models and holds items in the bone named `rightArm`/`leftArm`; armour is drawn
+from the item's `equippable.asset_id`, so a mod's own armour (`assets/<id>/equipment/<name>.json` and
+`textures/entity/equipment/humanoid*/<name>.png`) shows on any mob. Not yet: the template's other
+extra layers (a sheep's wool) on a model of the mod's own.
 
 A declaration can also make an entity a platform: `"solid": true` blocks players and lets them stand on it;
 `"kinematic": true` makes it a moving platform that carries a player standing on top; `carry_height` is the

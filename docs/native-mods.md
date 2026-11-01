@@ -556,6 +556,10 @@ API 70 adds hurting a player, a sound from any server hook, and light levels
 API 71 adds explosions and sending a mob after one player
 ([Explosions and hunted players](#explosions-and-hunted-players)). Bundles that use them need `"hooks": 71`.
 
+API 72 adds `native_target_mob(id, target)`: mob `id` goes after mob `target` (a defender after an
+invader), as a mob goes after one that hit it; a mob with a brain gets it as its attack target. False when
+either is not there or they are the same mob. Bundles that use it need `"hooks": 72`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

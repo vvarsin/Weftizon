@@ -536,6 +536,7 @@ impl MobTypes {
                 custom::plan(&e.id, e.goals.as_deref(), e.targets.as_deref(), &item_tag);
             let mut extra = custom::Custom {
                 id: custom::intern(&e.id),
+                template: custom::intern(&e.template),
                 goals,
                 targets,
                 components: e

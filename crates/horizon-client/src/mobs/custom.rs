@@ -384,6 +384,9 @@ pub fn register(m: &mut Mob) {
 pub struct Custom {
     /// Its id (`mymod:ghost`), one copy for the game's life.
     pub id: &'static str,
+    /// Its template's id (`minecraft:zombie`): the vanilla class whose
+    /// synched data it carries.
+    pub template: &'static str,
     pub textures: Vec<String>,
     pub glows: Vec<Option<String>>,
     pub emissive: Option<String>,

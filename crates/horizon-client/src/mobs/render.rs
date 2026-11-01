@@ -534,9 +534,12 @@ pub fn layers(m: &Mob, age: f32) -> Vec<Layer> {
     let Some(c) = &m.kind.custom else {
         return template_layers(m, age);
     };
-    // The template's layers fit the template's model only.
+    // The template's layers fit the template's model only; its armour is
+    // worn over a model of the mod's own too.
     let mut v = if c.own_model {
-        Vec::new()
+        let mut v = Vec::new();
+        humanoid_armor(m, &mut v);
+        v
     } else {
         template_layers(m, age)
     };
@@ -943,6 +946,60 @@ fn template_layers(m: &Mob, age: f32) -> Vec<Layer> {
     humanoid_armor(m, &mut v);
     v
 }
+/// Every item's `equippable.asset_id` (`minecraft:netherite`,
+/// `mymod:ruby`), read from the content root's `items.json` by
+/// [`load_equipment_assets`].
+static EQUIPMENT_ASSETS: std::sync::RwLock<Option<std::collections::HashMap<String, String>>> =
+    std::sync::RwLock::new(None);
+
+/// Reads the equipment asset of every wearable item in `root` (vanilla's and
+/// the content mods'), for the armour mobs wear.
+pub fn load_equipment_assets(root: &std::path::Path) {
+    let Some(items) = std::fs::read(root.join("items.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+    else {
+        return;
+    };
+    let map = items
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, c)| {
+            let asset = c["minecraft:equippable"]["asset_id"].as_str()?;
+            Some((id.clone(), asset.to_owned()))
+        })
+        .collect();
+    *EQUIPMENT_ASSETS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(map);
+}
+
+/// The equipment asset an armour item is drawn with, as (namespace, path):
+/// its `equippable.asset_id`, or, before the items are read (tests), the
+/// material its vanilla name says (`golden_helmet` is `gold`).
+fn equipment_asset(item: &str) -> Option<(String, String)> {
+    if let Some(map) = EQUIPMENT_ASSETS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+    {
+        let asset = map.get(item)?;
+        let (ns, path) = asset.split_once(':').unwrap_or(("minecraft", asset));
+        return Some((ns.to_owned(), path.to_owned()));
+    }
+    let name = item.strip_prefix("minecraft:")?;
+    let material = ["helmet", "chestplate", "leggings", "boots"]
+        .iter()
+        .find_map(|layer| name.strip_suffix(&format!("_{layer}")))?;
+    let asset = match material {
+        "golden" => "gold",
+        "turtle" => "turtle_scute",
+        other => other,
+    };
+    Some(("minecraft".into(), asset.into()))
+}
+
 /// `HumanoidArmorLayer`: the armour models of the mob's main model with the
 /// equipment textures (leather tinted, with its overlay).
 fn humanoid_armor(m: &Mob, v: &mut Vec<Layer>) {
@@ -950,7 +1007,9 @@ fn humanoid_armor(m: &Mob, v: &mut Vec<Layer>) {
     if super::equine::is_equine(m.species()) || avatar(m) {
         return;
     }
-    let (model, _) = body(m);
+    // The template's armour models: a content mod's mob with a model of its
+    // own wears its template's armour, as the template's animation poses it.
+    let (model, _) = template_body(m);
     let Some(base) = model.strip_suffix("#main") else {
         return;
     };
@@ -961,21 +1020,23 @@ fn humanoid_armor(m: &Mob, v: &mut Vec<Layer>) {
         (&m.extra.feet, &m.extra.armor[3], "boots"),
     ];
     for (item, stack, layer) in slots {
-        let Some(name) = item.as_deref().and_then(|i| i.strip_prefix("minecraft:")) else {
+        let Some(item) = item.as_deref() else {
             continue;
         };
-        let Some(material) = name.strip_suffix(&format!("_{layer}")) else {
+        // `equippable.asset_id`, which names a content mod's armour too.
+        let Some((namespace, asset)) = equipment_asset(item) else {
             continue;
         };
-        let asset = match material {
-            "golden" => "gold",
-            "turtle" => "turtle_scute",
-            other => other,
-        };
+        let asset = asset.as_str();
         let folder = if layer == "leggings" {
             "humanoid_leggings"
         } else {
             "humanoid"
+        };
+        let texture = if namespace == "minecraft" {
+            format!("entity/equipment/{folder}/{asset}")
+        } else {
+            format!("{namespace}:entity/equipment/{folder}/{asset}")
         };
         let model = format!("{base}#{layer}");
         // EquipmentLayerRenderer.getColorForLayer: the leather layer takes
@@ -987,7 +1048,7 @@ fn humanoid_armor(m: &Mob, v: &mut Vec<Layer>) {
         };
         v.push(Layer {
             model: model.clone(),
-            texture: format!("entity/equipment/{folder}/{asset}"),
+            texture,
             color: tint,
             full_bright: false,
             scroll: 0.0,

@@ -437,7 +437,16 @@ fn mob_meta(
     meta: &mut Vec<(u8, i32, Value)>,
     defaults: &mut Vec<(u8, i32, Value)>,
 ) {
-    let kind = m.kind.id.as_str();
+    // A content mod's mob carries its template's synched data (a mod's piglin
+    // brute its zombification immunity, which with the dimension makes the
+    // client shake it).
+    let kind = m
+        .kind
+        .custom
+        .as_ref()
+        .map(|c| c.template)
+        .filter(|t| !t.is_empty())
+        .unwrap_or(m.kind.id.as_str());
     // Entity.DATA_SHARED_FLAGS_ID: on fire 0x01, sprinting 0x08 (a dashing
     // cat or ocelot), swimming 0x10 (a drowned under water,
     // `Drowned.setSwimming`), invisible 0x20 (the effect's flag) and glowing

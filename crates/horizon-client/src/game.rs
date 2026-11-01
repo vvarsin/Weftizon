@@ -18123,6 +18123,7 @@ fn load_world_rest(
             .collect();
         let mob_data = horizon_client::mobs::MobData::load(root, facts);
         horizon_client::mobs::trial_spawner::load_registry(root);
+        horizon_client::mobs::render::load_equipment_assets(root);
         Ok((mob_types, mob_data))
     };
     let load_transformers = || -> Result<_> {
