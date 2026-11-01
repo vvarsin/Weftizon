@@ -1045,6 +1045,9 @@ pub struct Extra {
     /// (`BlocksAttacks.disable`, a mob's stand-in for the item cooldown).
     pub shield_down_until: i64,
     pub fall_flying: bool,
+    /// Crawling through a gap a block high (`Pose.SWIMMING` out of water):
+    /// a native mod's (`native_set_crawling`), its box 0.6 high.
+    pub crawling: bool,
     pub fall_fly_ticks: i32,
     /// `Entity.deltaMovementOnPreviousTick`: the velocity before this tick's
     /// move, which the elytra lean interpolates from (`getDeltaMovementLerped`).

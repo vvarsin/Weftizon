@@ -420,6 +420,10 @@ impl Mob {
             );
         }
         let (mut w, mut h, mut e) = (k.width as f32, k.height as f32, k.eye_height as f32);
+        // LivingEntity's SWIMMING dimensions: a crawling mob is 0.6 high.
+        if self.extra.crawling {
+            (h, e) = (0.6, 0.4);
+        }
         // Sniffer.DIGGING_DIMENSIONS: 0.4 lower, its eyes at 0.81.
         if k.species == super::Species::Sniffer && super::sniffer::digging(self) {
             (h, e) = (h - 0.4, 0.81);

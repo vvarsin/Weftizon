@@ -22,6 +22,8 @@ use super::{
 
 // `Pose.id` of the poses mobs take.
 pub const STANDING: u8 = 0;
+/// `Pose.SWIMMING`, which is also crawling out of water.
+pub const SWIMMING: u8 = 3;
 pub const SLEEPING: u8 = 2;
 pub const CROUCHING: u8 = 5;
 pub const LONG_JUMPING: u8 = 6;
@@ -46,6 +48,8 @@ pub fn pose_id(m: &Mob) -> u8 {
         Species::Frog | Species::Cat | Species::Ocelot | Species::Goat => m.extra.pose,
         // LivingEntity.startSleeping: the pose, with the bed in index 14.
         Species::Villager if villager::sleeping(m) => SLEEPING,
+        // A native mod's crawl (`native_set_crawling`).
+        _ if m.extra.crawling => SWIMMING,
         _ => STANDING,
     }
 }
@@ -53,6 +57,8 @@ pub fn pose_id(m: &Mob) -> u8 {
 /// `Entity.onSyncedDataUpdated(DATA_POSE)` on a client.
 pub fn set_pose(m: &mut Mob, id: u8) {
     let old = std::mem::replace(&mut m.extra.pose, id);
+    // A crawling mob lies down in the swimming pose (`isVisuallyCrawling`).
+    m.extra.crawling = id == SWIMMING;
     match m.species() {
         Species::Frog if old != id => frog::pose_changed(m),
         Species::Warden => warden::set_pose_id(m, id),

@@ -773,6 +773,10 @@ fn template_setup(
                 }
             }
             h.zombie = Some(m.ai.aggressive);
+            // Crawling (a native mod's): the swim stroke, as a player crawls.
+            if m.kind.anim != Anim::Drowned {
+                h.swim = m.extra.swim.amount(s.partial);
+            }
             h.holding = m.extra.main_hand.is_some();
             h.crouching = m.extra.crouching;
             h.passenger = m.extra.passenger;

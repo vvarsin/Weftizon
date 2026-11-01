@@ -592,6 +592,10 @@ API 79 adds `native_hand_break_ticks(pos)`: how many ticks a bare hand takes to 
 (stone, ores, obsidian); 1 for an instant block, None for an unbreakable one or where no chunk is loaded. A
 mob that digs as a player would uses it. Bundles that use it need `"hooks": 79`.
 
+API 80 adds `native_set_crawling(id, on)`: mob `id` crawls as a player does out of water (the swimming pose,
+its box 0.6 blocks high, a humanoid's swim stroke), so it fits a gap one block high; `false` stands it up
+again, only where it has room (false back while it doesn't). Bundles that use it need `"hooks": 80`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

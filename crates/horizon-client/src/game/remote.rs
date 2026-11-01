@@ -6079,6 +6079,15 @@ impl Game<'_> {
                 }
             } else if m.alive() {
                 m.body_rotation_tick();
+                // A crawling mob (a native mod's) lies down as a player
+                // crawls: the swim amount leans it over.
+                if m.extra.crawling
+                    || m.extra.swim.amount(1.0) > 0.0
+                        && m.species() != horizon_client::mobs::Species::Drowned
+                {
+                    let crawling = m.extra.crawling;
+                    m.extra.swim.tick(crawling, false);
+                }
             }
             // Squid.aiStep follows LivingEntity's interpolation and head turn.
             horizon_client::mobs::aquatic::squid_client_step(m, &mut mob_fx);

@@ -185,6 +185,34 @@ impl Game<'_> {
         let per = if facts.requires_tool { 100.0 } else { 30.0 };
         Some(((facts.hardness * per).ceil() as u32).max(1))
     }
+    /// Makes mob `id` crawl (`on`) or stand: crawling it takes the swimming
+    /// pose out of water as a player crawls, its box 0.6 blocks high, so it
+    /// fits a gap one block high. It only stands up where it has room.
+    /// False when the mob isn't there, or it can't stand up there yet.
+    /// API 80.
+    #[allow(dead_code)]
+    pub(super) fn native_set_crawling(&mut self, id: u32, on: bool) -> bool {
+        let Some(i) = self
+            .mobs
+            .iter()
+            .position(|m| m.id == id && !m.removed && m.alive())
+        else {
+            return false;
+        };
+        if !on && self.mobs[i].extra.crawling {
+            // Standing needs its whole height clear.
+            self.mobs[i].extra.crawling = false;
+            let bounds = self.mobs[i].bounds();
+            let clear = self.mob_world_base(&[]).no_collision(bounds);
+            if !clear {
+                self.mobs[i].extra.crawling = true;
+                return false;
+            }
+        }
+        self.mobs[i].extra.crawling = on;
+        self.mobs[i].needs_sync = true;
+        true
+    }
     /// Swings mob `id`'s arm (`LivingEntity.swing`), which players around
     /// see: a zombie hacking at a door, a mob mining its way. False when the
     /// mob isn't there. API 76.
