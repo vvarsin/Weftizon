@@ -2842,6 +2842,11 @@ impl Mob {
         if source.is_fire() && (self.kind.flags.fire_immune) && !reflected {
             return false;
         }
+        // LivingEntity.hurtServer: fire does nothing to a mob with Fire
+        // Resistance (it still burns, as a player with it does).
+        if source.is_fire() && self.has_effect("minecraft:fire_resistance") {
+            return false;
+        }
         // Native mods may stop the hit or change what it deals (Weft's
         // `question::HURT` and `chain::DAMAGE`), before the mob reacts to it.
         let by_player = source.attacker == Some(Who::Player);
@@ -3807,6 +3812,22 @@ mod mob_shield_tests {
     fn a_shield_does_not_stop_a_fall() {
         let mut m = guard();
         assert!(m.damage(2.0, Damage::fall()));
+    }
+
+    /// LivingEntity.hurtServer: Fire Resistance stops fire, and only fire.
+    #[test]
+    fn fire_resistance_stops_burning_but_not_a_fall() {
+        let mut m = Mob::new(1, kind(), Vec3::ZERO, 0.0);
+        let health = m.health;
+        assert!(m.damage(1.0, Damage::of(DamageKind::OnFire)));
+        assert_eq!(m.health, health - 1.0);
+        m.add_effect("minecraft:fire_resistance", 200, 0);
+        m.invulnerable = 0;
+        assert!(!m.damage(1.0, Damage::of(DamageKind::OnFire)));
+        assert!(!m.damage(1.0, Damage::of(DamageKind::Lava)));
+        assert_eq!(m.health, health - 1.0);
+        m.invulnerable = 0;
+        assert!(m.damage(1.0, Damage::fall()));
     }
 }
 #[cfg(test)]
