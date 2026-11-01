@@ -142,6 +142,10 @@ impl Poses {
             None => &mut self.dummy,
         }
     }
+    /// The pose a part named `name` has, if the model has one.
+    pub fn pose_of(&self, name: &str) -> Option<[f32; 9]> {
+        self.map.get(name).copied()
+    }
     pub fn pose(&self, part: &Part) -> [f32; 9] {
         self.map.get(&part.name).copied().unwrap_or(part.pose)
     }

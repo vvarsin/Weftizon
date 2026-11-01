@@ -1839,6 +1839,28 @@ fn render_visible(
         };
         layer_poses.reset(&part);
         anim::setup(m, &s, &mut layer_poses, &data.animations);
+        // Armour over a content mod's own model: each piece sits on that
+        // model's joint (its pivot and turn), not the template's, so it
+        // follows a body built thinner or longer.
+        if m.kind.custom.as_ref().is_some_and(|c| c.own_model)
+            && layer.texture.contains("equipment/")
+        {
+            for name in [
+                "head",
+                "hat",
+                "body",
+                "right_arm",
+                "left_arm",
+                "right_leg",
+                "left_leg",
+            ] {
+                if layer_poses.has(name)
+                    && let Some(joint) = poses.pose_of(name)
+                {
+                    *layer_poses.get(name) = joint;
+                }
+            }
+        }
         if matches!(m.species(), Species::Villager | Species::ZombieVillager)
             && let Some((folder, variant)) = layer
                 .texture
