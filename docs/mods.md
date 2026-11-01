@@ -393,6 +393,10 @@ A declaration can also make an entity a platform: `"solid": true` blocks players
 `"kinematic": true` makes it a moving platform that carries a player standing on top; `carry_height` is the
 height above its top a player may ride. Weft's block decks (`blocks(&DECK)`) are still later.
 
+`"swims": true` adds vanilla's FloatGoal on top of the template's goals, so a template that sinks (a skeleton) swims
+up in water and lava and keeps the rest of its AI. A `goals` list does the same with `{ "goal": "float" }`, but
+replaces the template's goals.
+
 `"melee_swing": true` makes an entity whose template raises both arms to fight (a skeleton holding a sword, a
 zombie) hold its weapon in one hand and swing that arm, as a vindicator or a piglin does.
 `"perfect_aim": true` makes a skeleton-like shooter's arrows fly with no spread, arced to make up for their fall.

@@ -94,6 +94,7 @@ pub(crate) struct EntityFile {
     kinematic: Option<bool>,
     melee_swing: Option<bool>,
     perfect_aim: Option<bool>,
+    swims: Option<bool>,
     block_chance: Option<f32>,
     carry_height: Option<f64>,
     /// A layer drawn over the body as lit as the skin: one texture or frames.
@@ -183,6 +184,9 @@ pub struct Entity {
     /// Its arrows fly without the skeleton's spread and arc to land on
     /// the target.
     pub perfect_aim: bool,
+    /// Swims up in water and lava (FloatGoal) on top of the template's
+    /// goals: a skeleton that would sink.
+    pub swims: bool,
     /// How often (0 to 1) its raised shield stops a hit from in front.
     pub block_chance: f32,
     /// How high above its top a player may ride it (Weft's `carry_height`).
@@ -487,6 +491,7 @@ impl Entity {
             kinematic: decl.kinematic.unwrap_or(false),
             melee_swing: decl.melee_swing.unwrap_or(false),
             perfect_aim: decl.perfect_aim.unwrap_or(false),
+            swims: decl.swims.unwrap_or(false),
             block_chance: decl.block_chance.unwrap_or(1.0).clamp(0.0, 1.0),
             carry_height: decl.carry_height,
             overlay,

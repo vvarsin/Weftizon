@@ -65,6 +65,8 @@ pub struct Entry {
     pub melee_swing: bool,
     #[serde(default)]
     pub perfect_aim: bool,
+    #[serde(default)]
+    pub swims: bool,
     #[serde(default = "one")]
     pub block_chance: f32,
     pub carry_height: Option<f64>,
@@ -353,6 +355,12 @@ pub fn register(m: &mut Mob) {
             }
         }
     }
+    // `swims`: FloatGoal at the top, its constructor letting the
+    // navigation float, whatever goals it has.
+    if c.swims {
+        m.ai.goals.add(0, Float);
+        m.ai.nav.can_float = true;
+    }
     if let Some(list) = &c.targets {
         m.ai.targets.clear();
         for p in list {
@@ -421,6 +429,8 @@ pub struct Custom {
     pub melee_swing: bool,
     /// Shoots with no spread, arcing onto the target.
     pub perfect_aim: bool,
+    /// Swims up (FloatGoal) besides the template's goals.
+    pub swims: bool,
     /// How often its raised shield stops a hit (1 always, as vanilla).
     pub block_chance: f32,
     pub carry_height: Option<f64>,

@@ -561,6 +561,7 @@ impl MobTypes {
                 solid: e.solid,
                 melee_swing: e.melee_swing,
                 perfect_aim: e.perfect_aim,
+                swims: e.swims,
                 block_chance: e.block_chance,
                 kinematic: e.kinematic,
                 carry_height: e.carry_height,
