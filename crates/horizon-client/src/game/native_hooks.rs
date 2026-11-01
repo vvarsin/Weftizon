@@ -167,6 +167,10 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
+//! API 74 adds raising and lowering a mob's shield (`native_mob_shield`
+//! in `mob_shields.rs`). A raised shield blocks hits from in front, and
+//! an axe knocks it down for a while, as for a player.
+//!
 //! API 73 adds changing what a mob holds (`native_set_held` in
 //! `native_world.rs`).
 //!
@@ -316,7 +320,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 73;
+pub(crate) const NATIVE_HOOKS_API: u32 = 74;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

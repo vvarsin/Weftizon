@@ -1028,6 +1028,12 @@ pub struct Extra {
     /// only while a kinetic weapon is in use.
     pub stabbed: Option<Vec<(Who, i64)>>,
     pub blocking: bool,
+    /// A raised shield took the last hit (`applyItemBlocking` blocked it):
+    /// the game reads it to disable the shield (an axe) and clears it.
+    pub just_blocked: bool,
+    /// The game time until which an axe keeps this mob's shield down
+    /// (`BlocksAttacks.disable`, a mob's stand-in for the item cooldown).
+    pub shield_down_until: i64,
     pub fall_flying: bool,
     pub fall_fly_ticks: i32,
     /// `Entity.deltaMovementOnPreviousTick`: the velocity before this tick's
@@ -2709,6 +2715,55 @@ impl Mob {
         .map(|i| spawning::armor_stats(i))
         .fold((0.0, 0.0), |(a, t), (x, y)| (a + x, t + y))
     }
+    /// `LivingEntity.applyItemBlocking` for a mob with its shield raised
+    /// (`extra.blocking`, set by whoever raised it: a native mod): a shield
+    /// takes all of a hit whose source is within 90° of where the mob
+    /// looks, unless the damage type is in `#bypasses_shield`. A blocked
+    /// hit plays the shield's block sound and marks `just_blocked`.
+    pub fn shield_blocks(&mut self, source: &Damage) -> bool {
+        use DamageKind as K;
+        if !self.extra.blocking || self.extra.using_item <= 0 {
+            return false;
+        }
+        let blockable = matches!(
+            source.kind,
+            K::PlayerAttack
+                | K::MaceSmash
+                | K::Spear
+                | K::MobAttack
+                | K::Arrow
+                | K::Thrown
+                | K::Fireball
+                | K::Explosion
+                | K::Sting
+        );
+        let Some(src) = source.from else {
+            return false;
+        };
+        if !blockable {
+            return false;
+        }
+        // calculateViewVector(0, yHeadRot) against the flattened direction.
+        let yaw = (-self.head_yaw).to_radians();
+        let view = [f64::from(yaw.sin()), f64::from(yaw.cos())];
+        let (dx, dz) = (src[0] - self.position.x, src[2] - self.position.z);
+        let len = (dx * dx + dz * dz).sqrt();
+        let to = if len < 1.0e-4 {
+            [0.0, 0.0]
+        } else {
+            [dx / len, dz / len]
+        };
+        let angle = (to[0] * view[0] + to[1] * view[1]).clamp(-1.0, 1.0).acos();
+        if angle > std::f64::consts::FRAC_PI_2 {
+            return false;
+        }
+        self.extra.just_blocked = true;
+        let pitch = 0.8 + self.random.next_float() * 0.4;
+        let at = self.center();
+        self.outbox
+            .push(MobEvent::Sound("item.shield.block", at, 1.0, pitch));
+        true
+    }
     /// `damage` of a blow whose causing entity is `aim` (`SulfurCube.knockback` reads it).
     pub fn damage_aimed(&mut self, amount: f32, source: Damage, aim: Option<Aim>) -> bool {
         self.attacker_aim = aim;
@@ -2783,6 +2838,9 @@ impl Mob {
             return false;
         };
         if !ai::accepts_damage(self, &source, amount) {
+            return false;
+        }
+        if self.shield_blocks(&source) {
             return false;
         }
         // IronGolem.hurtServer: the crack level before the damage, compared after.
@@ -3684,6 +3742,50 @@ mod spear_knockback_tests {
         let mut m = Mob::new(1, kind(), Vec3::ZERO, 0.0);
         assert!(m.damage(1.0, Damage::player([2.0, 0.0, 0.0])));
         assert!(m.velocity.x < 0.0, "velocity {:?}", m.velocity);
+    }
+}
+#[cfg(test)]
+mod mob_shield_tests {
+    use super::sensor_scan_tests::kind;
+    use super::*;
+    use horizon_core::geometry::Vec3;
+
+    /// A mob looking south (yaw 0, +z) with its shield up.
+    fn guard() -> Mob {
+        let mut m = Mob::new(1, kind(), Vec3::ZERO, 0.0);
+        m.head_yaw = 0.0;
+        m.extra.blocking = true;
+        m.extra.using_item = 1;
+        m
+    }
+
+    #[test]
+    fn a_raised_shield_takes_a_hit_from_in_front() {
+        let mut m = guard();
+        let health = m.health;
+        assert!(!m.damage(4.0, Damage::player([0.0, 0.0, 2.0])));
+        assert_eq!(m.health, health);
+        assert!(m.extra.just_blocked);
+        assert!(
+            m.outbox
+                .iter()
+                .any(|e| matches!(e, MobEvent::Sound("item.shield.block", ..)))
+        );
+    }
+
+    #[test]
+    fn a_hit_from_behind_gets_past_the_shield() {
+        let mut m = guard();
+        let health = m.health;
+        assert!(m.damage(4.0, Damage::player([0.0, 0.0, -2.0])));
+        assert_eq!(m.health, health - 4.0);
+        assert!(!m.extra.just_blocked);
+    }
+
+    #[test]
+    fn a_shield_does_not_stop_a_fall() {
+        let mut m = guard();
+        assert!(m.damage(2.0, Damage::fall()));
     }
 }
 #[cfg(test)]

@@ -560,6 +560,17 @@ API 72 adds `native_target_mob(id, target)`: mob `id` goes after mob `target` (a
 invader), as a mob goes after one that hit it; a mob with a brain gets it as its attack target. False when
 either is not there or they are the same mob. Bundles that use it need `"hooks": 72`.
 
+API 73 adds `native_set_held(id, item)`: puts `item` (or nothing) in mob `id`'s main hand, as
+`Mob.setItemSlot` does. A skeleton switches between its bow and melee goals by it. Bundles that use it need
+`"hooks": 73`.
+
+API 74 adds `native_mob_shield(id, raise)`: raises or lowers the shield of mob `id`, from the hand that holds
+an item with `blocks_attacks` (the off hand first). A raised shield takes all of a hit from within 90° of
+where the mob looks (melee, arrows, thrown things, explosions), with the shield's block sound. An axe hit
+knocks it down for the axe's `disable_blocking_seconds`, with the break sound, as for a player. False when
+the mob is not there, holds no shield, or an axe keeps the shield down. Bundles that use it need
+`"hooks": 74`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

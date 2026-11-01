@@ -1459,6 +1459,14 @@ impl Game<'_> {
         let mut hurt = false;
         let mut infested = false;
         let aim = self.attacker_aim(source.attacker);
+        // An axe-wielding attacker knocks a raised shield down.
+        let disable = match source.attacker {
+            Some(Who::Mob(id)) if source.kind == DamageKind::MobAttack => {
+                self.mob_disable_seconds(id)
+            }
+            _ => 0.0,
+        };
+        self.mob_shield_clear(target);
         if let Some(t) = self.mobs.iter_mut().find(|m| m.id == target) {
             let hit = t.damage_aimed(amount, source, aim);
             hurt = hit;
@@ -1481,6 +1489,7 @@ impl Game<'_> {
                 }
             }
         }
+        self.mob_shield_after_hit(target, disable);
         if hurt {
             self.resolve_player_responsible(target, source);
         }

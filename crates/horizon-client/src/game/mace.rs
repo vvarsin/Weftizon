@@ -215,8 +215,16 @@ impl Game<'_> {
         // The causing entity's aim, for what turns a blow by where it points
         // (`SulfurCube.knockback`).
         self.mobs[index].attacker_aim = aim;
+        self.mobs[index].extra.just_blocked = false;
         let hurt = self.mobs[index].damage_with(amount, source, Some(&mut breach));
         self.mobs[index].attacker_aim = None;
+        // Player.attack: an axe knocks the mob's raised shield down.
+        let disable = held
+            .as_ref()
+            .and_then(|s| self.items().get(&s.item))
+            .map_or(0.0, |i| i.disable_blocking_seconds);
+        let target = self.mobs[index].id;
+        self.mob_shield_after_hit(target, disable);
         if hurt && self.mobs[index].health != old_health {
             self.mob_damage_event(self.mobs[index].id);
         }

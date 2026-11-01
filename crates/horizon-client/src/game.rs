@@ -177,6 +177,7 @@ mod minecarts;
 mod mob_blocks;
 mod mob_gear;
 mod mob_looting;
+mod mob_shields;
 mod mob_sounds;
 mod mod_machines;
 mod mods;
