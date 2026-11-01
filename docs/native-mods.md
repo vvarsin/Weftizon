@@ -587,6 +587,11 @@ API 78 adds `native_clear_target(id)`: mob `id` drops its target (`Mob.setTarget
 hurt it, so it goes back to what it was doing. False when the mob is not there. Bundles that use it need
 `"hooks": 78`.
 
+API 79 adds `native_hand_break_ticks(pos)`: how many ticks a bare hand takes to break the block at `pos`
+(`BlockState.getDestroyProgress` with no tool): its hardness × 30, or × 100 when it needs a tool to drop
+(stone, ores, obsidian); 1 for an instant block, None for an unbreakable one or where no chunk is loaded. A
+mob that digs as a player would uses it. Bundles that use it need `"hooks": 79`.
+
 ## What the launcher does
 
 In the window: install a native mod from the Mods page, into the instance picked on the left ("Installs into

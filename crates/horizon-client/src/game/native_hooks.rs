@@ -167,6 +167,9 @@
 //! API 16 adds item slots for those block entities
 //! (`native_block_entity_container`), which hoppers, comparators and
 //! breaking the block use as they use vanilla's containers.
+//! API 79 adds how long a bare hand takes to break a block
+//! (`native_hand_break_ticks` in `native_blocks.rs`).
+//!
 //! API 78 adds making a mob drop its target (`native_clear_target` in
 //! `native_world.rs`).
 //!
@@ -333,7 +336,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 78;
+pub(crate) const NATIVE_HOOKS_API: u32 = 79;
 
 impl GameLevel<'_> {
     /// An authoritative server committed a changed state through `Level.setBlock`.

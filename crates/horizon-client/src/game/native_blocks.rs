@@ -167,6 +167,24 @@ impl Game<'_> {
             .hardness;
         (hardness >= 0.0).then_some(hardness)
     }
+    /// How many ticks a bare hand takes to break the block at `pos`
+    /// (`BlockState.getDestroyProgress` with no tool and no effects): its
+    /// hardness × 30, or × 100 when it needs a tool to drop (stone, ores,
+    /// obsidian). 1 for an instant block; `None` for an unbreakable one
+    /// (bedrock) or where no chunk is loaded. API 79.
+    #[allow(dead_code)]
+    pub(super) fn native_hand_break_ticks(&self, pos: [i32; 3]) -> Option<u32> {
+        self.native_block_at(pos)?;
+        let facts = self
+            .res
+            .facts()
+            .get(self.world.block(pos[0], pos[1], pos[2]));
+        if facts.hardness < 0.0 {
+            return None;
+        }
+        let per = if facts.requires_tool { 100.0 } else { 30.0 };
+        Some(((facts.hardness * per).ceil() as u32).max(1))
+    }
     /// Swings mob `id`'s arm (`LivingEntity.swing`), which players around
     /// see: a zombie hacking at a door, a mob mining its way. False when the
     /// mob isn't there. API 76.
