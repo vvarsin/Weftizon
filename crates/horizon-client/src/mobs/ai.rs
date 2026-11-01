@@ -553,6 +553,8 @@ pub fn tick(
     m.anim.begin_tick();
     m.age += 1;
     m.ai.seen_cache.clear();
+    // LivingEntity.collectEquipmentChanges: what it holds and wears counts.
+    super::equipment::refresh(m, w.items);
     if m.ai.last_hurt_by_player > 0 {
         m.ai.last_hurt_by_player -= 1;
     }
@@ -2211,7 +2213,12 @@ pub fn do_hurt_target(m: &mut Mob, who: Who, cx: &mut Cx) {
     if super::creaking::is_creaking(m) {
         super::creaking::on_attack(m, cx.events);
     }
-    let mut amount = m.attrs.attack_damage;
+    // With what it holds: an axe adds its damage (collectEquipmentChanges).
+    let mut amount = m
+        .extra
+        .equipment
+        .as_ref()
+        .map_or(m.attrs.attack_damage, |q| q.attack_damage);
     let from = [m.position.x, m.position.y, m.position.z];
     let source = Damage::mob(m.id, from);
     let first_event = cx.events.len();

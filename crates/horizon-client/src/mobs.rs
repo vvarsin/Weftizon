@@ -35,6 +35,7 @@ pub mod drops;
 pub mod enderman;
 pub mod equine;
 pub mod equip;
+pub mod equipment;
 pub mod farm;
 pub mod finalize;
 pub mod fox;
@@ -1031,6 +1032,8 @@ pub struct Extra {
     pub chest: Option<Arc<str>>,
     pub legs: Option<Arc<str>>,
     pub feet: Option<Arc<str>>,
+    /// What its held and worn items add (`equipment::refresh`), once known.
+    pub equipment: Option<Box<equipment::Equipment>>,
     /// The worn armour stacks (head to feet): the dyed colour and the
     /// trim of a piece are on the stack, not on its id.
     pub armor: [Option<crate::items::ItemStack>; 4],
@@ -2574,8 +2577,16 @@ impl Mob {
             previous_limb_speed: 0.0,
             swell: 0,
             previous_swell: 0,
-            // Mob.ambientSoundTime starts at 0.
-            ambient_timer: 0,
+            // Mob.ambientSoundTime starts at 0. A content mod's mobs start
+            // spread over two of their intervals instead (from the id, no
+            // random drawn): a crowd of them raised or loaded together
+            // otherwise talked in step for minutes.
+            ambient_timer: if kind.custom.is_some() {
+                let span = (kind.ambient_interval * 2).max(1) as u32;
+                -((id.wrapping_mul(2_654_435_761) % span) as i32)
+            } else {
+                0
+            },
             fall_distance: 0.0,
             stuck_multiplier: Vec3::ZERO,
             piston: Default::default(),
@@ -2719,6 +2730,11 @@ impl Mob {
                 .head
                 .as_deref()
                 .map_or((0.0, 0.0), spawning::horse_armor_stats);
+        }
+        // What the items' own modifiers say, once worked out (mod armour
+        // too); before that, vanilla's pieces by name.
+        if let Some(q) = &self.extra.equipment {
+            return (q.armor, q.toughness);
         }
         [
             &self.extra.head,
@@ -3137,7 +3153,12 @@ impl Mob {
         if creaking::is_creaking(self) && !creaking::can_move(self) {
             return;
         }
-        let power = power * (1.0 - self.attrs.knockback_resistance);
+        let resistance = self
+            .extra
+            .equipment
+            .as_ref()
+            .map_or(self.attrs.knockback_resistance, |q| q.knockback_resistance);
+        let power = power * (1.0 - resistance);
         if power <= 0.0 {
             return;
         }
