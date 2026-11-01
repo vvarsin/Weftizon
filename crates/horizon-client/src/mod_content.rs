@@ -2081,6 +2081,21 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
             &template_items,
             &mut tags,
         );
+        // The logs its creaking variants grow in: a creaking heart between
+        // two of them wakes as one between pale oak logs does.
+        let heart_logs: Vec<J> = m
+            .content
+            .entities
+            .iter()
+            .filter_map(|e| e.creaking.as_ref())
+            .flat_map(|c| c.heart_logs.iter().map(|l| J::Str(l.clone())))
+            .collect();
+        if !heart_logs.is_empty() {
+            let file = "data/c/tags/block/creaking_heart_logs.json";
+            tags.entry(file.to_owned())
+                .or_default()
+                .add(&m.id, file, false, false, &heart_logs);
+        }
     }
     // Spawn eggs with colours: a simple egg texture and generated item model.
     for m in mods {

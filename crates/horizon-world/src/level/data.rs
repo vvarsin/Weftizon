@@ -397,7 +397,17 @@ macro_rules! tags {
         pub struct Tags { $(pub $field: Arc<BlockSet>,)* }
         impl Tags {
             pub(super) fn resolve(all: &HashMap<String, Arc<BlockSet>>) -> Self {
-                Self { $($field: all.get(concat!("minecraft:", $name)).cloned().unwrap_or_default(),)* }
+                // A bare name is vanilla's (`minecraft:`); a full one (`c:...`)
+                // is a convention tag the content root writes.
+                let get = |name: &str| {
+                    let key = if name.contains(':') {
+                        name.to_owned()
+                    } else {
+                        format!("minecraft:{name}")
+                    };
+                    all.get(&key).cloned().unwrap_or_default()
+                };
+                Self { $($field: get($name),)* }
             }
         }
     };
@@ -461,6 +471,9 @@ tags! {
     enables_bubble_column_drag_down = "enables_bubble_column_drag_down",
     shulker_boxes = "shulker_boxes",
     pale_oak_logs = "pale_oak_logs",
+    // The logs content mods' creaking variants grow in (Grafted Creaking's
+    // woods): empty without mods, so a heart wants pale oak alone.
+    creaking_heart_logs = "c:creaking_heart_logs",
     convertible_to_mud = "convertible_to_mud",
     grows_crops = "grows_crops",
     candles = "candles",

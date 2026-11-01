@@ -22,13 +22,16 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         self.level.dimension() == Dimension::Overworld
             && (12600..23401).contains(&self.level.day_time().rem_euclid(24000))
     }
-    /// `CreakingHeartBlock.hasRequiredLogs`: pale oak logs along the axis.
+    /// `CreakingHeartBlock.hasRequiredLogs`: pale oak logs along the axis, or
+    /// the logs a content mod's creaking variant grows in
+    /// (`c:creaking_heart_logs`, Grafted Creaking's woods).
     pub(crate) fn heart_has_required_logs(&self, state: BlockStateId, pos: BlockPos) -> bool {
         let b = self.b;
         let axis = b.table.text(state, b.props.axis);
         axis_directions(axis).into_iter().all(|d| {
             let neighbour = self.state(rel(pos, d));
-            b.in_set(neighbour, &b.tags.pale_oak_logs)
+            (b.in_set(neighbour, &b.tags.pale_oak_logs)
+                || b.in_set(neighbour, &b.tags.creaking_heart_logs))
                 && b.table.text(neighbour, b.props.axis) == axis
         })
     }
