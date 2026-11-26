@@ -11,7 +11,7 @@ use horizon_client::mobs::{Damage, Mob, Who, custom};
 use horizon_core::geometry::Vec3;
 use horizon_world::nbt::Tag;
 
-/// A mod's entity as a native mod reads it (`native_entity`).
+/// A mob as a native mod reads it (`native_mob_view`).
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NativeEntity {
@@ -36,6 +36,26 @@ pub(crate) struct NativeEntity {
 }
 
 use horizon_client::hits::NativeDamage;
+
+fn view(m: &Mob, kind: &str) -> NativeEntity {
+    NativeEntity {
+        id: m.id,
+        kind: kind.to_owned(),
+        position: [m.position.x, m.position.y, m.position.z],
+        velocity: [m.velocity.x, m.velocity.y, m.velocity.z],
+        yaw: m.yaw,
+        pitch: m.head_pitch,
+        health: m.health,
+        max_health: m.attrs.max_health,
+        on_ground: m.on_ground,
+        age: m.age,
+        target: m.ai.target.map(|t| match t {
+            Who::Player => None,
+            Who::Mob(id) => Some(id),
+        }),
+        animation: m.extra.animation.as_ref().map(|a| a.name.clone()),
+    }
+}
 
 fn native_damage_of(d: &Damage, amount: f32) -> NativeDamage {
     let by_player = d.attacker == Some(Who::Player);
@@ -99,6 +119,27 @@ impl Game<'_> {
     }
     fn mod_mob_mut(&mut self, id: u32) -> Option<&mut Mob> {
         self.mobs.iter_mut().find(|m| m.id == id && !m.removed)
+    }
+    /// Entity `id` of this level, when it is a mob (a mod's or vanilla's):
+    /// its type, position, velocity, rotation, health, age, target and the
+    /// animation playing, read at once. Weftizon's (API 63, was
+    /// `native_entity` before upstream took that name for `EntityRef`).
+    pub(super) fn native_mob_view(&self, id: u32) -> Option<NativeEntity> {
+        self.mod_mob(id).map(|m| view(m, &m.kind.id))
+    }
+    /// Hurts mob `id` by `amount` of generic damage (armour and invulnerable
+    /// time count, as for any hit); false when the hit didn't land.
+    /// Weftizon's (was `native_hurt_entity` before upstream took that name).
+    pub(super) fn native_hurt_mob(&mut self, id: u32, amount: f32) -> bool {
+        if !(amount.is_finite() && amount > 0.0) {
+            return false;
+        }
+        self.mod_mob_mut(id).is_some_and(|m| {
+            m.damage(
+                amount,
+                Damage::of(horizon_client::mobs::DamageKind::Generic),
+            )
+        })
     }
     /// The ids of this level's alive entities of type `entity` (`mymod:ghost`).
     pub(super) fn native_entities_of(&self, entity: &str) -> Vec<u32> {

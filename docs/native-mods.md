@@ -4578,9 +4578,9 @@ declarations and a native mod's behaviour, as a Weft mod's `r.entity(..)` is. Th
 - **`native_entity_interact(entity, id, stack, claimed)`**: a player right clicks it, before the template's own
   interaction (Weft's `on_interact`); set `claimed` to take the click: the hand swings and nothing else happens. The
   acting player's state is swapped in, as for `native_use_item`.
-- Helpers, by entity id, for mobs of the level the hook runs in: `native_entity(id)` (type, position, velocity,
+- Helpers, by entity id, for mobs of the level the hook runs in: `native_mob_view(id)` (type, position, velocity,
   rotation, health, age, target, the animation playing), `native_entities_of(entity)`,
-  `native_set_entity_velocity`, `native_teleport_entity`, `native_hurt_entity` (generic damage),
+  `native_set_entity_velocity`, `native_teleport_entity`, `native_hurt_mob` (generic damage),
   `native_heal_entity`, `native_discard_entity` (no death, no loot) and `native_play_animation(id, name, repeat)`
   (Weft's `play_animation`: a keyframe animation of the entity's file in place of idle and walk, once or over and
   over, `""` to stop; every player who sees the entity sees it).
@@ -4625,7 +4625,7 @@ it runs where the world is simulated, for every player of it.
   particles, sound, drops without a tool when `drop`), `native_block_hardness(pos)` (stone 1.5, obsidian 50; `None`
   for bedrock and barriers) and `native_block_crack(breaker, pos, progress)` (the crack stage 0 to 9 every player
   near it sees, as a zombie's on a door; any other number clears it; one crack per breaker id).
-- Boss bars (`bossbars.rs`): `native_boss_bar(id, name, value, max, color)` makes or changes a custom bar shown to
+- Boss bars (`bossbars.rs`): `native_world_boss_bar(id, name, value, max, color)` makes or changes a custom bar shown to
   every player (the world saves it, as `/bossbar` bars are saved); `native_remove_boss_bar(id)` takes it away.
 - Players: `native_server_players()` (API 8) gives their positions and dimensions; `native_broadcast` writes to all
   of them.
@@ -4669,7 +4669,8 @@ API 70, `native_world.rs`, found missing while building InvasionV2 on this API:
   right-click). `attacker` is a mob to credit the hit to.
 - **`native_sound(sound, at, source, volume, pitch)`**: a sound for the players near `at`, from any server hook;
   `GameLevel::native_play_sound` (API 61) is for level hooks.
-- **`native_light(pos)`**: the block light and sky light at a position, 0 to 15 each.
+- **`native_light_at(pos)`**: the block light and sky light at a position, 0 to 15 each; `None` where no chunk is
+  loaded (upstream's `native_light(pos)` reads such a place as `(0, 0)`).
 
 Tested in a game (2026-10-31): InvasionV2's Nether Reactor hurt the player who lit it, played its sounds, and
 its waves glowed in glowstone light.
@@ -4678,13 +4679,18 @@ its waves glowed in glowstone light.
 
 API 71, `native_world.rs`, also found missing while building InvasionV2:
 
-- **`native_explode(center, power, fire, break_blocks)`**: an explosion as `Level.explode` makes one (TNT is
+- **`native_explode_here(center, power, fire, break_blocks)`**: an explosion in the level in place, as `Level.explode` makes one (TNT is
   power 4, a charged creeper 6; at most 32). It hurts and pushes what is near, breaks blocks unless
   `break_blocks` is false (they drop as TNT's do), and lights fires when `fire` is true.
 - **`native_target_player(id, uuid)`**: sends mob `id` after one player. The mob keeps that player over nearer
   ones while the player is a valid target (alive, not in creative or spectator), as a mob keeps a player who hit
   it. A mob with a brain (a piglin, a warden) gets the player as its attack target. False when the mob or the
   player is not there.
+
+Upstream Horizon later added helpers under four of these names with other signatures, so since the 2026-11-26
+sync Weftizon's are `native_mob_view` (was `native_entity`), `native_hurt_mob` (was `native_hurt_entity`),
+`native_light_at` (was `native_light`), `native_explode_here` (was `native_explode`) and `native_world_boss_bar`
+(was `native_boss_bar`); upstream's own take the old names. A mod made before the sync renames its calls.
 
 Tested in a game (2026-10-31): a diamond in the Nether Reactor's gold slots blew it up, and the guards it
 summons hunted the player who mined its shell.

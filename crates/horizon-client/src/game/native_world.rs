@@ -404,11 +404,48 @@ impl Game<'_> {
             });
         true
     }
+    /// The block light and sky light at `pos` (0 to 15 each) in the level in
+    /// place; None where no chunk is loaded (upstream's `native_light` reads
+    /// such a place as dark). Weftizon's API 70.
+    pub(super) fn native_light_at(&self, pos: [i32; 3]) -> Option<(u8, u8)> {
+        self.world
+            .loaded(pos[0], pos[2])
+            .then(|| self.native_light(pos))
+    }
 }
 
 /// Explosions and hunting one player for native mods (API 71).
 #[allow(dead_code)]
 impl Game<'_> {
+    /// An explosion at `center` of `power` (TNT 4, a charged creeper 6, at
+    /// most 32) in the level in place, as `Level.explode`: it hurts and pushes
+    /// what is near, breaks blocks unless `break_blocks` is false (drops as
+    /// TNT's do), and lights fires when `fire`. False for a power or position
+    /// that isn't one. Weftizon's API 71 (upstream's `native_explode` names
+    /// the dimension and the blast).
+    pub(super) fn native_explode_here(
+        &mut self,
+        center: [f64; 3],
+        power: f32,
+        fire: bool,
+        break_blocks: bool,
+    ) -> bool {
+        if !center.iter().all(|v| v.is_finite()) || !(power.is_finite() && power > 0.0) {
+            return false;
+        }
+        let interaction = if break_blocks {
+            super::explosion::BlockInteraction::DestroyWithDecay
+        } else {
+            super::explosion::BlockInteraction::Keep
+        };
+        match self.server_explode(center, power.min(32.0), interaction, fire) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("a native mod's explosion at {center:?}: {e}");
+                false
+            }
+        }
+    }
     /// Sends mob `id` after the player `uuid`: it targets them, and keeps
     /// them over nearer players while they are a valid target (alive, not in
     /// creative or spectator), as a mob keeps a player who hit it. A mob

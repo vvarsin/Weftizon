@@ -467,6 +467,57 @@ impl Game<'_> {
 // Native mods use these; nothing in Horizon does.
 #[allow(dead_code)]
 impl Game<'_> {
+    /// Shows boss bar `id` (`invasion:wave`) to every player of the world,
+    /// with `name` as its plain text, filled `value` of `max`, in `color`
+    /// (`red`, `blue`, `green`, `yellow`, `purple`, `white`, `pink`; any
+    /// other is white). Makes it the first time, changes it after: call it
+    /// as the numbers change. It is a custom bar, as `/bossbar add` makes:
+    /// the world saves it, and a player who joins later sees it from the
+    /// next call. Server-side. False when the world is a client's.
+    /// Weftizon's API 67 (was `native_boss_bar` before upstream took that
+    /// name for its per-player bars).
+    pub(super) fn native_world_boss_bar(
+        &mut self,
+        id: &str,
+        name: &str,
+        value: i32,
+        max: i32,
+        color: &str,
+    ) -> bool {
+        if self.remote.is_some() || id.is_empty() {
+            return false;
+        }
+        self.load_bossbars();
+        if self.bosses.bars.get(id).is_none() {
+            self.bosses.add_bar(id, sb::literal(name));
+            if let Some(b) = self.bosses.bars.get_mut(id) {
+                b.uuid = horizon_client::lan::playerdata::ints_uuid(
+                    horizon_client::save::insecure_uuid(&mut self.world.random),
+                );
+            }
+            self.ui.registries.bossbars = self.bosses.bars.ids();
+        }
+        let players: Vec<[i32; 4]> = self
+            .known_boss_players()
+            .into_iter()
+            .map(|(uuid, _)| uuid)
+            .collect();
+        let color = if bossbar::COLORS.contains(&color) {
+            color
+        } else {
+            "white"
+        };
+        let Some(b) = self.bosses.bars.get_mut(id) else {
+            return false;
+        };
+        b.name = sb::literal(name);
+        b.max = max.max(1);
+        b.value = value.clamp(0, b.max);
+        b.color = color.to_owned();
+        b.players = players;
+        self.publish_boss_bars();
+        true
+    }
     /// Takes boss bar `id` away from everyone and out of the world's save.
     /// Server-side. False when there was none.
     pub(super) fn native_remove_boss_bar(&mut self, id: &str) -> bool {
@@ -477,7 +528,7 @@ impl Game<'_> {
         if self.bosses.bars.get(id).is_none() {
             return false;
         }
-        self.bosses.bars.remove(id);
+        self.bosses.remove_bar(id);
         self.ui.registries.bossbars = self.bosses.bars.ids();
         self.publish_boss_bars();
         true
