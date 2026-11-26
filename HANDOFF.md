@@ -31,6 +31,12 @@ is next in the Weft port). This page only records the state an agent picks up.
   names; play only as an account that owns the game") is reverted. Keep it reverted on later syncs, and drop any
   other upstream change that makes an account, sign-in or online check mandatory to play.
 - InvasionV2 native mod repinned to this tree; NATIVE_HOOKS_API is now 645 (bundles at 413 still load).
+- Single player runs on the server thread, where the window's player is a guest. `guest_view`
+  (`game/lan_mobs.rs`) used to clear the guest's team allies, so mobs on the player's team (InvasionV2's
+  Skeleton Piglins) still hunted them; it now keeps them (492782d058). InvasionV2 is pinned to that commit.
+- Testing a game window on DP-1 without it flashing on the main monitor: copy the Save The City
+  `tools/desktop.py`, change its catcher's `indexOf("polytoria")` to `indexOf("horizon")`, `catch-start` before
+  launching and `catch-stop` after.
 
 ## First upstream sync (2026-11-26, to `fa7924b3fb`)
 
