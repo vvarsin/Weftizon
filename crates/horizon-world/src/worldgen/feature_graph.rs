@@ -86,12 +86,12 @@ pub enum FeatureDefinition {
     SteppedColumnCluster(Box<super::projected::SteppedColumnClusterFeature>),
     FallenTree(Box<super::tree::FallenTreeFeature>),
     NoOp,
-    ModBlob(mod_features::ModBlobFeature),
-    ModPillar(mod_features::ModPillarFeature),
-    ModPond(mod_features::ModPondFeature),
-    ModFall(mod_features::ModFallFeature),
-    ModPatch(mod_features::ModPatchFeature),
-    ModPlant(mod_features::ModPlantFeature),
+    ModBlob(Box<mod_features::ModBlobFeature>),
+    ModPillar(Box<mod_features::ModPillarFeature>),
+    ModPond(Box<mod_features::ModPondFeature>),
+    ModFall(Box<mod_features::ModFallFeature>),
+    ModPatch(Box<mod_features::ModPatchFeature>),
+    ModPlant(Box<mod_features::ModPlantFeature>),
     /// 1.20.1's `random_patch` (26.3 composes patches from count and offset
     /// modifiers instead): `tries` positions spread around the origin, each
     /// running the nested placed feature.
@@ -314,6 +314,118 @@ impl FeatureDefinition {
         blocks: Option<&FeatureBlockBindings<'_>>,
     ) -> Result<Self, DecodeError> {
         Self::decode(json, 0, &mut 65536, empty_tags, blocks)
+    }
+    /// Weftizon's mod feature types (TheAfterdark) and 1.20.1's `random_patch`, kept out of
+    /// `decode` so its stack frame stays small for deeply nested features.
+    #[inline(never)]
+    fn decode_mod_kind(
+        kind: &str,
+        json: &str,
+        object: &Object,
+        depth: usize,
+        remaining: &mut usize,
+        empty_tags: &BTreeSet<String>,
+        blocks: Option<&FeatureBlockBindings<'_>>,
+    ) -> Result<Self, DecodeError> {
+        match kind {
+            "the_afterdark:supported_disk" => super::disk::DiskFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("disk bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(Self::Disk),
+            "the_afterdark:pond" => mod_features::ModPondFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("pond bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModPond(Box::new(f))),
+            "the_afterdark:crystal_spike"
+            | "the_afterdark:additive_blob"
+            | "the_afterdark:additive_ground_blob"
+            | "the_afterdark:spiral"
+            | "the_afterdark:anvil_rock" => mod_features::ModBlobFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("blob bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModBlob(Box::new(f))),
+            "the_afterdark:catching_fall" => mod_features::ModFallFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("fall bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModFall(Box::new(f))),
+            "minecraft:random_patch" => {
+                // RandomPatchConfiguration: POSITIVE_INT tries (128) and
+                // NON_NEGATIVE_INT spreads (7, 3).
+                let int = |name, default, low| {
+                    super::optional(object, name)
+                        .map(|raw| super::int_range(raw, name, low, i32::MAX - 1))
+                        .transpose()
+                        .map(|value| value.unwrap_or(default))
+                };
+                Ok(Self::RandomPatch {
+                    tries: int("tries", 128, 1)?,
+                    xz_spread: int("xz_spread", 7, 0)?,
+                    y_spread: int("y_spread", 3, 0)?,
+                    feature: Box::new(PlacedFeatureDefinition::decode(
+                        required(object, "feature")?.get(),
+                        depth + 1,
+                        remaining,
+                        empty_tags,
+                        blocks,
+                    )?),
+                })
+            }
+            "the_afterdark:waterloggable_random_patch" => mod_features::ModPatchFeature::decode(
+                json,
+                blocks.ok_or(DecodeError::Field("patch bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModPatch(Box::new(f))),
+            "the_afterdark:cave_kelp" => mod_features::ModPlantFeature::decode(
+                json,
+                "minecraft:kelp",
+                blocks.ok_or(DecodeError::Field("kelp bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModPlant(Box::new(f))),
+            "the_afterdark:cave_pickle" => mod_features::ModPlantFeature::decode(
+                json,
+                "minecraft:sea_pickle",
+                blocks.ok_or(DecodeError::Field("pickle bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModPlant(Box::new(f))),
+            "the_afterdark:cave_seagrass" => mod_features::ModPlantFeature::decode(
+                json,
+                "minecraft:seagrass",
+                blocks.ok_or(DecodeError::Field("seagrass bindings"))?,
+                depth,
+                remaining,
+            )
+            .map(|f| Self::ModPlant(Box::new(f))),
+            _ if kind.starts_with("the_afterdark:") && kind.ends_with("_pillar") => {
+                let material = mod_features::pillar_material(kind)?;
+                mod_features::ModPillarFeature::decode(
+                    json,
+                    material,
+                    blocks.ok_or(DecodeError::Field("pillar bindings"))?,
+                    depth,
+                    remaining,
+                )
+                .map(|f| Self::ModPillar(Box::new(f)))
+            }
+            _ => BasicFeature::from_json(json).map(Self::Basic),
+        }
     }
     fn decode(
         json: &str,
@@ -669,91 +781,9 @@ impl FeatureDefinition {
                 )
                 .map(|f| Self::ProjectedPatchySquare(Box::new(f)))
             }
-            "the_afterdark:supported_disk" => super::disk::DiskFeature::decode(
-                json,
-                blocks.ok_or(DecodeError::Field("disk bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::Disk),
-            "the_afterdark:pond" => mod_features::ModPondFeature::decode(
-                json,
-                blocks.ok_or(DecodeError::Field("pond bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModPond),
-            "the_afterdark:crystal_spike"
-            | "the_afterdark:additive_blob"
-            | "the_afterdark:additive_ground_blob"
-            | "the_afterdark:spiral"
-            | "the_afterdark:anvil_rock" => mod_features::ModBlobFeature::decode(
-                json,
-                blocks.ok_or(DecodeError::Field("blob bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModBlob),
-            "the_afterdark:catching_fall" => mod_features::ModFallFeature::decode(
-                json,
-                blocks.ok_or(DecodeError::Field("fall bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModFall),
-            "minecraft:random_patch" => {
-                // RandomPatchConfiguration: POSITIVE_INT tries (128) and
-                // NON_NEGATIVE_INT spreads (7, 3).
-                let int = |name, default, low| {
-                    super::optional(&object, name)
-                        .map(|raw| super::int_range(raw, name, low, i32::MAX - 1))
-                        .transpose()
-                        .map(|value| value.unwrap_or(default))
-                };
-                Ok(Self::RandomPatch {
-                    tries: int("tries", 128, 1)?,
-                    xz_spread: int("xz_spread", 7, 0)?,
-                    y_spread: int("y_spread", 3, 0)?,
-                    feature: Box::new(PlacedFeatureDefinition::decode(
-                        required(&object, "feature")?.get(),
-                        depth + 1,
-                        remaining,
-                        empty_tags,
-                        blocks,
-                    )?),
-                })
+            _ if kind.starts_with("the_afterdark:") || kind == "minecraft:random_patch" => {
+                Self::decode_mod_kind(&kind, json, &object, depth, remaining, empty_tags, blocks)
             }
-            "the_afterdark:waterloggable_random_patch" => mod_features::ModPatchFeature::decode(
-                json,
-                blocks.ok_or(DecodeError::Field("patch bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModPatch),
-            "the_afterdark:cave_kelp" => mod_features::ModPlantFeature::decode(
-                json,
-                "minecraft:kelp",
-                blocks.ok_or(DecodeError::Field("kelp bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModPlant),
-            "the_afterdark:cave_pickle" => mod_features::ModPlantFeature::decode(
-                json,
-                "minecraft:sea_pickle",
-                blocks.ok_or(DecodeError::Field("pickle bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModPlant),
-            "the_afterdark:cave_seagrass" => mod_features::ModPlantFeature::decode(
-                json,
-                "minecraft:seagrass",
-                blocks.ok_or(DecodeError::Field("seagrass bindings"))?,
-                depth,
-                remaining,
-            )
-            .map(Self::ModPlant),
             "minecraft:stepped_column_cluster" => {
                 super::projected::SteppedColumnClusterFeature::decode(
                     json,
@@ -904,17 +934,6 @@ impl FeatureDefinition {
                         blocks,
                     )?),
                 })
-            }
-            _ if kind.starts_with("the_afterdark:") && kind.ends_with("_pillar") => {
-                let material = mod_features::pillar_material(&kind)?;
-                mod_features::ModPillarFeature::decode(
-                    json,
-                    material,
-                    blocks.ok_or(DecodeError::Field("pillar bindings"))?,
-                    depth,
-                    remaining,
-                )
-                .map(Self::ModPillar)
             }
             _ => BasicFeature::from_json(json).map(Self::Basic),
         }
