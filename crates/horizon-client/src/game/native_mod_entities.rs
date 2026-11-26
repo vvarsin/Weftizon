@@ -35,52 +35,18 @@ pub(crate) struct NativeEntity {
     pub(crate) animation: Option<String>,
 }
 
-/// A hit as a native mod hears it (`native_entity_hurt`, `native_entity_died`).
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeDamage {
-    /// The damage type, `minecraft:player_attack`, `minecraft:fall`...
-    pub(crate) kind: &'static str,
-    /// What it took of the entity's health.
-    pub(crate) amount: f32,
-    /// A player hit it (their attack, arrow, trident...).
-    pub(crate) by_player: bool,
-    /// The entity that hit it, when it was a mob.
-    pub(crate) attacker: Option<u32>,
-}
+use horizon_client::hits::NativeDamage;
 
-impl NativeDamage {
-    fn of(d: &Damage, amount: f32) -> Self {
-        let by_player = d.attacker == Some(Who::Player);
-        Self {
-            kind: super::creatures::damage_type(d.kind, by_player),
-            amount,
-            by_player,
-            attacker: match d.attacker {
-                Some(Who::Mob(id)) => Some(id),
-                _ => None,
-            },
-        }
-    }
-}
-
-fn view(m: &Mob, kind: &str) -> NativeEntity {
-    NativeEntity {
-        id: m.id,
-        kind: kind.to_owned(),
-        position: [m.position.x, m.position.y, m.position.z],
-        velocity: [m.velocity.x, m.velocity.y, m.velocity.z],
-        yaw: m.yaw,
-        pitch: m.head_pitch,
-        health: m.health,
-        max_health: m.attrs.max_health,
-        on_ground: m.on_ground,
-        age: m.age,
-        target: m.ai.target.map(|t| match t {
-            Who::Player => None,
-            Who::Mob(id) => Some(id),
-        }),
-        animation: m.extra.animation.as_ref().map(|a| a.name.clone()),
+fn native_damage_of(d: &Damage, amount: f32) -> NativeDamage {
+    let by_player = d.attacker == Some(Who::Player);
+    NativeDamage {
+        kind: super::creatures::damage_type(d.kind, by_player),
+        amount,
+        by_player,
+        attacker: match d.attacker {
+            Some(Who::Mob(id)) => Some(id),
+            _ => None,
+        },
     }
 }
 
@@ -97,7 +63,7 @@ impl Game<'_> {
     /// call, in the level's order.
     pub(super) fn native_entity_hurts(&mut self) {
         for (entity, id, d, amount) in custom::take_hurts(&mut self.mobs) {
-            self.native_entity_hurt(entity, id, &NativeDamage::of(&d, amount));
+            self.native_entity_hurt(entity, id, &native_damage_of(&d, amount));
         }
     }
     /// `native_entity_died` as a mod's entity dies (`LivingEntity.die`),
@@ -106,7 +72,7 @@ impl Game<'_> {
         if let Some(c) = &m.kind.custom {
             let damage = m
                 .last_damage
-                .map(|(d, _)| NativeDamage::of(&d, m.last_hurt));
+                .map(|(d, _)| native_damage_of(&d, m.last_hurt));
             self.native_entity_died(c.id, m.id, damage.as_ref());
         }
     }
@@ -133,10 +99,6 @@ impl Game<'_> {
     }
     fn mod_mob_mut(&mut self, id: u32) -> Option<&mut Mob> {
         self.mobs.iter_mut().find(|m| m.id == id && !m.removed)
-    }
-    /// Entity `id` of this level, when it is a mob (a mod's or vanilla's).
-    pub(super) fn native_entity(&self, id: u32) -> Option<NativeEntity> {
-        self.mod_mob(id).map(|m| view(m, &m.kind.id))
     }
     /// The ids of this level's alive entities of type `entity` (`mymod:ghost`).
     pub(super) fn native_entities_of(&self, entity: &str) -> Vec<u32> {
@@ -171,19 +133,6 @@ impl Game<'_> {
         m.previous = at;
         m.needs_sync = true;
         true
-    }
-    /// Hurts it by `amount` of generic damage (armour and invulnerable time
-    /// count, as for any hit); false when the hit didn't land.
-    pub(super) fn native_hurt_entity(&mut self, id: u32, amount: f32) -> bool {
-        if !(amount.is_finite() && amount > 0.0) {
-            return false;
-        }
-        self.mod_mob_mut(id).is_some_and(|m| {
-            m.damage(
-                amount,
-                Damage::of(horizon_client::mobs::DamageKind::Generic),
-            )
-        })
     }
     /// Gives back up to `amount` of its health (`LivingEntity.heal`).
     pub(super) fn native_heal_entity(&mut self, id: u32, amount: f32) -> bool {
@@ -361,13 +310,13 @@ impl Game<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::NativeDamage;
+    use super::{NativeDamage, native_damage_of};
     use horizon_client::mobs::{Damage, DamageKind};
 
     /// A hit as the hooks hear it: its damage type, who dealt it.
     #[test]
     fn hits_name_their_damage_type_and_attacker() {
-        let by_player = NativeDamage::of(&Damage::player([0.0; 3]), 4.0);
+        let by_player = native_damage_of(&Damage::player([0.0; 3]), 4.0);
         assert_eq!(
             by_player,
             NativeDamage {
@@ -377,12 +326,12 @@ mod tests {
                 attacker: None,
             }
         );
-        let by_mob = NativeDamage::of(&Damage::mob(12, [0.0; 3]), 2.0);
+        let by_mob = native_damage_of(&Damage::mob(12, [0.0; 3]), 2.0);
         assert_eq!(
             (by_mob.kind, by_mob.by_player, by_mob.attacker),
             ("minecraft:mob_attack", false, Some(12))
         );
-        let fall = NativeDamage::of(&Damage::of(DamageKind::Fall), 1.0);
+        let fall = native_damage_of(&Damage::of(DamageKind::Fall), 1.0);
         assert_eq!((fall.kind, fall.attacker), ("minecraft:fall", None));
     }
 }

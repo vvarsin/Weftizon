@@ -30,7 +30,7 @@ impl Game<'_> {
     /// the weapon disables shields (`disable` seconds), the shield goes
     /// down for that long with the break sound.
     pub(super) fn mob_shield_after_hit(&mut self, target: u32, disable: f32) {
-        let time = self.world.game_time as i64;
+        let time = self.world.game_time;
         let Some(m) = self.mobs.iter_mut().find(|m| m.id == target) else {
             return;
         };
@@ -58,7 +58,7 @@ impl Game<'_> {
     /// shield down. API 74.
     #[allow(dead_code)]
     pub(super) fn native_mob_shield(&mut self, id: u32, raise: bool) -> bool {
-        let time = self.world.game_time as i64;
+        let time = self.world.game_time;
         let Some(m) = self
             .mobs
             .iter()

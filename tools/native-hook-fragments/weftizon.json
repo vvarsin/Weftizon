@@ -1,0 +1,150 @@
+{
+  "hooks": [
+    {
+      "name": "attack_damage",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_attack_damage",
+      "mod_api": {
+        "contract": "collect",
+        "out": "amount"
+      }
+    },
+    {
+      "name": "block_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_block_tick",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "damage",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_damage",
+      "mod_api": {
+        "contract": "collect",
+        "out": "amount"
+      }
+    },
+    {
+      "name": "enter_dimension",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_enter_dimension",
+      "mod_api": {
+        "contract": "cancel",
+        "out": "canceled"
+      }
+    },
+    {
+      "name": "entity_died",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_died",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "entity_hurt",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_hurt",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "entity_interact",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_interact",
+      "mod_api": {
+        "contract": "cancel",
+        "out": "claimed"
+      }
+    },
+    {
+      "name": "entity_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_entity_tick",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "hurt",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_hurt",
+      "mod_api": {
+        "contract": "cancel",
+        "out": "canceled"
+      }
+    },
+    {
+      "name": "items_picked_up",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_items_picked_up",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "level_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_level_tick",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "machine_tick",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_machine_tick",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "pickup_item",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_pickup_item",
+      "mod_api": {
+        "contract": "cancel",
+        "out": "canceled"
+      }
+    },
+    {
+      "name": "player_attack",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_attack",
+      "mod_api": {
+        "contract": "cancel",
+        "out": "canceled"
+      }
+    },
+    {
+      "name": "player_joined",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_joined",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "player_left",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_left",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "use_block",
+      "version": 1,
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_use_block",
+      "mod_api": {
+        "contract": "cancel",
+        "out": "claimed"
+      }
+    }
+  ],
+  "rust_summary": "the fork's Weft hook points: block_tick, level_tick and machine_tick listen to their sweeps; use_block, entity_interact, hurt, enter_dimension, pickup_item and player_attack can cancel what vanilla would do; damage and attack_damage collect a number on the way; entity_died, entity_hurt, entity_tick, items_picked_up, player_joined and player_left listen. (@API:weftizon@)",
+  "doc_summary": "the fork's Weft hook points: block_tick, level_tick and machine_tick listen to their sweeps; use_block, entity_interact, hurt, enter_dimension, pickup_item and player_attack can cancel what vanilla would do; damage and attack_damage collect a number on the way; entity_died, entity_hurt, entity_tick, items_picked_up, player_joined and player_left listen. (@API:weftizon@)"
+}

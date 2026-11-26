@@ -27,6 +27,19 @@ pub struct Hit<'a> {
     pub attacker: Option<u32>,
 }
 
+/// A hit as a native mod hears it (`native_entity_hurt`, `native_entity_died`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeDamage {
+    /// The damage type, `minecraft:player_attack`, `minecraft:fall`...
+    pub kind: &'static str,
+    /// What it took of the entity's health.
+    pub amount: f32,
+    /// A player hit it (their attack, arrow, trident...).
+    pub by_player: bool,
+    /// The entity that hit it, when it was a mob.
+    pub attacker: Option<u32>,
+}
+
 /// The game binary's answer: `None` when a mod stopped the hit, else the
 /// amount it deals.
 pub type Hook = fn(&Hit<'_>) -> Option<f32>;

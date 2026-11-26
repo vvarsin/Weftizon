@@ -131,7 +131,11 @@ fn variant_active(w: &MobWorld, variant: Option<&Arc<MobType>>) -> bool {
         .map_or(Active::Night, |c| c.active);
     match when {
         Active::Night => creaking_active(w),
-        Active::Day => !w.nether && !w.end && !creaking_active(w),
+        Active::Day => {
+            w.level != horizon_core::LevelKey::NETHER
+                && w.level != horizon_core::LevelKey::END
+                && !creaking_active(w)
+        }
         Active::Always => true,
     }
 }
@@ -184,7 +188,8 @@ impl Blocks<'_, '_> {
 /// `EnvironmentAttributes.CREAKING_ACTIVE`: the overworld's night, from
 /// 12600 to 23400.
 pub fn creaking_active(w: &MobWorld) -> bool {
-    !w.nether && !w.end && (12600..23401).contains(&w.day_time.rem_euclid(24000))
+    w.dimension_type.has_timeline("minecraft:day")
+        && (12600..23401).contains(&w.day_time.rem_euclid(24000))
 }
 /// `CreakingHeartBlock.hasRequiredLogs`: pale oak logs on both ends of the
 /// heart's axis, along the same axis.
@@ -592,6 +597,20 @@ pub fn server_tick(
     host: &mut impl HeartHost,
     out: &mut Vec<HeartEvent>,
 ) {
+    if server_tick_start(heart, pos, lr, host, out) {
+        server_tick_update(heart, pos, w, lr, host, out);
+    }
+}
+
+/// [`server_tick`] up to its update, which reads no mob world: whether the
+/// update follows (as [`tick_updates`] said before it).
+pub fn server_tick_start(
+    heart: &mut CreakingHeart,
+    pos: [i32; 3],
+    lr: &mut LegacyRandom,
+    host: &mut impl HeartHost,
+    out: &mut Vec<HeartEvent>,
+) -> bool {
     heart.ticks_existed += 1;
     let signal = output_signal(heart, pos, host);
     if heart.output_signal != signal {
@@ -634,9 +653,19 @@ pub fn server_tick(
     }
     let ticker = heart.ticker;
     heart.ticker -= 1;
-    if ticker >= 0 {
-        return;
-    }
+    ticker < 0
+}
+
+/// The rest of [`server_tick`], once [`server_tick_start`] says so:
+/// `updateCreakingState` and the protector checks.
+pub fn server_tick_update(
+    heart: &mut CreakingHeart,
+    pos: [i32; 3],
+    w: &MobWorld,
+    lr: &mut LegacyRandom,
+    host: &mut impl HeartHost,
+    out: &mut Vec<HeartEvent>,
+) {
     heart.ticker = lr.next_int_bound(5).unwrap_or(0) + 20;
     let variants = host.creaking_variants();
     let mut b = Blocks {

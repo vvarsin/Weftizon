@@ -9,10 +9,9 @@
 use super::Game;
 use horizon_core::position::BlockPos;
 use horizon_world::{
-    chunk::BlockState,
+    chunk::{BlockProperties, BlockState},
     registry::{BlockRegistry, BlockStateId},
 };
-use std::collections::BTreeMap;
 
 /// A block as text, as Weft and the commands write it:
 /// `ruby:lamp[lit=true,facing=north]`. No namespace is `minecraft`'s.
@@ -33,7 +32,7 @@ pub(super) fn parse_state(text: &str) -> Result<BlockState, String> {
         true => name.to_owned(),
         false => format!("minecraft:{name}"),
     };
-    let mut properties = BTreeMap::new();
+    let mut properties = BlockProperties::new();
     for pair in props.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         let (key, value) = pair
             .split_once('=')
@@ -104,7 +103,7 @@ impl Game<'_> {
             .map_err(|e| format!("{block:?}: {e}"))?;
         self.native_block_at(pos)
             .ok_or_else(|| format!("{pos:?} is not loaded"))?;
-        self.place_state(pos, state, false)
+        self.place_state(pos, state, false, false)
             .map_err(|_| format!("{block:?} could not be set at {pos:?}"))
     }
     /// Sets property `key` of the block at `pos` to `value`, its other
@@ -123,7 +122,10 @@ impl Game<'_> {
         let Some(state) = with_property(self.pack.assets.registry, current, key, value) else {
             return false;
         };
-        state == current || self.place_state(pos, state, false).is_ok_and(|set| set)
+        state == current
+            || self
+                .place_state(pos, state, false, false)
+                .is_ok_and(|set| set)
     }
     /// Schedules a tick of the block at `pos` in `delay` ticks (Weft's
     /// `schedule`, vanilla's `Level.scheduleTick`); `native_block_tick` hears

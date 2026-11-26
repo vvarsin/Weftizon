@@ -488,6 +488,7 @@ fn part(p: &bedrock::Part) -> Part {
             .map(|q| Polygon {
                 normal: q.normal,
                 vertices: q.vertices,
+                cull_back: false,
             })
             .collect(),
         children: p.children.iter().map(part).collect(),

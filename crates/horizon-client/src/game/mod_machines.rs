@@ -9,7 +9,7 @@
 use super::{Game, Resources};
 use horizon_client::{
     block_entities::Pos,
-    containers::{BlockEntity, ModBlockEntity},
+    containers::{BlockEntity, ModBlockEntity, ModBlockEntityFields},
     mod_machines::catch_up,
     world::World,
 };
@@ -25,7 +25,7 @@ pub(super) fn machine_at<'r>(res: &'r Resources, world: &World, key: Pos) -> Opt
 
 /// A machine's slots and screen values made to match its declaration (a
 /// world saved before the mod changed it keeps what fits).
-fn fit(m: &mut ModBlockEntity, machine: &Machine) {
+fn fit(m: &mut ModBlockEntityFields, machine: &Machine) {
     m.items.resize(machine.slots(), None);
     m.data.resize(machine.screen.data_slots(), 0);
 }
@@ -44,13 +44,13 @@ impl Game<'_> {
             return None;
         }
         let (id, nbt) = entity.unwrap_or_else(|| (block.to_owned(), Compound::new()));
-        let mut m = ModBlockEntity {
+        let mut m = ModBlockEntity::new(ModBlockEntityFields {
             id,
             nbt,
             ..Default::default()
-        };
+        });
         if let Some(machine) = machine {
-            fit(&mut m, machine);
+            fit(std::ops::DerefMut::deref_mut(&mut m), machine);
         }
         Some(BlockEntity::Mod(Box::new(m)))
     }
@@ -118,20 +118,23 @@ impl Game<'_> {
         // An empty id marks its place while the mod has it.
         let mut taken = std::mem::take(&mut **m);
         let before = taken.items.clone();
+        // `ModBlockEntity` derefs to its fields; borrow the fields once so
+        // their disjoint slots can be passed separately.
+        let tf = &mut *std::ops::DerefMut::deref_mut(&mut taken);
         for ticks in calls {
             self.native_machine_tick(
                 [pos.0, pos.1, pos.2],
                 &block,
-                &mut taken.items,
-                &mut taken.nbt,
-                &mut taken.data,
+                &mut tf.items,
+                &mut tf.nbt,
+                &mut tf.data,
                 ticks,
             );
         }
+        let changed = tf.items != before;
         if let Some(BlockEntity::Mod(m)) = self.world.block_entities.get_mut(&pos)
             && m.id.is_empty()
         {
-            let changed = taken.items != before;
             **m = taken;
             fit(m, &machine);
             // BlockEntity.setChanged: the next save writes its chunk (with

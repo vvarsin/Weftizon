@@ -329,7 +329,7 @@ fn components_save_with_the_entity() {
     m.extra.components.insert("ruby:mana".into(), Tag::Int(7));
     m.extra.components.remove(&"ruby:owner".into());
     m.extra.components.insert("ruby:new".into(), Tag::Byte(1));
-    let saved = crate::entity_nbt::mob_to_nbt(&m, [0, 0, 0, 3], None, None);
+    let saved = crate::entity_nbt::mob_to_nbt(&m, [0, 0, 0, 3], None, None, |_| None);
     let Some(Tag::Compound(on_disk)) = saved.get(COMPONENTS) else {
         panic!("{saved:?}")
     };
@@ -349,7 +349,7 @@ fn components_save_with_the_entity() {
     );
     // A mob with none writes no key, even over a loaded compound that had one.
     let cow = Mob::new(4, crate::mobs::sensor_scan_tests::kind(), Vec3::ZERO, 0.0);
-    let plain = crate::entity_nbt::mob_to_nbt(&cow, [0, 0, 0, 4], Some(&saved), None);
+    let plain = crate::entity_nbt::mob_to_nbt(&cow, [0, 0, 0, 4], Some(&saved), None, |_| None);
     assert!(plain.get(COMPONENTS).is_none());
 }
 
@@ -484,14 +484,17 @@ fn declared_melee_hits_from_its_reach() {
                 } => Some(*amount),
                 _ => None,
             });
-            let push = events.iter().find_map(|e| match e {
-                MobEvent::Push {
+            let knock = events.iter().find_map(|e| match e {
+                MobEvent::Knockback {
                     target: Who::Mob(10),
-                    velocity,
-                } => Some(velocity[0]),
+                    power,
+                    x,
+                    z,
+                    ..
+                } => Some((*power, *x, *z)),
                 _ => None,
             });
-            hit = Some((amount, push, m.ai.swinging));
+            hit = Some((amount, knock, m.ai.swinging));
         });
         hit
     };
@@ -500,11 +503,14 @@ fn declared_melee_hits_from_its_reach() {
         return;
     };
     // 2.2 blocks apart, cows 0.9 wide: 1.3 between the boxes.
-    let (amount, push, swung) = far;
+    let (amount, knock, swung) = far;
     assert_eq!(amount, Some(4.0));
     assert!(swung, "the hit swings");
-    // (0 enchantment + 2 attack_knockback) * 0.5 along +x.
-    assert!(push.is_some_and(|x| (x - 1.0).abs() < 1e-9), "{push:?}");
+    // Half the declared attack_knockback (2.0), along its facing (`Knockback`'s
+    // unit vector, which vanilla takes from the attacker's look).
+    let (power, x, z) = knock.expect("the hit knocks the target back");
+    assert_eq!(power, 1.0);
+    assert!(((x * x + z * z) - 1.0).abs() < 1e-6, "{x} {z}");
     // Vanilla's reach (about 0.83) is short of it.
     assert_eq!(hits(0.5).unwrap().0, None);
 }
