@@ -7,10 +7,32 @@ is next in the Weft port). This page only records the state an agent picks up.
 
 - `origin`: `git@github.com:vvarsin/Weftizon.git`, the fork. `main` is pushed here.
 - `upstream`: `https://github.com/horizon-rust/horizon.git`. As of 2026-11-26 it answers 404 (private or moved),
-  so `git fetch upstream` fails; the last upstream commit merged is `fa7924b3fb` (2026-11-08,
-  "Merge pull request #12832 ... perf/paletted-pack-uniform").
+  so `git fetch upstream` fails. The last upstream commit merged is `4626921895` (2026-11-15 22:13,
+  "tooling(claims): an issue's author has the first hour to claim it (#17142)"), fetched from a public fork
+  that still carries upstream's history: `https://gitlab.com/aaravmain.org/related/horizon-web.git` (a web port;
+  only upstream's own commit was merged, none of the port's). Local branch `upstream-snapshot-2026-11-15`.
+  Other public forks with upstream history: GitHub `Lciarallo/horizon-nx` (to 2026-11-15 12:49, then GPL),
+  `Rayan-XOO/horizon` (to 2026-11-13).
 
-## Last upstream sync (2026-11-26)
+## Second upstream sync (2026-11-26, to `4626921895`)
+
+6 224 upstream commits. What kept the modding layer working, beyond the first sync's notes below:
+
+- Upstream split many files; Weftizon's hooks moved with the code: content block ticks in
+  `game/block_ticks.rs`, `native_use_blocks` in `game/use_hand.rs`, mod recipe ids in `game/menu_clicks.rs`,
+  `native_attack_amount` in `game/melee.rs`, `native_attack_refused` in `game/lan_actions/guest_attack.rs`, custom
+  mob steps in `mobs/ai/step.rs`, `Dim::load_custom` in `game/startup_menu.rs` (`startup_resource_root`).
+  `game/discord.rs` became upstream's `horizon-discord` crate and `game/activity.rs` (custom dimensions report as
+  the overworld).
+- Custom dimensions use the overworld's `DimensionFacts` (upstream's `LevelKey::builtin_or_overworld`).
+- `crates/horizon-world/src/worldgen/feature_graph.rs`: the TheAfterdark feature types decode in a non-inlined
+  `decode_mod_kind`, so deep nesting does not overflow the stack (upstream's depth-limit test).
+- The user does not want features that force an account: upstream's 1e789800af ("launcher: remove offline
+  names; play only as an account that owns the game") is reverted. Keep it reverted on later syncs, and drop any
+  other upstream change that makes an account, sign-in or online check mandatory to play.
+- InvasionV2 native mod repinned to this tree; NATIVE_HOOKS_API is now 645 (bundles at 413 still load).
+
+## First upstream sync (2026-11-26, to `fa7924b3fb`)
 
 `main` merged upstream/main (13 224 commits) on top of Weftizon's 81 commits. What kept the modding layer working:
 
@@ -43,6 +65,7 @@ longer reachable. To check a bundle against this tree locally, use the horizon-m
 
 ## Next sync
 
-`git fetch upstream && git merge upstream/main`, then: keep `native-hooks.json` upstream's and put Weftizon hooks
+Fetch the newest upstream commit from wherever it is public (see Remotes), merge it on a branch
+`upstream-snapshot-<date>`, revert any account-forcing change again, then: keep `native-hooks.json` upstream's and put Weftizon hooks
 in `tools/native-hook-fragments/weftizon.json`; check every file Weftizon changed since the merge base still
 carries its change (or upstream's equivalent); run the commands above.
