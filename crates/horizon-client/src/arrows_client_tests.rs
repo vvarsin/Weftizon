@@ -254,6 +254,19 @@ fn an_arrow_owned_by_an_armor_stand_needs_mob_griefing_to_prime_tnt() {
 }
 
 #[test]
+fn client_arrow_tick_waits_for_a_non_self_move_to_leave_its_block() {
+    let steps = run_with(&[], 1, false, |p| {
+        let arrow = p.arrow.as_mut().unwrap();
+        arrow.in_ground = true;
+        arrow.last_state = Some(BlockStateId(1));
+    });
+    let p = &steps[0];
+    let arrow = p.arrow.as_ref().unwrap();
+    assert!(arrow.in_ground);
+    assert_eq!(p.velocity, Vec3::new(1.0, 0.2, 0.0));
+}
+
+#[test]
 #[ignore = "run by client-arrow differential harness"]
 fn client_arrow_parity_fixture() {
     use std::io::Write;
@@ -422,7 +435,12 @@ fn air_and_stuck_arrows_leave_no_water_bubbles() {
 #[test]
 fn remote_arrow_preserves_previous_rotation_as_it_turns_and_falls() {
     let steps = run_with(&[], 30, false, |p| {
-        p.shoot(&mut LegacyRandom::new(7), [0.0, 1.0, 0.0], 0.3, 0.0);
+        p.shoot(
+            &mut EntityRandom::own(horizon_core::random::LegacyRandom::new(7)),
+            [0.0, 1.0, 0.0],
+            0.3,
+            0.0,
+        );
         assert_eq!(p.previous_pitch, p.pitch);
         assert_eq!(p.previous_yaw, p.yaw);
         assert!((p.pitch - 90.0).abs() < 1e-4);

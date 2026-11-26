@@ -1,5 +1,5 @@
 //! The movement prediction's replay (docs/anticheat.md): each client tick a player's record holds
-//! ([`horizon_anticheat::prediction::Record`]) is played again with the client's own movement code,
+//! ([`Record`]) is played again with the client's own movement code,
 //! from where the last one ended, and compared with where the client said it went.
 //!
 //! The inputs are known exactly: a vanilla client sends ServerboundPlayerInputPacket after its tick's
@@ -21,9 +21,12 @@
 
 use std::collections::VecDeque;
 
-use horizon_anticheat::prediction::{Change, ClientTick, KEPT, Record, Restart};
-use horizon_core::geometry::Vec3;
+pub mod record;
 
+use horizon_core::geometry::Vec3;
+use record::{Change, ClientTick, KEPT, Record, Restart};
+
+use super::guest::Guest;
 use crate::motion::PlayerMotion;
 use crate::sprint::Keys;
 
@@ -72,6 +75,12 @@ const MOST_MET: f64 = 0.5;
 /// replay's velocity is still being brought to the client's.
 const AGREED: f64 = 1e-3;
 
+/// What a tick that lands `offset` blocks off the replay weighs: its offset in tolerances, at most
+/// [`MOST_WEIGHT`].
+fn weight(offset: f64, tolerance: f64) -> f32 {
+    (offset / tolerance).min(MOST_WEIGHT) as f32
+}
+
 /// Whether the block at `block` is near enough a player at `at` to change its next moves, `slack`
 /// blocks farther for a fast one (see [`slack`]).
 pub fn near(at: [f64; 3], block: [i32; 3], slack: f64) -> bool {
@@ -84,6 +93,59 @@ pub fn near(at: [f64; 3], block: [i32; 3], slack: f64) -> bool {
 /// server's view of what is around it (a firework flying with it) is a tick or so behind.
 pub fn slack(moved: [f64; 3]) -> f64 {
     (2.0 * moved.iter().map(|v| v * v).sum::<f64>().sqrt()).min(16.0)
+}
+
+/// The smallest box (min, max corners) holding every block in `positions`. Empty: min above max,
+/// which [`reaches`] rejects.
+pub fn bounds(positions: &[(i32, i32, i32)]) -> ([i32; 3], [i32; 3]) {
+    positions
+        .iter()
+        .fold(([i32::MAX; 3], [i32::MIN; 3]), |(lo, hi), &(x, y, z)| {
+            let b = [x, y, z];
+            (
+                std::array::from_fn(|i| lo[i].min(b[i])),
+                std::array::from_fn(|i| hi[i].max(b[i])),
+            )
+        })
+}
+
+/// Whether a block of `bounds` can be [`near`] `at` with this `slack`: the same reach as `near`,
+/// tested on the box's corners. The offset from `at` grows monotonically with the block, so a box
+/// whose nearest corner is out of reach holds no near block, and a box holding one is never
+/// rejected.
+fn reaches(at: [f64; 3], slack: f64, (lo, hi): ([i32; 3], [i32; 3])) -> bool {
+    let d = |i: usize, b: i32| f64::from(b) + 0.5 - at[i];
+    let r = 4.5 + slack;
+    d(0, hi[0]) >= -r
+        && d(0, lo[0]) <= r
+        && d(2, hi[2]) >= -r
+        && d(2, lo[2]) <= r
+        && d(1, hi[1]) >= -4.5 - slack
+        && d(1, lo[1]) <= 6.5 + slack
+}
+
+/// Records, as [`Record::changed_near`] during server tick `tick`, the blocks of `positions` (one
+/// section, `bounds` its [`bounds`]) that are [`near`] guest `g`, in their order.
+pub fn note_changes(
+    g: &mut Guest,
+    tick: u64,
+    bounds: ([i32; 3], [i32; 3]),
+    positions: &[(i32, i32, i32)],
+) {
+    let Some(record) = g.record.as_deref_mut() else {
+        return;
+    };
+    let slack = slack(std::array::from_fn(|i| {
+        g.position[i] - g.previous_position[i]
+    }));
+    if !reaches(g.position, slack, bounds) {
+        return;
+    }
+    for &(x, y, z) in positions {
+        if near(g.position, [x, y, z], slack) {
+            record.changed_near(tick, [x, y, z]);
+        }
+    }
 }
 
 /// One client tick played again.
@@ -243,6 +305,23 @@ impl Replay {
         }
     }
 
+    /// A replay that goes on after the record lost what it hadn't played (a server that stalled for
+    /// seconds, more changes than it keeps, a tick that couldn't be played): it starts again at `at`,
+    /// the server's own position for the player, standing still, from the record's present. What the
+    /// client did in the gap is unknown, so the replay is excused ([`Replay::excuse`]) until its moves
+    /// agree with the client's again, at most [`DRIFT`] ticks of them off; after that a lie counts.
+    pub fn rebased(server: &PlayerMotion, at: [f64; 3], record: &Record) -> Self {
+        let restart = Restart {
+            at,
+            kept_motion: false,
+            ended: record.ended(),
+            changed: record.changes(),
+        };
+        let mut replay = Self::new(server, &restart);
+        replay.excuse();
+        replay
+    }
+
     /// Goes on from another teleport the client accepted: what the client keeps through it (its jump
     /// delay, a glide) stays as the replay had it; it stands still at the new place.
     pub fn restart(&mut self, restart: &Restart) {
@@ -258,7 +337,7 @@ impl Replay {
     /// Plays the record's ticks it hasn't, each after what the server had changed by then (the
     /// changes of the server ticks the client had seen when the tick ended), and returns those that
     /// landed farther than `tolerance`. None when the record no longer keeps them, or a tick couldn't
-    /// be played: the replay starts again at a teleport.
+    /// be played: the replay starts again ([`Replay::rebased`]).
     pub fn catch_up(
         &mut self,
         record: &Record,
@@ -365,7 +444,7 @@ impl Replay {
                     over.at_worst = self.ticks.back().copied();
                 }
                 over.worst = over.worst.max(offset);
-                over.weight += (offset / tolerance).min(MOST_WEIGHT) as f32;
+                over.weight += weight(offset, tolerance);
                 if steady == STEADY {
                     self.meet();
                 }
@@ -428,8 +507,9 @@ impl Replay {
             // LocalPlayer.aiStep does when the sprint key is held ([`Replay::sprints`]).
             Change::Sprinting(sprinting) => body.sprinting = sprinting,
             Change::Effects => body.status = server.status.clone(),
-            // `sync` takes them every tick.
-            Change::Abilities => {}
+            // `sync` takes them every tick, but for the flight of a player that may fly, which the
+            // client takes as sent (ClientPacketListener.handlePlayerAbilities).
+            Change::Abilities => body.flying = server.flying,
         }
     }
 
@@ -626,8 +706,14 @@ fn keys(input: u8) -> Keys {
 /// What the server decides about the player, from its own copy (its attributes and effects come
 /// with the changes the server sent): the rest is the client's.
 fn sync(body: &mut PlayerMotion, server: &PlayerMotion) {
-    (body.may_fly, body.flying, body.flying_speed) =
-        (server.may_fly, server.flying, server.flying_speed);
+    // A player that may fly toggles its flight itself (LocalPlayer.aiStep: a double jump, and a
+    // landing that ends it) and tells the server with ServerboundPlayerAbilitiesPacket before the
+    // tick ends, so the server's flag already has the tick's own toggle: the replay plays it from the
+    // keys instead. What the server changes itself comes as abilities ([`Change::Abilities`]).
+    if !server.may_fly {
+        body.flying = server.flying;
+    }
+    (body.may_fly, body.flying_speed) = (server.may_fly, server.flying_speed);
     (body.invulnerable, body.spectator, body.sleeping) =
         (server.invulnerable, server.spectator, server.sleeping);
     body.glider = server.glider;
@@ -650,14 +736,9 @@ fn sync(body: &mut PlayerMotion, server: &PlayerMotion) {
 
 #[cfg(test)]
 mod tests {
+    use super::record::Record;
     use super::*;
-    use crate::{
-        assets::Assets,
-        motion::{MotionResources, MotionWorld},
-        world::World,
-    };
-    use horizon_anticheat::prediction::Record;
-    use std::path::Path;
+    use crate::{motion::MotionWorld, world::World};
 
     /// Keys for each tick: 20 walking, 12 sprint-jumping, 12 strafing while turning, 6 still.
     fn script() -> Vec<(u8, f32)> {
@@ -714,6 +795,9 @@ mod tests {
         /// Ticks `.0 .. .1` arrive together: the server plays them all at tick `.1`, in one
         /// catch-up, as it does when its tick lags the client's.
         burst: Option<(usize, usize)>,
+        /// Ticks `.0 .. .1` are never played, and the record keeps fewer than the gap: at tick `.1`
+        /// the replay can't catch up and starts again ([`Replay::rebased`]) where the client is.
+        gap: Option<(usize, usize)>,
         /// Blocks set in the scene after the floor.
         blocks: Vec<([i32; 3], &'static str)>,
         /// On tick `.0`, the server sends the player attributes (the server's body has no sprint
@@ -731,6 +815,12 @@ mod tests {
         frozen: usize,
         /// The ticks the client uses an item (slowed to 0.2), and those the server thinks it does.
         item_use: Option<(std::ops::Range<usize>, std::ops::Range<usize>)>,
+        /// The player may fly (creative, or flight given): its client toggles flight with a double
+        /// jump and stops flying when it lands, and tells the server, which takes it with the tick.
+        may_fly: bool,
+        /// On this tick the server stops the player's flight (ClientboundPlayerAbilitiesPacket, a
+        /// mod refusing it, say), which the client takes.
+        grounded: Option<usize>,
     }
 
     impl Run {
@@ -743,12 +833,15 @@ mod tests {
                 glider: false,
                 teleport: None,
                 burst: None,
+                gap: None,
                 blocks: Vec::new(),
                 attributes: None,
                 server_sprint: Vec::new(),
                 keep_sprint: false,
                 frozen: 0,
                 item_use: None,
+                may_fly: false,
+                grounded: None,
             }
         }
     }
@@ -764,17 +857,9 @@ mod tests {
         cheat: impl Fn(usize, Vec3, Vec3) -> Vec3,
         push: Option<Push>,
     ) -> Option<Vec<Step>> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.local/horizon-client")
-            .join(horizon_core::VANILLA_VERSION);
-        if !root.join("movement-properties.nbt").exists() {
-            return None;
-        }
-        let assets = Assets::load(&root).unwrap();
-        let render = assets.reload(&root).unwrap();
-        let binding = crate::collisions::load(&root, assets.registry).unwrap();
-        let resources = MotionResources::load(&root, &assets).unwrap();
-        let mut scene = World::test_scene(&assets, &render, 2).unwrap();
+        let fixture = crate::test_fixtures::vanilla()?;
+        let (assets, binding, resources) = (&fixture.assets, &fixture.collision, &fixture.motion);
+        let mut scene = World::test_scene(assets, &fixture.render, 2).unwrap();
         // A clean stone floor with its top at y 5, and a slab on the walk to step up on.
         let stone = assets.registry.default_state("minecraft:stone").unwrap();
         let air = assets.registry.default_state("minecraft:air").unwrap();
@@ -796,9 +881,10 @@ mod tests {
             scene.set(at[0], at[1], at[2], state).unwrap();
         }
         let start = run.start;
-        let mut client = PlayerMotion::new(&resources, start).unwrap();
+        let mut client = PlayerMotion::new(resources, start).unwrap();
         client.client_side = true;
-        let mut server = PlayerMotion::new(&resources, start).unwrap();
+        let mut server = PlayerMotion::new(resources, start).unwrap();
+        (client.may_fly, server.may_fly) = (run.may_fly, run.may_fly);
         (client.glider, server.glider) = (run.glider, run.glider);
         client.pitch = run.pitch;
         let mut world = |player: &mut PlayerMotion, f: &mut dyn FnMut(&mut MotionWorld)| {
@@ -806,9 +892,9 @@ mod tests {
                 entities: &[],
                 player,
                 scene: &mut scene,
-                assets: &assets,
-                collision_binding: &binding,
-                resources: &resources,
+                assets,
+                collision_binding: binding,
+                resources,
                 health: &resources.health,
             })
         };
@@ -827,6 +913,7 @@ mod tests {
         let mut played = Vec::new();
         let run_teleport = run.teleport;
         let run_burst = run.burst;
+        let run_gap = run.gap;
         let run_attributes = run.attributes;
         let run_frozen = run.frozen;
         let run_item_use = run.item_use;
@@ -861,6 +948,10 @@ mod tests {
                     client.set_sprint_modifier(sprint).unwrap();
                 }
             }
+            if run.grounded == Some(i) {
+                (client.flying, server.flying) = (false, false);
+                record.changed(tick, Change::Abilities);
+            }
             record.pong(tick, tick);
             let before = client.position;
             if run_teleport.is_some_and(|(burst, _)| burst == i) {
@@ -877,6 +968,8 @@ mod tests {
                     w.controlled_simulation_tick(keys(input)).unwrap()
                 });
                 client.position = cheat(i, before, client.position);
+                // ServerboundPlayerAbilitiesPacket, heard before the tick's end.
+                server.flying = client.flying;
                 let p = client.position;
                 let ground = u8::from(client.ground.on_ground);
                 record.moved(Some([p.x, p.y, p.z]), Some((yaw, run.pitch)), ground);
@@ -885,6 +978,9 @@ mod tests {
             record.tick_end(input, client.sprinting);
             // A burst: the server hears these ticks now and plays them together at the last one.
             if run_burst.is_some_and(|(from, to)| (from..to).contains(&i)) {
+                continue;
+            }
+            if run_gap.is_some_and(|(from, to)| (from..to).contains(&i)) {
                 continue;
             }
             let mut run = |body: &mut PlayerMotion, keys, sprinting| {
@@ -901,6 +997,11 @@ mod tests {
                 let restart = record.take_restart().unwrap();
                 assert!(replay.finish(&record, &server, &restart, &mut run));
                 replay.restart(&restart);
+            }
+            if run_gap.is_some_and(|(_, to)| to == i) {
+                assert!(replay.catch_up(&record, &server, 0.03, &mut run).is_none());
+                replay = Replay::rebased(&server, [p.x, p.y, p.z], &record);
+                continue;
             }
             let over = replay.catch_up(&record, &server, 0.03, run).unwrap();
             if over.ticks > 0 && push.as_ref().is_some_and(|p| p.excused) {
@@ -1016,6 +1117,50 @@ mod tests {
             "{}",
             worst.describe()
         );
+    }
+
+    /// A tick weighs its offset in tolerances, and at most 5 however far it lands
+    /// (docs/anticheat.md): one blink can't kick on its own.
+    #[test]
+    fn a_tick_weighs_its_offset_in_tolerances_at_most_5() {
+        assert_eq!(weight(0.06, 0.03), 2.0);
+        assert_eq!(weight(0.1, 0.05), 2.0);
+        assert_eq!(weight(0.3, 0.03), 5.0);
+        assert_eq!(weight(100.0, 0.03), 5.0);
+    }
+
+    /// An excuse covers the ticks after it until the moves agree again, at most 40 of them (two
+    /// seconds, docs/anticheat.md): a client that never agrees again counts again from the 41st.
+    #[test]
+    fn an_excuse_lasts_40_ticks_at_most() {
+        let push = Push {
+            tick: 5,
+            velocity: [0.3, 0.0, 0.0],
+            heard: false,
+            excused: true,
+            taken: true,
+        };
+        // From the push on, a zigzag across that the replay never meets.
+        let zigzag = |i: usize, _: Vec3, honest: Vec3| {
+            let x = match i {
+                0..=5 => 0.0,
+                _ if i.is_multiple_of(2) => 0.2,
+                _ => -0.2,
+            };
+            honest.add_vector(Vec3::new(x, 0.0, 0.0))
+        };
+        let Some(steps) = steps(zigzag, Some(push)) else {
+            return;
+        };
+        let counted: Vec<usize> = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.over.ticks > 0)
+            .map(|(i, _)| i)
+            .collect();
+        // The push's own tick counts and is excused; the 40 ticks after it don't count; the 41st
+        // does (the ones after it only every other tick: the replay tries the velocity it missed).
+        assert_eq!(counted.get(..2), Some(&[5, 46][..]), "{counted:?}");
     }
 
     #[test]
@@ -1213,6 +1358,37 @@ mod tests {
                 vec![25],
                 "{velocity:?}: {:?}",
                 steps.iter().map(|s| s.played.offset).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The catch-up of [`a_missed_push_counts_once`] takes at most half a block a tick
+    /// ([`MOST_MET`]): a client that gives itself more on its own (a velocity cheat, a dash) still
+    /// counts on the ticks after, while the rest of its velocity dies out, not on its first tick
+    /// only.
+    #[test]
+    fn a_push_over_half_a_block_counts_until_it_dies_out() {
+        for velocity in [[1.0, 0.0, 0.0], [0.0, 0.0, -1.5]] {
+            let push = Push {
+                tick: 25,
+                velocity,
+                heard: false,
+                excused: false,
+                taken: true,
+            };
+            let Some(steps) = steps(|_, _, honest| honest, Some(push)) else {
+                return;
+            };
+            let counted: Vec<usize> = steps
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.over.ticks > 0)
+                .map(|(i, _)| i)
+                .collect();
+            // Measured: ticks 25 to 36 count at 1 block a tick, 25 to 37 at 1.5.
+            assert!(
+                counted.starts_with(&(25..=33).collect::<Vec<_>>()),
+                "{velocity:?}: {counted:?}"
             );
         }
     }
@@ -1430,6 +1606,54 @@ mod tests {
         assert!(steps.iter().all(|s| s.over == Over::default()));
     }
 
+    /// A server that couldn't catch up (a stall longer than the record keeps) goes on from the
+    /// client's place, excused until the moves agree, instead of leaving the player unchecked.
+    /// `cheat_from`: the tick from which the client moves 0.3 blocks farther each tick.
+    fn after_a_gap(cheat_from: Option<usize>) -> Option<Vec<Step>> {
+        // 90 ticks walking +z from z 10.5 stay on the floor (z 10 to 40); ticks 3 to 43 are never
+        // played, and at tick 44 the record has 42 unplayed (it keeps 40): the rebase, which plays
+        // nothing.
+        let run = Run {
+            start: Vec3::new(15.5, 5.0, 10.5),
+            script: vec![(1, 0.0); 90],
+            gap: Some((3, 44)),
+            ..Run::walk()
+        };
+        steps_in(
+            run,
+            |i, _, honest| match cheat_from {
+                Some(from) if i >= from => Vec3::new(honest.x, honest.y, honest.z + 0.3),
+                _ => honest,
+            },
+            None,
+        )
+    }
+
+    /// Ticks the replay lost (a gap) are not accused of anything: the client is played again from
+    /// where the server has it, and nothing counts.
+    #[test]
+    fn an_honest_client_after_a_history_gap_is_never_over() {
+        let Some(steps) = after_a_gap(None) else {
+            return;
+        };
+        assert_eq!(steps.len(), 90 - 41 - 1);
+        assert!(steps.iter().all(|s| s.over == Over::default()));
+    }
+
+    /// The check resumes after the gap without a teleport: a client that starts lying once the
+    /// excuse has run out (at most [`DRIFT`] ticks after the rebase) is counted on its first
+    /// lying tick, and none before it is.
+    #[test]
+    fn a_cheat_after_a_history_gap_is_counted_again() {
+        // Tick 44 is the rebase: the 40 ticks after it spend the excuse, the cheat starts at tick 85.
+        let Some(steps) = after_a_gap(Some(85)) else {
+            return;
+        };
+        let first = steps.iter().position(|s| s.over.ticks > 0);
+        // Steps hold ticks 0 to 2, then 45 on.
+        assert_eq!(first, Some(85 - 42), "{:?}", steps[first.unwrap_or(0)].over);
+    }
+
     /// A client walking 40 ticks towards +z, over the slab, into `blocks`, its moves passed through
     /// `cheat`: the tick the cheat starts counts, and none before it does.
     fn caught(blocks: Vec<([i32; 3], &'static str)>, cheat: impl Fn(Vec3, Vec3) -> Option<Vec3>) {
@@ -1494,5 +1718,144 @@ mod tests {
             (honest.z > 25.4 && honest.y < before.y)
                 .then(|| Vec3::new(honest.x, before.y, honest.z))
         });
+    }
+
+    /// Double jump, up, hover, then down to the floor: flight toggled by the client.
+    fn fly_script() -> Vec<(u8, f32)> {
+        let mut s: Vec<(u8, f32)> = (0..5).map(|_| (1, 0.0)).collect();
+        s.extend([(16, 0.0), (0, 0.0), (16, 0.0)]);
+        s.extend((0..10).map(|_| (16, 0.0)));
+        s.extend((0..6).map(|_| (1, 0.0)));
+        s.extend((0..30).map(|_| (32, 0.0)));
+        s.extend((0..6).map(|_| (1, 0.0)));
+        s
+    }
+
+    /// A player that may fly double-jumps into flight, rises, hovers, comes down and lands, which
+    /// ends the flight: its client tells the server of each toggle before the tick ends, so the
+    /// server's flag already has it when the tick is played. Played again exactly, one tick at a
+    /// time and with the toggle's ticks heard together; and a player that may not fly still can't.
+    #[test]
+    fn a_flight_toggled_by_its_client_is_played_again_exactly() {
+        // The server may stop the flight too (tick 12, while it rises): the client takes that.
+        for (burst, grounded) in [(None, None), (Some((6, 8)), None), (None, Some(12))] {
+            let run = Run {
+                script: fly_script(),
+                may_fly: true,
+                burst,
+                grounded,
+                ..Run::walk()
+            };
+            let Some(steps) = steps_in(run, |_, _, honest| honest, None) else {
+                return;
+            };
+            assert!(
+                steps.iter().any(|s| s.played.state & Played::FLYING != 0),
+                "it flew"
+            );
+            for (i, s) in steps.iter().enumerate() {
+                assert!(
+                    s.played.offset <= EXACT,
+                    "{burst:?} {grounded:?} tick {i}: {:?}",
+                    s.played
+                );
+            }
+        }
+        let fly = |_: usize, _: Vec3, honest: Vec3| honest.add_vector(Vec3::new(0.0, 0.1, 0.0));
+        let steps = steps_in(
+            Run {
+                script: fly_script(),
+                ..Run::walk()
+            },
+            fly,
+            None,
+        )
+        .unwrap();
+        assert!(steps.iter().all(|s| s.played.state & Played::FLYING == 0));
+        assert!(steps.iter().filter(|s| s.over.ticks > 0).count() > 30);
+    }
+
+    /// A small deterministic generator for the reach tests (the crate has no rand dependency).
+    struct Xorshift(u64);
+
+    impl Xorshift {
+        fn next_u64(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        /// In [0, 1).
+        fn unit(&mut self) -> f64 {
+            (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// For random viewers and random sections, a section with a block near the viewer is never
+    /// rejected by its box, and a section with none may be.
+    #[test]
+    fn reach_box_never_rejects_a_near_block() {
+        let mut rng = Xorshift(0x9E37_79B9_7F4A_7C15);
+        let mut near_sections = 0;
+        assert!(
+            !reaches([0.5; 3], 0.0, bounds(&[])),
+            "an empty section reaches nobody"
+        );
+        for _ in 0..20_000 {
+            let at: [f64; 3] = std::array::from_fn(|_| (rng.unit() - 0.5) * 200.0);
+            let slack = rng.unit() * 16.0;
+            // Blocks out to the reach of `near` and a little past it, on every side.
+            let span = 2.0 * (4.5 + slack + 2.0);
+            let count = 1 + (rng.next_u64() % 16) as usize;
+            let mut positions = Vec::with_capacity(count);
+            for _ in 0..count {
+                let b: [i32; 3] =
+                    std::array::from_fn(|i| (at[i] + (rng.unit() - 0.5) * span).floor() as i32);
+                positions.push((b[0], b[1], b[2]));
+            }
+            if positions
+                .iter()
+                .any(|&(x, y, z)| near(at, [x, y, z], slack))
+            {
+                near_sections += 1;
+                assert!(
+                    reaches(at, slack, bounds(&positions)),
+                    "rejected {at:?} with slack {slack} and {positions:?}"
+                );
+            }
+        }
+        assert!(
+            near_sections > 1_000,
+            "only {near_sections} sections were near"
+        );
+    }
+
+    /// Every single block around a viewer, one at a time, on the edge of the reach included.
+    #[test]
+    fn reach_box_keeps_every_block_on_the_edge() {
+        let mut rng = Xorshift(0xD1B5_4A32_D192_ED03);
+        let mut near_blocks = 0;
+        for _ in 0..60 {
+            let at: [f64; 3] = std::array::from_fn(|_| (rng.unit() - 0.5) * 64.0);
+            let slack = rng.unit() * 16.0;
+            let base = at.map(|v| v.floor() as i32);
+            let span = (4.5 + slack).ceil() as i32 + 2;
+            for dx in -span..=span {
+                for dy in -span..=span {
+                    for dz in -span..=span {
+                        let b = (base[0] + dx, base[1] + dy, base[2] + dz);
+                        if near(at, [b.0, b.1, b.2], slack) {
+                            near_blocks += 1;
+                            assert!(
+                                reaches(at, slack, bounds(&[b])),
+                                "rejected {at:?} with slack {slack} and {b:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(near_blocks > 1_000, "only {near_blocks} blocks were near");
     }
 }

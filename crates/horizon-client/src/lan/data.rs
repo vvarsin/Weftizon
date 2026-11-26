@@ -4,6 +4,7 @@
 //! (`data/minecraft/...`) and the registries report.
 use crate::chunk::LevelShapes;
 use horizon_protocol::{
+    entity_data,
     packets::configuration::{RegistryData, RegistryEntry, RegistryTags, TagEntry, UpdateTags},
     registry::{Builtin, Dynamic},
 };
@@ -81,8 +82,10 @@ pub const CORE_PACK: (&str, &str, &str) = ("minecraft", "core", horizon_protocol
 
 /// Synchronized registries a world's data packs add entries to (or replace
 /// them in). The others stay the game's own: Horizon's gameplay reads them
-/// from the prepared resources only.
-const PACK_REGISTRIES: &[&str] = &["minecraft:dialog"];
+/// from the prepared resources only. An enchantment is here because the
+/// server's catalog reads a pack's (#11610): a client needs its id to be sent
+/// a stack that carries it, and its data to show it.
+const PACK_REGISTRIES: &[&str] = &["minecraft:dialog", "minecraft:enchantment"];
 
 /// A data-driven registry: entry names in network order and their NBT.
 #[derive(Clone)]
@@ -133,6 +136,8 @@ pub struct SyncData {
     /// ClientboundUpdateRecipesPacket's payload.
     pub recipes: Vec<u8>,
     pub advancements: super::advancements::ServerAdvancements,
+    /// The registry ids of the particle types effects show, looked up once (`effect_meta`).
+    effect_particle_ids: std::sync::Mutex<super::effect_meta::ParticleTypeIds>,
 }
 
 use crate::crafting::qualified;
@@ -248,6 +253,7 @@ impl SyncData {
     /// No registries, tags or recipes: enough for tests of the login phase.
     pub fn empty() -> Self {
         Self {
+            effect_particle_ids: Default::default(),
             builtin: Builtin::default(),
             dynamic: Dynamic::default(),
             registries: Vec::new(),
@@ -483,6 +489,7 @@ impl SyncData {
             None
         };
         let mut sync = Self {
+            effect_particle_ids: Default::default(),
             content_identity,
             builtin,
             dynamic,
@@ -563,6 +570,49 @@ impl SyncData {
         self.registries
             .iter()
             .any(|(_, e)| e.from_pack.contains(&true))
+    }
+
+    /// `LivingEntity.updateSynchronizedMobEffectParticles`: DATA_EFFECT_PARTICLES
+    /// (10) and DATA_EFFECT_AMBIENCE_ID (11) for the visible `effects`, as
+    /// (effect, ambient). The entries are left out when there is nothing to
+    /// show, which is their default.
+    pub fn effect_meta<'a>(
+        &self,
+        effects: impl IntoIterator<Item = (&'a str, bool)>,
+    ) -> Vec<(u8, i32, entity_data::Value)> {
+        let mut ids = self
+            .effect_particle_ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut particles = Vec::new();
+        let mut all_ambient = true;
+        for (effect, ambient) in effects {
+            let effect = effect.trim_start_matches("minecraft:");
+            let particle = super::effect_meta::particle_of(effect, ambient, |name| {
+                ids.get_or_insert_with(name, || self.id("minecraft:particle_type", name))
+            });
+            let Some(particle) = particle else {
+                continue;
+            };
+            particles.push(particle);
+            all_ambient &= ambient;
+        }
+        if particles.is_empty() {
+            return Vec::new();
+        }
+        let mut meta = vec![(
+            10,
+            entity_data::serializer::PARTICLES,
+            entity_data::Value::Particles(particles),
+        )];
+        if all_ambient {
+            meta.push((
+                11,
+                entity_data::serializer::BOOLEAN,
+                entity_data::Value::Bool(true),
+            ));
+        }
+        meta
     }
 
     /// The id of a name in a built-in or synchronized registry.
@@ -1171,6 +1221,65 @@ mod tests {
         };
         assert_eq!(data(true), [false, true]);
         assert_eq!(data(false), [true, true]);
+    }
+
+    /// RegistryDataLoader.SYNCHRONIZED_REGISTRIES holds `minecraft:enchantment`:
+    /// a world pack's enchantment reaches the client with its data, and a stack
+    /// carrying it keeps it.
+    #[test]
+    fn a_world_packs_enchantment_is_synchronized_and_kept_on_a_stack() {
+        use horizon_world::loot::PackOverlay;
+        let root = std::env::temp_dir().join(format!("horizon-pack-ench-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("data/minecraft/enchantment")).unwrap();
+        std::fs::write(
+            root.join("registries.json"),
+            r#"{"minecraft:item":{"entries":{"minecraft:iron_sword":{"protocol_id":0}}}}"#,
+        )
+        .unwrap();
+        let json = r##"{"description":"x","supported_items":"#minecraft:enchantable/sword","weight":1,"max_level":1,"min_cost":{"base":1,"per_level_above_first":0},"max_cost":{"base":2,"per_level_above_first":0},"anvil_cost":1,"slots":["mainhand"]}"##;
+        std::fs::write(root.join("data/minecraft/enchantment/sharpness.json"), json).unwrap();
+        let files = vec![(
+            "enchantment/test:vorpal".to_owned(),
+            vec![json.as_bytes().to_vec()],
+        )];
+        let loaded = SyncData::load(&root, &PackOverlay { files: &files });
+        let _ = std::fs::remove_dir_all(&root);
+        let sync = loaded.unwrap();
+        let vorpal = sync
+            .id("minecraft:enchantment", "test:vorpal")
+            .expect("the pack's enchantment has a network id");
+        let sharpness = sync
+            .id("minecraft:enchantment", "minecraft:sharpness")
+            .unwrap();
+        // The registry sorts by path: `sharpness`, then `vorpal`.
+        assert_eq!((sharpness, vorpal), (0, 1));
+        let packets = sync.registry_packets(true, &LevelShapes::VANILLA);
+        let sent = packets
+            .iter()
+            .find(|p| p.registry == "minecraft:enchantment")
+            .expect("the enchantment registry is sent");
+        assert!(
+            sent.entries[sharpness as usize].data.is_none(),
+            "a known-pack entry is sent by name"
+        );
+        assert!(
+            sent.entries[vorpal as usize].data.is_some(),
+            "no client knows the pack's: its data is sent"
+        );
+        let mut sword = crate::items::ItemStack::new("minecraft:iron_sword", 1);
+        sword
+            .data_mut()
+            .enchantments
+            .push(("test:vorpal".into(), 1));
+        let network =
+            crate::lan::guest::stack_to_network(|_| 0, |r, n| sync.id(r, n), &Some(sword)).unwrap();
+        assert_eq!(
+            network.component(horizon_protocol::item::component::ENCHANTMENTS),
+            Some(&horizon_protocol::item::Component::Enchantments(vec![(
+                vorpal, 1
+            )])),
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 [workspace]
 exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys"]
 members = [
+    "crates/horizon-addresses",
     "crates/horizon-core",
     "crates/horizon-dualsense",
     "crates/horizon-narrator",
@@ -27,7 +28,18 @@ members = [
     "crates/horizon-theme",
     "crates/horizon-prepare",
     "crates/horizon-telemetry",
+    "crates/horizon-system",
+    "crates/horizon-platform",
+    "crates/horizon-hooks",
+    "crates/horizon-game",
+    "crates/horizon-official",
+    "crates/horizon-heartbeat",
+    "crates/horizon-discord",
+    "crates/horizon-official-servers",
     "crates/horizon-bench",
+    "crates/horizon-perf-format",
+    "crates/horizon-perf",
+    "crates/horizon-perf-share",
     "crates/horizon-friends",
     "crates/horizon-relay",
     "crates/horizon-mods",
@@ -47,7 +59,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-license = "MIT"
+license = "LGPL-3.0-or-later"
 rust-version = "1.95"
 
 # Ports mirror vanilla's Java signatures, index loops and nested generic types
@@ -70,6 +82,10 @@ large_enum_variant = "allow"
 # And gfx-rs/wgpu#10484: Vulkan staging buffers (map-write, copy-source only)
 # go to host memory, not resizable-BAR VRAM, where NVIDIA's CPU writes ran at
 # ~17 MB/s and made every upload a frame spike.
+# Horizon's own change: on NVIDIA with a Wayland surface it waits for swapchain
+# images on the CPU (swapchain/native.rs, `acquire_on_cpu`): a frame that waited for
+# one on the GPU while the compositor held it (screen capture running, KDE Wayland)
+# hung the GPU until the kernel's Xid 109 timeout lost the device.
 # Drop this and the folder once a wgpu release has these fixes.
 [patch.crates-io]
 wgpu-hal = { path = "third_party/wgpu-hal" }
@@ -90,6 +106,9 @@ debug = "line-tables-only"
 [profile.dev.package.horizon-mod-api-gen]
 opt-level = 3
 [profile.dev.package.syn]
+opt-level = 3
+# The perf-format tests gzip over 512 MiB; unoptimized deflate took most of their time.
+[profile.dev.package.miniz_oxide]
 opt-level = 3
 [profile.dev.package.proc-macro2]
 opt-level = 3

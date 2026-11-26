@@ -292,7 +292,7 @@ pub trait SpawnerExt: Sized {
         l: &L,
         random: &mut R,
         pos: [i32; 3],
-        spawn: &mut dyn FnMut(&L, &SpawnerSpawn) -> Option<SpawnerAdded>,
+        spawn: &mut dyn FnMut(&L, &mut R, &SpawnerSpawn) -> Option<SpawnerAdded>,
         events: &mut Vec<SpawnerEvent>,
     );
     /// `clientTick`: with a player near and a mob to show, a smoke and flame
@@ -464,7 +464,7 @@ impl SpawnerExt for Spawner {
         l: &L,
         random: &mut R,
         pos: [i32; 3],
-        spawn: &mut dyn FnMut(&L, &SpawnerSpawn) -> Option<SpawnerAdded>,
+        spawn: &mut dyn FnMut(&L, &mut R, &SpawnerSpawn) -> Option<SpawnerAdded>,
         events: &mut Vec<SpawnerEvent>,
     ) {
         if !self.near_player(l, pos) || !l.spawner_blocks_work() {
@@ -605,7 +605,7 @@ impl SpawnerExt for Spawner {
                 equipment: data.equipment.as_ref(),
                 trial: false,
             };
-            let Some(result) = spawn(l, &request) else {
+            let Some(result) = spawn(l, random, &request) else {
                 self.delay(random, events);
                 return;
             };
@@ -727,6 +727,10 @@ pub(crate) fn read_pos(tag: Option<&Tag>) -> Option<[f64; 3]> {
         *o = match t {
             Tag::Double(b) => f64::from_bits(*b),
             Tag::Float(b) => f64::from(f32::from_bits(*b)),
+            Tag::Byte(b) => f64::from(*b),
+            Tag::Short(s) => f64::from(*s),
+            Tag::Int(i) => f64::from(*i),
+            Tag::Long(l) => *l as f64,
             _ => return None,
         };
     }
@@ -832,5 +836,11 @@ mod tests {
         let s = Spawner::default();
         assert_eq!(s.next_data(), None);
         assert!(s.potentials.is_empty());
+    }
+
+    #[test]
+    fn read_pos_accepts_integer_numeric_tags() {
+        assert_eq!(read_pos(Some(&tag("[1, 2, 3]"))), Some([1.0, 2.0, 3.0]));
+        assert_eq!(read_pos(Some(&tag("[1b, 2s, 3L]"))), Some([1.0, 2.0, 3.0]));
     }
 }

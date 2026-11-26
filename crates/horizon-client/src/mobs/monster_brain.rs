@@ -19,7 +19,7 @@ use super::{
 use crate::projectiles::{Projectile, ProjectileKind};
 use horizon_core::{
     geometry::{Vec3, trig},
-    random::{LegacyRandom, RandomSource},
+    random::{LegacyRandom, LevelRandom, RandomSource},
 };
 
 /// `Activity` (the ones these brains use).
@@ -177,14 +177,14 @@ pub fn init(m: &mut Mob, shuffle_seed: i64) {
 /// What behaviours read and emit during a brain tick.
 struct Bx<'a, 'w> {
     w: &'a MobWorld<'w>,
-    lr: &'a mut LegacyRandom,
+    lr: &'a mut LevelRandom,
     events: &'a mut Vec<MobEvent>,
     now: i64,
 }
 
 /// `Brain.tick`, then the species' `updateActivity`
 /// (`Breeze.customServerAiStep`, `Creaking.customServerAiStep`).
-pub fn tick(m: &mut Mob, w: &MobWorld, lr: &mut LegacyRandom, events: &mut Vec<MobEvent>) {
+pub fn tick(m: &mut Mob, w: &MobWorld, lr: &mut LevelRandom, events: &mut Vec<MobEvent>) {
     if brain(m).is_none() {
         let seed = i64::from(m.id);
         init(m, seed);
@@ -1089,7 +1089,7 @@ fn block_of(p: Vec3) -> [i32; 3] {
 }
 /// `Swim`: deeper than the jump threshold, or in lava.
 fn swim_condition(m: &Mob) -> bool {
-    m.fluids.water > m.fluid_jump_threshold() || m.fluids.in_lava
+    m.floats()
 }
 /// `PositionTracker.isVisibleBy`.
 fn tracker_visible(m: &mut Mob, w: &MobWorld, t: Tracker) -> bool {
@@ -1260,17 +1260,7 @@ fn shoot_tick(m: &mut Mob, cx: &mut Bx) {
     );
     // The new entity's own random spreads the shot (5 - difficulty id * 4):
     // not the breeze's.
-    let mut own = LegacyRandom::new(
-        cx.now
-            .wrapping_mul(0x5DEE_CE66)
-            .wrapping_add(i64::from(m.id)),
-    );
-    p.shoot(
-        &mut own,
-        [xd, yd, zd],
-        0.7,
-        5.0 - f32::from(cx.w.difficulty.id) * 4.0,
-    );
+    p.shoot_own([xd, yd, zd], 0.7, 5.0 - f32::from(cx.w.difficulty.id) * 4.0);
     cx.events.push(MobEvent::Projectile(p));
     breeze_sound(m, cx, "entity.breeze.shoot", 1.5);
 }
@@ -1279,7 +1269,7 @@ fn long_jump_can_run(m: &mut Mob, cx: &mut Bx) -> bool {
     if !m.on_ground && !m.fluids.in_water {
         return false;
     }
-    if m.fluids.water > m.fluid_jump_threshold() || m.fluids.in_lava {
+    if m.floats() {
         return false;
     }
     if mem(m).breeze_jump_target.present() {

@@ -3,6 +3,7 @@ use super::super::*;
 use super::{Hook, State};
 use crate::mod_api::{self, FishingMediumEvent, Hooks, Host, NativeFishingMedium};
 use horizon_client::chunk::Chunk;
+use horizon_core::random::EntityRandom;
 use std::sync::Mutex;
 
 /// Fishes the air east of x = 3, four blocks under its owner's feet, rolling the junk table.
@@ -37,8 +38,15 @@ const FISH: [&str; 4] = [
 ];
 
 #[test]
-#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES and an isolated mod registry"]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
 fn a_bobber_floats_bites_and_rolls_the_table_of_a_mods_medium() {
+    crate::mod_api::in_own_process(
+        "game::fishing::medium_tests::a_bobber_floats_bites_and_rolls_the_table_of_a_mods_medium",
+        a_bobber_floats_bites_and_rolls_the_table_of_a_mods_medium_in_own_process,
+    );
+}
+
+fn a_bobber_floats_bites_and_rolls_the_table_of_a_mods_medium_in_own_process() {
     let root = PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
     let settings = Settings::default();
     let loaded = load_resources(
@@ -140,7 +148,7 @@ fn a_bobber_floats_bites_and_rolls_the_table_of_a_mods_medium() {
 
     // A client draws its own bobber floating in the same medium.
     let mut state = (Vec3::new(5.5, 62.0, 0.5), Vec3::ZERO, State::Flying, false);
-    let mut random = horizon_core::random::LegacyRandom::new(7);
+    let mut random = EntityRandom::own(horizon_core::random::LegacyRandom::new(7));
     for tick in 0..100 {
         state = game.client_hook_step(1, Some(Vec3::new(0.5, 64.0, 0.5)), state, &mut random);
         if tick > 60 {

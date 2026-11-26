@@ -22,6 +22,7 @@ use horizon_client::{
     random_source,
     text::Text,
 };
+use horizon_client_core::nbt_value;
 use horizon_core::position::BlockPos;
 use horizon_core::{
     geometry::{Aabb, Vec3, trig},
@@ -190,22 +191,15 @@ pub(super) struct Crystal {
     pub beam: Option<[i32; 3]>,
     /// `setPermanentlyInvulnerable` (respawned spike crystals).
     pub invulnerable: bool,
+    /// `onGround` and `fallDistance`: a crystal never moves itself, so they stay
+    /// as loaded until `/tp` grounds it or a cobweb or powder snow resets the
+    /// fall (`crystal.rs`).
+    pub fall: (bool, f64),
+    /// `Motion` and `Rotation`, as loaded: `EndCrystal.tick` never moves or turns it.
+    pub motion: Vec3,
+    pub rotation: [f32; 2],
 }
 impl Crystal {
-    /// The start of `time` (the spin and bob) for a crystal at `position`: the random draw
-    /// vanilla makes, or under `HORIZON_STILL` one seeded from the position alone. Which crystal
-    /// gets which draw, and a server's entity ids, follow the order chunks load in, which differs
-    /// between launches; the position is the same in every copy of the world. The draw is made
-    /// either way, so the random stays where it would be.
-    pub(super) fn start_time(position: Vec3, drawn: i32, still: bool) -> i32 {
-        if still {
-            horizon_client::mobs::entity_random(0, position)
-                .next_int_bound(100_000)
-                .unwrap_or(0)
-        } else {
-            drawn
-        }
-    }
     /// `EntityType.END_CRYSTAL`: 2 x 2.
     pub(super) fn bounds(&self) -> Aabb {
         let p = self.position;
@@ -380,7 +374,7 @@ pub(super) struct Dragon {
     pub id: u32,
     pub position: Vec3,
     pub previous: Vec3,
-    velocity: Vec3,
+    pub(super) velocity: Vec3,
     pub yaw: f32,
     pub previous_yaw: f32,
     yaw_accel: f32,
@@ -416,7 +410,7 @@ pub(super) struct Dragon {
     /// after (`strafe_after_crystal`), taken on its next tick.
     strafe_request: Option<FightWho>,
     /// `Mob.isNoAi` (`NoAI`): it flaps in place, with no phase or flight.
-    no_ai: bool,
+    pub(super) no_ai: bool,
     random: LegacyRandom,
 }
 /// A player in the fight: the window's own player, or a guest by
@@ -573,10 +567,14 @@ const ADJACENCY: [u32; 24] = [
     8257536,
 ];
 impl Dragon {
+    /// `Entity.teleportSetPosition` with a transition of no motion (`/tp`).
+    pub(super) fn stop(&mut self) {
+        self.velocity = Vec3::ZERO;
+    }
     /// `EnderDragon`'s constructor: full health, hovering (`EnderDragonPhase.HOVERING`). Only
     /// `EnderDragonFight.createNewDragon` sets the holding pattern; a dragon from `/summon`, a
     /// spawn egg or a save without `DragonPhase` keeps hovering where it was put.
-    fn new(position: Vec3, yaw: f32, seed: i64) -> Self {
+    pub(super) fn new(position: Vec3, yaw: f32, seed: i64) -> Self {
         Self {
             id: 0,
             position,
@@ -864,14 +862,14 @@ impl Dragon {
     /// `ServerExplosion.hurtEntities` knockback on the dragon itself:
     /// `pushFromExplosion` adds `(1 - dist) * exposure` along the blast to
     /// its eye to the motion (`Entity.push`); the parts are not pushed.
-    fn whole_box(&self) -> Aabb {
+    pub(super) fn whole_box(&self) -> Aabb {
         let p = self.position;
         Aabb::new(
             Vec3::new(p.x - 8.0, p.y, p.z - 8.0),
             Vec3::new(p.x + 8.0, p.y + 8.0, p.z + 8.0),
         )
     }
-    fn explosion_knockback(
+    pub(super) fn explosion_knockback(
         &self,
         center: [f64; 3],
         radius: f32,
@@ -928,7 +926,7 @@ fn hurt_source(
     direct: Option<&ProjectileKind>,
 ) -> HurtSource<'static> {
     let causing = by.unwrap_or(0);
-    let melee = direct.is_none() && (super::creatures::melee(kind) || kind == DamageKind::Thorns);
+    let melee = direct.is_none() && (super::combat::melee(kind) || kind == DamageKind::Thorns);
     HurtSource {
         damage_type: super::creatures::damage_type(kind, by.is_some()),
         causing,
@@ -1118,8 +1116,15 @@ impl Game<'_> {
         }
     }
     /// The player acting now: the guest whose turn it is, else the host.
-    fn acting_player(&self) -> FightWho {
+    pub(super) fn acting_player(&self) -> FightWho {
         self.lan_acting.map_or(FightWho::Host, FightWho::Guest)
+    }
+    /// The causing player shared by the crystal/deflected-fireball blast.
+    pub(super) fn crystal_blast_player(&self) -> Option<super::commands::Target> {
+        self.fight.blast_by.map(|who| match who {
+            FightWho::Host => super::commands::Target::Player,
+            FightWho::Guest(conn) => super::commands::Target::Guest(conn),
+        })
     }
     /// Names the acting player behind the blast about to go off (a large
     /// fireball they shot), or no one, for the dragon's kill credit.
@@ -1279,14 +1284,8 @@ impl Game<'_> {
             let time = Crystal::start_time(at, drawn, self.clock.still());
             // EndCrystal's constructor takes an id from the entity counter.
             self.next_entity += 1;
-            self.crystals.push(Crystal {
-                id: self.next_entity,
-                position: at,
-                show_bottom: true,
-                time,
-                beam: None,
-                invulnerable: false,
-            });
+            self.crystals
+                .push(Crystal::new(self.next_entity, at, true, time));
             self.world
                 .modified
                 .insert((at.x.floor() as i32 >> 4, at.z.floor() as i32 >> 4));
@@ -1316,6 +1315,7 @@ impl Game<'_> {
             .flatten();
         for i in 0..self.crystals.len() {
             self.crystals[i].time += 1;
+            self.crystal_block_effects(i);
             let p = self.crystals[i].position;
             let b = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
             if let Some(fire) = fire
@@ -1358,11 +1358,23 @@ impl Game<'_> {
                 6.0,
                 interaction,
                 false,
-                super::explosion::ExplosionSource::default().with_silence(self.entity_silent(c.id)),
+                super::explosion::ExplosionSource::default()
+                    .with_silence(self.entity_silent(c.id))
+                    .with_entity(c.id, "minecraft:end_crystal"),
             );
             self.combat.explosion_in_water = false;
             self.fight.blast_by = None;
         }
+        self.crystal_destroyed(index, &c, by, respawn_crystal);
+    }
+    /// `EndCrystal.onDestroyedBy`: also called before removal by EndCrystal.kill.
+    fn crystal_destroyed(
+        &mut self,
+        index: usize,
+        c: &Crystal,
+        by: Option<FightWho>,
+        respawn_crystal: bool,
+    ) {
         if respawn_crystal {
             self.abort_respawn();
             return;
@@ -1743,30 +1755,6 @@ impl Game<'_> {
             }
         }
         best
-    }
-    pub(super) fn attack_dragon(&mut self) -> bool {
-        let Some((id, d)) = self.dragon_hit() else {
-            return false;
-        };
-        if !self.before_block(d) || self.mob_hit().is_some_and(|m| m.1 < d) {
-            return false;
-        }
-        // A dragon part is no LivingEntity: `canCriticalAttack` is false.
-        let (amount, _, _, _) = self.melee_damage("minecraft:ender_dragon", false);
-        self.swing_arm();
-        // The part's box.
-        let area = self
-            .special_targets()
-            .into_iter()
-            .find(|(part, _)| *part == id)
-            .map(|(_, b)| b);
-        let hurt = self.hit_special(id, amount, true, DamageKind::PlayerAttack, None);
-        // The sweep and the sounds read the charge, which the hit then spends.
-        if let (Some(area), Hurt::Landed { .. }) = (area, hurt) {
-            self.attack_effects(area, None, false, super::mace::Spared::Nothing, None);
-        }
-        self.attack_ticks = 0;
-        true
     }
     /// The 24 nodes (`findClosestNode` builds them on first use).
     fn dragon_nodes(&mut self) -> [[i32; 3]; 24] {
@@ -2284,12 +2272,12 @@ impl Game<'_> {
                     let look = glam::DVec2::new(head.x - pos.x, head.z - pos.z).normalize_or_zero();
                     let (x, z) = (head.x + look.x * 2.5, head.z + look.y * 2.5);
                     let mut y = head.y + 0.5;
+                    let (xi, zi) = (x.floor() as i32, z.floor() as i32);
                     while y > 0.0
-                        && self.res.facts().is_air(self.world.block(
-                            x.floor() as i32,
-                            y.floor() as i32,
-                            z.floor() as i32,
-                        ))
+                        && self
+                            .res
+                            .facts()
+                            .is_air(self.world.block(xi, y.floor() as i32, zi))
                     {
                         y -= 1.0;
                     }
@@ -2297,6 +2285,7 @@ impl Game<'_> {
                     self.breath_clouds.push(Breath {
                         id,
                         at: [x, y.floor() + 1.0, z],
+                        motion: [0.0; 3],
                         radius: 5.0,
                         age: 0,
                         duration: 200,
@@ -2932,27 +2921,26 @@ impl Game<'_> {
     /// cloud and level event 2006, as the fireballs of the dragon's own list
     /// burst before they joined the other projectiles.
     pub(super) fn dragon_fireball_on_hit(&mut self, next: Vec3) {
-        let mobs: Vec<(Aabb, Vec3)> = self
-            .mobs
-            .iter()
-            .filter(|m| m.alive())
-            .map(|m| (m.bounds(), m.position))
-            .collect();
         let snap_targets: Vec<(Aabb, Vec3)> = self
             .fight_players()
             .iter()
             .filter(|p| p.alive)
             .map(|p| (p.bounds, p.position))
-            .chain(mobs.iter().copied())
+            .chain(
+                self.mobs
+                    .iter()
+                    .filter(|m| m.alive())
+                    .map(|m| (m.bounds(), m.position)),
+            )
             .collect();
         let id = self.take_entity_id();
         // The cloud starts at the fireball's feet; DragonFireball.onHit
         // then moves it to the first living entity within 4 blocks.
-        let feet = [next.x, next.y - 0.5, next.z];
-        let at = fireball_cloud_origin(feet, &snap_targets);
+        let at = fireball_cloud_origin([next.x, next.y - 0.5, next.z], &snap_targets);
         self.breath_clouds.push(Breath {
             id,
             at,
+            motion: [0.0; 3],
             radius: 3.0,
             age: 0,
             duration: 600,
@@ -3084,18 +3072,8 @@ impl Game<'_> {
         if hurts {
             self.note_dragon_attacker("minecraft:mob_attack");
         }
-        let (health, rules) = (&self.health_resources, self.world.health_rules);
-        let id = health.damage.id("minecraft:mob_attack");
-        let mut canceled = false;
-        if let Some(p) = self.player.as_mut() {
-            push_seen_with_hurt(p, push, |p| {
-                if let Some(id) = id.filter(|_| hurts)
-                    && let Ok(o) = p.hurt_blocking(health, rules, id, 5.0, None)
-                {
-                    canceled = o.canceled;
-                }
-            });
-        }
+        let id = self.health_resources.damage.id("minecraft:mob_attack");
+        let canceled = self.push_seen_with_equipment_hurt(push, id.filter(|_| hurts), 5.0);
         self.combat.forget_noted(canceled);
         if !sitting
             && !hurt_lately
@@ -3257,6 +3235,7 @@ pub(super) struct Breath {
     /// Its entity id once a server's players track it (0 until then).
     pub(super) id: u32,
     pub(super) at: [f64; 3],
+    pub(super) motion: [f64; 3],
     pub(super) radius: f32,
     pub(super) age: i32,
     pub(super) duration: i32,
@@ -3299,11 +3278,8 @@ impl Game<'_> {
         ) else {
             return;
         };
-        let pos = glam::DVec3::new(
-            d.previous.x + (d.position.x - d.previous.x) * alpha,
-            d.previous.y + (d.position.y - d.previous.y) * alpha,
-            d.previous.z + (d.position.z - d.previous.z) * alpha,
-        );
+        let p = d.previous.lerp(d.position, alpha);
+        let pos = glam::DVec3::new(p.x, p.y, p.z);
         let h = |delay: usize| d.sample_lerp(delay, a);
         let yr = h(7).1;
         let rot2 = (h(5).0 - h(10).0) as f32;
@@ -3543,7 +3519,7 @@ impl Game<'_> {
                     normal: [0; 4],
                     pos: m.transform_point3(p).to_array(),
                     uv,
-                    // HDR output: the healing beam shines (entity.wgsl fs_hdr_mark).
+                    // HDR output: the healing beam shines (entity.wgsl hdr_entity_mark).
                     layer: 6 | u32::from(horizon_client::mesher::BRIGHT) << 16,
                     color: c,
                     light: wrap_light,
@@ -3634,6 +3610,7 @@ impl Dragon {
             self.position,
             self.velocity,
             [self.yaw, 0.0],
+            (false, 0.0),
             uuid,
             raw,
         );
@@ -3656,57 +3633,53 @@ impl Dragon {
         let (position, velocity, yaw) = horizon_client::entity_nbt::boat_from_nbt(tag)?;
         let mut d = Self::new(position, yaw, seed);
         d.velocity = velocity;
-        if let Some(Tag::Float(h)) = tag.get("Health") {
-            d.health = f32::from_bits(*h);
+        // Vanilla getFloatOr/getIntOr accept any numeric tag type.
+        // LivingEntity.readAdditionalSaveData reads it through setHealth, which
+        // clamps it to the max health.
+        d.health =
+            nbt_value::float(tag.get("Health")).map_or(d.health, |h| (h as f32).min(MAX_HEALTH));
+        d.sitting_damage =
+            nbt_value::float(tag.get("sitting_damage_received")).unwrap_or(0.0) as f32;
+        if let Some(p) = nbt_value::number(tag.get("DragonPhase")) {
+            d.phase = Phase::from_id(p as i32);
         }
-        if let Some(Tag::Int(p)) = tag.get("DragonPhase") {
-            d.phase = Phase::from_id(*p);
+        if let Some(t) = nbt_value::number(tag.get("DragonDeathTime")) {
+            d.death_time = t as i32;
         }
-        if let Some(Tag::Int(t)) = tag.get("DragonDeathTime") {
-            d.death_time = *t;
-        }
-        d.no_ai = matches!(tag.get("NoAI"), Some(Tag::Byte(b)) if *b != 0);
+        d.no_ai = horizon_client::entity_nbt::flag(tag, "NoAI");
         Some(d)
     }
 }
-impl Crystal {
-    pub(super) fn to_nbt(&self, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
-        let mut tag = horizon_client::entity_nbt::vehicle_to_nbt(
-            "minecraft:end_crystal",
-            self.position,
-            Vec3::ZERO,
-            [0.0, 0.0],
-            uuid,
-            raw,
-        );
-        if let Tag::Compound(map) = &mut tag {
-            map.insert("ShowBottom".into(), Tag::Byte(i8::from(self.show_bottom)));
-            if let Some(b) = self.beam {
-                map.insert("beam_target".into(), Tag::IntArray(b.to_vec()));
-            }
-            map.insert(
-                "Invulnerable".into(),
-                Tag::Byte(i8::from(self.invulnerable)),
-            );
-        }
-        tag
-    }
-    pub(super) fn from_nbt(tag: &Tag, time: i32) -> Option<Self> {
-        let (position, _, _) = horizon_client::entity_nbt::boat_from_nbt(tag)?;
-        Some(Self {
-            id: 0,
-            position,
-            show_bottom: !matches!(tag.get("ShowBottom"), Some(Tag::Byte(0))),
-            time,
-            beam: match tag.get("beam_target") {
-                Some(Tag::IntArray(v)) if v.len() == 3 => Some([v[0], v[1], v[2]]),
-                _ => None,
-            },
-            invulnerable: matches!(tag.get("Invulnerable"), Some(Tag::Byte(1))),
-        })
-    }
-}
 impl Game<'_> {
+    /// `FireworkRocketEntity.dealExplosionDamage` on the dragon: a living
+    /// entity in the rocket's `inflate(5)` box and within 5 blocks, seen at its
+    /// feet or middle, takes `EnderDragon.hurtServer` (`hurt(body, ...)`).
+    pub(super) fn rocket_blast_dragon(
+        &mut self,
+        from: Vec3,
+        damage: f32,
+        reach: Aabb,
+        by: Option<FightWho>,
+    ) {
+        let Some(d) = self.dragon.as_ref() else {
+            return;
+        };
+        let p = d.position;
+        let d2 = (p.x - from.x).powi(2) + (p.y - from.y).powi(2) + (p.z - from.z).powi(2);
+        if d2 > 25.0 || !d.whole_box().intersects(reach) {
+            return;
+        }
+        let world = self.mob_world_base(&[]);
+        let sees = (0..2).any(|step| {
+            let to = Vec3::new(p.x, p.y + 8.0 * 0.5 * f64::from(step), p.z);
+            world.clear_between(from, to, false)
+        });
+        if !sees {
+            return;
+        }
+        let amount = super::fireworks::blast_damage(damage, from, p);
+        self.hurt_dragon(2, amount, true, by, DamageKind::Fireworks);
+    }
     /// `ServerExplosion.hurtEntities`: crystals in reach are removed without
     /// another blast; explosions always hurt dragons.
     pub(super) fn explosion_hits_special(
@@ -3797,6 +3770,7 @@ impl Game<'_> {
             head_yaw: d.yaw,
             on_ground: false,
             velocity: [d.velocity.x, d.velocity.y, d.velocity.z],
+            acceleration_power: None,
             minecart_steps: None,
             data: 0,
             meta,
@@ -3811,11 +3785,7 @@ impl Game<'_> {
             stepped: true,
             idle: false,
             bare: false,
-            leash: None,
-            spectator: false,
-            animation: None,
-            watching: false,
-            hidden: None,
+            ..Default::default()
         })
     }
 }
@@ -3897,14 +3867,8 @@ impl Game<'_> {
         // EndCrystal's constructor takes an id from the entity counter, so
         // the crystal is an entity a command can name (`@e[type=end_crystal]`).
         self.next_entity += 1;
-        self.crystals.push(Crystal {
-            id: self.next_entity,
-            position: at,
-            show_bottom: false,
-            time,
-            beam: None,
-            invulnerable: false,
-        });
+        self.crystals
+            .push(Crystal::new(self.next_entity, at, false, time));
         // EndCrystalItem.useOn: ENTITY_PLACE at the block above, by the player.
         self.post_block_game_event("minecraft:entity_place", above, self.sculk_actor(), None);
         self.world.modified.insert((above[0] >> 4, above[2] >> 4));
@@ -3923,7 +3887,16 @@ impl Game<'_> {
     /// (`Entity.kill` does not hurt it).
     pub(super) fn kill_crystal(&mut self, id: u32) {
         if let Some(i) = self.crystals.iter().position(|c| c.id == id) {
-            self.destroy_crystal(i, None, CrystalDamage::Explosion);
+            let c = self.crystals[i].clone();
+            let respawn = self.fight.respawn.is_some()
+                && self
+                    .fight
+                    .respawn_crystals
+                    .iter()
+                    .any(|p| p.distance_squared(c.position) < 0.01);
+            self.crystal_destroyed(i, &c, None, respawn);
+            self.crystals.retain(|crystal| crystal.id != id);
+            self.entity_killed_event([c.position.x, c.position.y, c.position.z], false);
         }
     }
     /// `EnderDragon.kill` (`/kill`): `Entity.kill` removes the entity, it
@@ -4191,12 +4164,9 @@ impl Game<'_> {
         let drawn = self.world.random.next_int_bound(100_000).unwrap_or(0);
         let time = Crystal::start_time(at, drawn, self.clock.still());
         self.crystals.push(Crystal {
-            id: 0,
-            position: at,
-            show_bottom: true,
-            time,
             beam: Some([0, 128, 0]),
             invulnerable: true,
+            ..Crystal::new(0, at, true, time)
         });
         let _ = self.set_state_named([cx, h, cz], "minecraft:bedrock", &[]);
         let _ = self.set_state_named([cx, h + 1, cz], "minecraft:fire", &[]);
@@ -4296,7 +4266,7 @@ impl Game<'_> {
     }
     /// The dragon is the End fight's own (`EnderDragon.dragonFight`, set
     /// only for the dragon whose UUID is the fight's `dragonUUID`).
-    fn is_fight_dragon(&mut self) -> bool {
+    pub(super) fn is_fight_dragon(&mut self) -> bool {
         if !self.dimension_type().has_ender_dragon_fight {
             return false;
         }
@@ -4331,7 +4301,8 @@ impl Game<'_> {
                     super::explosion::BlockInteraction::Keep,
                     false,
                     super::explosion::ExplosionSource::default()
-                        .with_silence(self.entity_silent(c.id)),
+                        .with_silence(self.entity_silent(c.id))
+                        .with_entity(c.id, "minecraft:end_crystal"),
                 );
             }
         }
@@ -4740,74 +4711,9 @@ impl Game<'_> {
     }
 }
 
-/// The dying model's colour, `ARGB.white(1 - deathTime / 200)`: `Mth.floor` of the alpha
-/// shifted as a Java int, so past 200 it wraps as vanilla's does.
-fn dissolve_color(death: f32) -> u32 {
-    let alpha = ((1.0 - death / 200.0) * 255.0).floor() as i32;
-    (alpha << 24) as u32 | 0x00FF_FFFF
-}
-/// `DissolveMaskSampler` at the vertex's `UV0`: the same place in the mask's sprite as in the
-/// skin's, as the dissolve overlay reads it from `glint_uv` (entity.wgsl).
-fn dissolve_mask(quads: &mut [Vertex], skin: [f32; 4], mask: [f32; 4]) {
-    for v in quads {
-        let u = (v.uv[0] - skin[0]) / (skin[2] - skin[0]);
-        let w = (v.uv[1] - skin[1]) / (skin[3] - skin[1]);
-        v.glint_uv = [
-            mask[0] + (mask[2] - mask[0]) * u,
-            mask[1] + (mask[3] - mask[1]) * w,
-        ];
-    }
-}
-/// `submitRays`: the death rays from a fixed seed, fading in white to magenta.
-fn dragon_rays(base: glam::Mat4, t: f32, white: horizon_client::hud::Rect, out: &mut Vec<Vertex>) {
-    // Vanilla's dragonRays has no texture. Sample inside the white sprite:
-    // its border can round into transparent neighbours during interpolation.
-    let uv = [(white.u0 + white.u1) / 2.0, (white.v0 + white.v1) / 2.0];
-    let over = if t > 0.8 {
-        ((t - 0.8) / 0.2).min(1.0)
-    } else {
-        0.0
-    };
-    let inner = (((1.0 - over) * 255.0) as u32) << 24 | 0x00FF_FFFF;
-    let outer = 0x00FF_00FF;
-    let mut random = LegacyRandom::new(432);
-    let mut m = base;
-    let count = ((t + t * t) / 2.0 * 60.0).floor() as i32;
-    let half_sqrt3 = 3f32.sqrt() / 2.0;
-    let tau = std::f32::consts::TAU;
-    for _ in 0..count {
-        let mut f = || random.next_float() * tau;
-        let q1 = glam::Quat::from_rotation_x(f())
-            * glam::Quat::from_rotation_y(f())
-            * glam::Quat::from_rotation_z(f());
-        let (a, b, c) = (f(), f(), f());
-        let q2 = glam::Quat::from_rotation_x(a)
-            * glam::Quat::from_rotation_y(b)
-            * glam::Quat::from_rotation_z(c + t * std::f32::consts::FRAC_PI_2);
-        m *= glam::Mat4::from_quat(q1 * q2);
-        let length = random.next_float() * 20.0 + 5.0 + over * 10.0;
-        let width = random.next_float() * 2.0 + 1.0 + over * 2.0;
-        let o = glam::Vec3::ZERO;
-        let left = glam::Vec3::new(-half_sqrt3 * width, length, -0.5 * width);
-        let right = glam::Vec3::new(half_sqrt3 * width, length, -0.5 * width);
-        let bottom = glam::Vec3::new(0.0, length, width);
-        for (p1, p2) in [(left, right), (right, bottom), (bottom, left)] {
-            // A triangle as a quad with its last corner repeated.
-            for (p, c) in [(o, inner), (p1, outer), (p2, outer), (p2, outer)] {
-                out.push(Vertex {
-                    normal: [0; 4],
-                    pos: m.transform_point3(p).to_array(),
-                    uv,
-                    layer: horizon_client::gfx::DRAGON_RAYS_OVERLAY,
-                    color: c,
-                    light: 0,
-
-                    glint_uv: [0.0, 0.0],
-                });
-            }
-        }
-    }
-}
+mod crystal;
+mod death_render;
+use death_render::{dissolve_color, dissolve_mask, dragon_rays};
 
 /// `Entity.push` on the server's copy of a player, then `hurt`. A player's
 /// own client hears of its velocity only when a hurt marks it
@@ -4816,6 +4722,7 @@ fn dragon_rays(base: glam::Mat4, t: f32, white: horizon_client::hud::Rect, out: 
 /// reaches the players tracking them, not them. So the push moves the player
 /// only together with a hurt that lands outside the hurt cooldown, and is
 /// dropped otherwise.
+#[cfg(test)]
 fn push_seen_with_hurt(
     p: &mut horizon_client::motion::PlayerMotion,
     push: Vec3,
@@ -4843,6 +4750,25 @@ mod tests {
             ),
             Vec3::new(feet[0], feet[1], feet[2]),
         )
+    }
+
+    /// `Entity.load` and `EndCrystal.readAdditionalSaveData` read their booleans with
+    /// `getBooleanOr`: any number, `ShowBottom` true when absent.
+    #[test]
+    fn a_crystal_reads_its_flags_from_any_number() {
+        let crystal = |fields: Vec<(&str, Tag)>| {
+            let pos = [0.5f64, 64.0, 0.5].map(|v| Tag::Double(v.to_bits()));
+            let mut all = vec![("Pos", Tag::List(pos.to_vec()))];
+            all.extend(fields);
+            Crystal::from_nbt(&Tag::compound(all), 0).unwrap()
+        };
+        let c = crystal(vec![
+            ("Invulnerable", Tag::Byte(2)),
+            ("ShowBottom", Tag::Int(0)),
+        ]);
+        assert!(c.invulnerable && !c.show_bottom);
+        let c = crystal(Vec::new());
+        assert!(!c.invulnerable && c.show_bottom);
     }
 
     /// Under `HORIZON_STILL` a crystal's spin and bob start from its position, whichever order
@@ -5072,6 +4998,25 @@ mod tests {
         let mut d = Dragon::new(Vec3::new(0.0, 70.0, 0.0), 0.0, 1);
         d.phase = phase;
         d
+    }
+
+    /// `EnderDragon.readAdditionalSaveData` reads `sitting_damage_received`
+    /// (`getFloatOr`, 0 when absent); the writer already saved it. Horizon
+    /// only wrote it, so a perched dragon that took a quarter of its health
+    /// but was saved before taking off came back with the damage forgotten.
+    #[test]
+    fn a_perched_dragons_damage_survives_the_chunk_save() {
+        let mut d = dragon(Phase::Flaming { ticks: 0 });
+        d.sitting_damage = 12.5;
+        let tag = d.to_nbt([1, 2, 3, 4], None);
+        let back = Dragon::from_nbt(&tag, 0).unwrap();
+        assert_eq!(back.sitting_damage, 12.5);
+        // No key at all reads as no damage accumulated.
+        let mut bare = tag.clone();
+        if let horizon_world::nbt::Tag::Compound(fields) = &mut bare {
+            fields.remove(&"sitting_damage_received".into());
+        }
+        assert_eq!(Dragon::from_nbt(&bare, 0).unwrap().sitting_damage, 0.0);
     }
     fn flying() -> Phase {
         Phase::Holding {
@@ -5731,6 +5676,7 @@ mod dragon_fireball_spawn_tests {
                     .insert((x, z), Arc::new(Chunk::empty(x, z)));
             }
         }
+        game.load_ticking_neighbourhood(0, 0);
         assert!(game.run_command("forceload add 0 0"));
         game
     }
@@ -5829,7 +5775,6 @@ mod dragon_fireball_spawn_tests {
         );
     }
 }
-
 #[cfg(test)]
 #[path = "thorns_tests.rs"]
 mod thorns_tests;

@@ -51,7 +51,7 @@ once per loop iteration next to winit's events.
 | Action | Xbox | PlayStation | Mapping |
 |---|---|---|---|
 | Move | Left stick | Left stick | analog `key.forward/back/left/right` |
-| Look | Right stick | Right stick | camera |
+| Look | Right stick | Right stick | camera; the cinematic camera eases it as it does the mouse |
 | Jump / fly up | A | ✕ | `key.jump` |
 | Drop item | D-pad down | D-pad down | `key.drop` |
 | Swap offhand | X | □ | `key.swapOffhand` |
@@ -64,11 +64,13 @@ once per loop iteration next to winit's events.
 | Change camera | View | Create / Share | `key.togglePerspective` |
 | Pick block | D-pad left | D-pad left | `key.pickItem` |
 | Chat | D-pad up | D-pad up | `key.chat` |
+| Radial menu (hold) | D-pad right | D-pad right | Horizon `pad.radial` |
 | Pause / back | Menu | Options | Escape (fixed) |
 
-Advancements and the player list have no button of their own, and are
-bindable. A settings file from before these defaults keeps its buttons where
-they were.
+Advancements has no button of its own: it is on the radial menu's first page,
+and bindable, as the player list is. A settings file from before these defaults
+keeps its buttons where they were and leaves the menu unbound (Controller Settings > Bindings
+offers it).
 
 Also bindable, with no default button: fullscreen, player social, quick actions, the save and load
 toolbar activators and hotbar slots 1 to 9. They act in play only: in a menu or a prompt the button
@@ -89,6 +91,179 @@ toggles by default (holding a stick in while steering the camera is
 awkward, which is why Bedrock does the same) and acts like vanilla's toggle
 crouch: a screen stands you up while it is open and closing it crouches you
 again. The controls options can make it hold-to-sneak.
+
+## Radial menu
+
+Hold the opener and the right stick points at one of eight slots, clockwise
+from the top; letting the opener go runs the selected action, once. It isn't a
+screen: the world goes on behind it, and neither the selecting stick nor the mouse
+turns the view while it is open (the stick not until it has been let go). With
+the default opener, D-pad Right, the left thumb is on the D-pad, so the player
+stands still while picking; with the opener on a bumper, a trigger or View the
+stick that doesn't select still walks or turns the view.
+Every hold opens on the first page, so a flick aimed blind always lands on the
+same slot.
+
+Two settings in Controller Settings > General, under Radial Menu, change how it
+is held and aimed, saved as `radialMode` and `radialStick` in
+`horizon-controller.txt`:
+
+- Radial Menu: Hold (the default) or Toggle (`radialMode:hold|toggle`). In
+  Toggle a press opens it, shown at once, and it stays open with the opener up:
+  A or a second press of the opener runs what is selected, B cancels, and with
+  nothing selected nothing runs.
+- Radial Menu Selects With: Right Stick (the default), Left Stick or Either
+  (`radialStick:right|left|either`). The selecting stick neither walks nor
+  turns the view while the menu is open; with Either, the last stick to lean
+  past the select tilt selects, and neither moves anything. While the menu is
+  open a stick takes over only once it has been at rest since the open, so a
+  thumb left on the walking stick can't commit for the other. Its tilts follow
+  that stick's own deadzone.
+
+- The overlay shows once the opener has been held 120 ms (`DRAW_DELAY`); the
+  stick counts from the press, so a quick flick-and-release works without it,
+  and a tap that selected nothing shows nothing and does nothing. A flick
+  between two frames still counts: the pad's own events give the furthest the
+  stick leant since the last poll.
+- The slots are eight tiles (vanilla's game mode switcher slots, each with its
+  action's icon from the player's own resources) on a ring at true 45 degree
+  steps, where the stick selects them; the selected sector lights up behind
+  its tile. The hub in the middle names the selection; for Perspective, Hide
+  HUD and Cinematic Camera it gives the state and what a press turns it to,
+  and for a slot that can't run, why (`Needs cosmetics on`). An empty slot is
+  a pip, one that can't run is dimmed and slashed, and a missing action (an id
+  this game doesn't know) says Missing. Along the top, the pages are tabs
+  between the bumpers' glyphs, the current one white; on a narrow view they
+  collapse to the name between arrows, with the bumpers naming the pages they
+  turn to. With a bumper for the opener only the other shows, and with one page
+  only its name. B's Cancel sits at the lower right when the view has room. The
+  header stays below vanilla's boss bars and the ring above the status rows
+  over the hotbar (armour, health with absorption, food, a mount's hearts);
+  while the menu shows, the chat lines, the toasts, the crosshair, the guide
+  and the first-person hand give way (none of them blink on a quick tap,
+  which draws nothing). Sizes follow the
+  view's height (`radial_overlay::Layout`), so 1280x720, 854x480 and a quarter
+  of a large window look the same, and smaller views drop the state chips and
+  the Cancel hint first. Its motion is quiet and never selects: a quick fade in,
+  the lit sector easing to a new slot, the tiles sliding in on a page turn, the
+  chosen tile flashing on a commit (`hud_kit::motion`, settled while the game
+  is paused or recording).
+- Bumpers change the page, around the ends, and clear the selection; with a
+  bumper for the opener, the other one turns the pages on. A stick held through
+  the page turn selects nothing until it moves. One that had leant past rest
+  for 90 ms before the opener went down (`LEAN_BEFORE_OPEN`, a stick turning the
+  camera) selects nothing until it has been at rest, page turns included; one
+  that moved only just before is a flick aimed at the menu, and selects.
+  Meanwhile the sector stays dark and the hub says "Let go of the stick".
+- A selected slot stays selected a little past its wedge and under the tilt, so
+  a light hold or a stick on a boundary doesn't flicker. The tilts are tuned at
+  the default look deadzone and keep their share of the travel past a raised
+  one (`radial::Tilt`): a selection always lets go above the deadzone, so a
+  drifting stick never keeps one, and no slot ever needs more than a 0.93 lean,
+  which a worn stick still reaches.
+- With vibration on: reaching a slot that would run gives a tick (45 ms on the
+  light motor), a page turn a shorter one, twice when the pages go round an
+  end, and a release that runs nothing after something was selected a soft
+  buzz. A commit that runs an action plays the button click.
+- With the narrator on, it says the page's name as the overlay shows and after
+  each page turn, and a slot's caption once the selection has stayed 150 ms
+  (`NARRATE_SETTLE`), so a sweep across slots says only where it stops.
+- A stick let go keeps its selection for 250 ms (`NEUTRAL_RETENTION`), so it can
+  spring back before the opener comes up; then the selection clears. Latched
+  open in Toggle the selection stays with the stick let go, so the thumb can
+  move to A: only another slot, a page turn or a cancel changes it. A slot the
+  thumb crosses on its way to A, selected less than 90 ms before A goes down
+  (`A_SETTLE`), doesn't count: A runs the one it had settled on.
+- A release with nothing selected, or on an empty slot, does nothing. An empty
+  slot is a faint outline with no caption; only the selected action takes the
+  accent.
+- An action that can't run now is drawn dimmed. It can be selected, but its
+  release does nothing: no action, no click. The game decides which: Emote
+  opens the emote wheel only with cosmetics on, Quick Actions only when the
+  server gave a dialog for it, and Social only on a server. Social is the one
+  exception to doing nothing: in single player its release goes through its key,
+  which shows vanilla's "not available" message on the action bar, as
+  `Gui.handleKeybinds` does (pressing its key does the same). A Missing action
+  never runs. The others always run.
+- B, Start, a disconnect, losing the window's focus (with Play in Background on
+  too), the player being replaced (a death with immediate respawn, the End's
+  exit) or anything that opens over gameplay cancels, also during those 250 ms.
+  RT or LT pressed while it is open cancels it and goes on to attack or use in
+  the same poll; so does any key or mouse button, which isn't swallowed. No
+  other press made while it is open reaches a mapping, and a press in the same
+  poll as the opener's release, held back to the next tick or not, comes first,
+  so B still cancels. Buttons held since before it opened keep their action and
+  release it as usual, so a held sneak stays held. Moving the mouse neither
+  cancels it nor takes control back from the pad, nor turns the view.
+- After it closes on a D-pad opener, a press of another D-pad button that starts
+  within 100 ms reaches nothing, and nor does its release (`DPAD_SETTLE`): a
+  thumb rolling off the opener doesn't drop or open the chat. The opener itself
+  opens the menu again at once. A drop held through it starts
+  its wait again as it closes, rather than throwing the rest of the stack. F3's
+  3D crosshair gives way to it, as the 2D one does.
+- Menus, the on-screen keyboard and prompts come first: there the opener's
+  button does what the screen says (or its other action, if it shares one).
+- The opener is never under a thumb that selects, as holding it and steering
+  are two jobs for one thumb, nor on B, which cancels (`gamepad::opener_refused`):
+  selecting with the right stick, not A, X, Y or R3; with the left, not the D-pad
+  or L3 (A, X and Y are free); with either, neither set, leaving the bumpers,
+  the triggers and View. In the binds list a refused button cancels the capture
+  as Start does, and a file with one reads as if it had no opener saved (D-pad
+  Right, unless another action is there or the stick refuses it). Changing the
+  stick so that the opener is under the selecting thumb unbinds it, and the
+  opener's row says no button opens the menu and which ones can; back on the
+  right stick an unbound opener takes D-pad Right again if it is free. A bumper
+  can be the opener; the other bumper then turns the pages on, round the end.
+
+The default pages hold only actions with no button of their own that always
+run, so the menu adds to the pad instead of repeating it, on the straight
+directions: General has Advancements (up), Commands (right) and Social (down);
+Camera has Screenshot (up), Hide HUD (right) and Cinematic Camera (down). The
+rest start empty. Slots hold actions from a fixed list
+(`radial::RadialAction`), those that do everything on their press (Fullscreen,
+Quick Actions and the F3 debug screen besides those of the default pages), each shown
+by a short caption (`horizon.radial.action.*`). Its rules are in
+`horizon-client-input/src/radial.rs`, the overlay in
+`horizon-client-render/src/radial_overlay.rs`.
+
+Pages live in `horizon-controller.txt`, written once they differ from the
+defaults, so each splitscreen profile has its own, after `radialLayout:1` (the
+version of the default page list they were written against). A page the player
+hasn't changed is written as its preset, `radial_<page>_preset:general` or
+`camera`, and reads back as that default page as it is now: changing one slot
+of General leaves Camera following the defaults. Setting a slot or a name to
+what it already is changes nothing, and a page edited back to its default (or
+read from its slots as that) is its preset again; an edited page drops a preset
+id this game doesn't know, which would otherwise replace it. A page of the player's own is
+`radial_<page>_slots` (eight ids, by commas) and its name as
+`radial_<page>_name` (a name Horizon gave it, by language key) or
+`radial_<page>_label` (the player's own text, kept as typed);
+`radial_<page>_kind:hotbar` is read and kept for a hotbar page, which this
+version shows with empty slots. Slot ids are vanilla key mappings by name
+(`key.chat`) and Horizon's own in its namespace (`horizon:emote`,
+`horizon:hotbar_next`, `horizon:hotbar_previous`); the ids they had before
+(`key.emote`, `pad.hotbarNext`, `pad.hotbarPrevious`) read through an alias
+table. An id this game doesn't know (a newer Horizon's, a mod's) stays in its
+slot, drawn as Missing and dimmed, and never runs, so a slot can't run a
+command. Fields and kinds it doesn't read stay too. A file can hold up to 16
+pages (`PARSE_MAX`), and the lines of any past them are kept; the menu and the
+editor show the first six, and a page deleted there brings the next forward.
+Removing an action empties its slot and moves no other.
+
+Controller Settings > Bindings > Radial Menu edits them, on the settings shell
+(`horizon-client-render/src/radial_editor.rs`): the page list is the pages, by
+name, and each page has its eight slots by direction (A or a click opens the list
+of every action and Empty for that slot, which names the slot, marks what it holds
+and opens on it; Right steps a slot to the next action, Empty between the last and
+the first, and Left or Shift-click back, as on every choice of the settings shell),
+then Rename Page, New Page
+and Delete Page, then Reset All Pages and the opener's button, drawn with its
+glyph. A press on the opener's row waits there for a controller button, as a key
+row does: A, B, X, Y and the right stick's click are refused, Start cancels, and
+the row's description says when no button opens the menu or another action
+shares it. Delete and Reset act at once: Undo, there once something changed, puts
+the pages and the opener back as the screen found them. Rename opens a page with
+a name field (A on it opens the on-screen keyboard), Done and Cancel.
 
 A Nintendo pad's face buttons can go by their places, as the table and SDL's
 layout have them (B, at the bottom, jumps and confirms), or by their letters,
@@ -213,7 +388,7 @@ the crafting result, armour to the player's grid.
   faster while held). A or B lets go and keeps the value, and up or down lets go
   and moves on. Until then left and right move the focus, so passing over a
   slider doesn't change it.
-- **Choices on the settings shell** (Extras, Graphics: a value between `<` `>`): left and right step the
+- **Choices on the settings shell** (Extras, Graphics, Pack Options: a value between `<` `>`): left and right step the
   focused one back and on at once, as its arrows show, and A steps it on. They are a press and a Shift press
   (`Screen::press` with `back`), so Undo and saving follow as for a click. Up and down leave the row, and LB
   and RB go to the page list (the previous or next page, focused); a choice declares itself with
@@ -395,7 +570,10 @@ A on a focused text field (A in pointer mode clicks into it) opens the
 language, at the bottom of the screen (at the top when the field is in the
 lower half, as chat is). D-pad or stick to move, A types, X deletes, Y is a
 space, LT is Shift (twice: caps lock), RB switches to symbols and accents,
-Menu is Enter, B closes it. It opens by itself when the pad opens chat or a
+Menu is the Done key, B closes it. A field of many lines (a book's page, a sign) has a New Line key beside
+Done, which is Enter there. Over chat, RT is Tab: it fills in the selected command suggestion, and again
+the next one (`CommandSuggestions`); the right stick pushed up or down picks the suggestion before or after
+(the arrow keys), so the suggestions are reached without closing the keyboard. It opens by itself when the pad opens chat or a
 sign, but not over the chat a sleeper gets (the game opens that one): there
 it waits for A on the chat box. It types into chat (local and server), signs, books being written, the title screens' fields,
 every options page's fields (searches, the packs', the language list's,
@@ -405,12 +583,14 @@ edit screens, Player Social's search and Debug Options' search. The one exceptio
 own screen (`Screen::Mod`), which takes its input through the screen hooks: the keyboard types nothing
 there.
 
-Enter (Menu, or the keyboard's Done key) closes the keyboard, and on the way:
+Done (Menu, or the keyboard's Done key) closes the keyboard, and on the way:
 
-- reaches the field as the key would in chat (it sends), on signs and books, on command blocks (their
-  Done) and game master blocks, on the options pages and on the title's fields;
-- does nothing more on the searches, the anvil, the LAN screen and a dialog's one-line input;
-- on a dialog's input of many lines is a new line, and the keyboard stays.
+- is Enter in chat (it sends), on command blocks (their Done) and game master blocks, on the options pages
+  and on the title's fields;
+- on a book and quill's page and on a sign is the screen's own Done: the book saves and closes, the sign
+  closes with its text. It never makes a new line there: that's the New Line key, and the keyboard stays;
+- does nothing more on the searches, the anvil, the LAN screen and a dialog's inputs (New Line makes a
+  dialog's line).
 
 
 On a Steam Deck under Steam (`SteamDeck=1`), A asks Steam for its own
@@ -469,9 +649,9 @@ The picture's texture is 32 pixels tall, drawn 16 GUI pixels tall with a clear e
 glyph shows 12 tall, as a text glyph does: a square picture 12 wide, a bumper or trigger 20. A declared
 button's label leaves room for it.
 
-Art shows on declared buttons and a focused field's A, in notices, the gameplay guide and splitscreen's
-strips. What runs inside a line of text stays text: the recipe tooltip, the on-screen keyboard's hint line and the buttons on
-the Bindings page. Vanilla's own messages that name a key (tutorial hints) keep the keyboard's names.
+Art shows on declared buttons and a focused field's A, in notices, the gameplay guide, the radial
+menu's hints and splitscreen's strips. What runs inside a line of text stays text: the recipe tooltip,
+the on-screen keyboard's hint line and the buttons on the Bindings page. Vanilla's own messages that name a key (tutorial hints) keep the keyboard's names.
 
 The inventory crosshair is `crosshair_inv` in the same folder, drawn at 16 GUI pixels on the point it
 clicks (`pad_cursor.rs`).
@@ -491,7 +671,8 @@ Extras and Graphics, with a search field and General, Bindings and Device pages.
 describes the pointed or focused row, and what a choice's value does. Left and Right step a choice both
 ways, as its `<` `>` show. The search gives the keys back as soon as the focus leaves it.
 
-Bindings is a list like the key binds screen. Each action's row shows its button's art in the player's
+Bindings starts with the Radial Menu row, which opens the radial menu's pages (described above), then
+Actions, a list like the key binds screen. Each action's row shows its button's art in the player's
 glyphs. Press the row and then a button; Start, a click or a key cancels, and the keyboard's Escape
 unbinds. Meanwhile the row reads "> A <" and the strip names the button that cancels. A button that does
 more than one action is marked "[ ]" in yellow, as vanilla marks conflicts, and the strip lists what else
@@ -512,6 +693,8 @@ exactly vanilla's, so a vanilla client can share the game folder.
 enabled:true
 vibration:true
 adaptiveTriggers:true
+impulseTriggers:true
+blockVibration:true
 lightbar:health
 lookSensitivity:0.5
 invertX:false
@@ -525,11 +708,13 @@ bind_key.jump:south
 craftOnServers:false
 gameplayGuide:full
 bind_pad.hotbarNext:rb
-bindLayout:1
+bindLayout:2
 ```
 
 Only bindings that differ from the defaults are written. A file without `bindLayout` comes from before the
-current defaults and keeps its buttons where they were.
+current defaults and keeps its buttons where they were. A file below `bindLayout:2` comes from before the radial
+menu's opener: on its first load the opener stays off D-pad Right if the player had put another action there.
+That happens once; from layout 2 on, a conflict the player makes in the binds list stays as they made it.
 
 Deadzones are radial (the stick's length, so diagonals aren't clipped) and the
 remaining range is rescaled to 0..1. Look uses a squared curve for precise
@@ -552,7 +737,9 @@ button, has no row. The mouse or keyboard taking over hides them, as do a menu, 
 Gameplay Guide option. They read what a click would do from the client's own answers
 (`remote_block_reacts`, `remote_mob_takes`), and a use only a fluid ray or the server can tell (an
 empty bucket) shows nothing. The rows step around what the HUD drew (effect icons, boss bars, the
-sidebar, chat, toasts, splitscreen's badge), and in a small view the last rows drop.
+sidebar, chat, toasts, splitscreen's badge), and in a small view the last rows drop. The left
+column's last row names the radial menu's opener, as nothing else in play says it's there (for a
+spectator too, who can open it).
 
 An inventory or creative screen the pad drives has rows of its own, from its bottom corners, under
 the same option, and what's under the crosshair decides them: a slot, by whether it holds anything
@@ -564,12 +751,17 @@ tabs. The creative grid's items aren't slots, so creative has only Close and its
 ## Rumble
 
 Vibration (on by default, off in the options): taking damage (stronger with
-the damage), a block broken, an explosion nearby (scaled by distance), a totem
-of undying. Short, low-intensity pulses, as on Bedrock. A DualSense gets them
-shaped, through its own output report (below), on every OS. Other pads go through
-gilrs force feedback: Linux (evdev force feedback, including Steam Input's
-virtual pad) and Windows support it; macOS gilrs has no force feedback, so it
-is silently skipped there.
+the damage), a block broken, a stack split, an explosion nearby (scaled by
+distance), a totem of undying. Short, low-intensity pulses, as on Bedrock. A
+DualSense and an Xbox One pad get them through their own output reports
+(below), on every OS where the pad takes one. **Haptic Feedback from Bedrock**
+(`blockVibration:`, on by default) turns the broken-block tick off, as
+Bedrock's own option does, and **Split Vibration** (`splitVibration:`, on by
+default) the short tick when a stack splits. The split's tick only plays when
+the pad's own cursor made the click: the mouse never buzzes. Other pads go
+through gilrs force feedback: Linux (evdev force feedback, including Steam
+Input's virtual pad) and Windows support it; macOS gilrs has no force
+feedback, so it is silently skipped there.
 
 ## DualSense output
 
@@ -714,11 +906,15 @@ documents (none of it measured on Horizon's pad yet):
 ### Vibration shapes and HD haptics
 
 Each event plays a short shape rather than one flat block: a hit opens at
-full strength for 50 ms and dies away in two steps, an explosion rolls on for
-half a second, a totem swells, a broken block is a 35 ms tick. Over HID they
-drive the motors' emulation (the compatible-vibration bytes). Measured on the
-pad, that emulation has inertia: after a full-strength step it takes about
-half a second to settle, so short shapes blur.
+full strength and dies away in two steps, an explosion rolls on for half a
+second, a totem swells, a broken block is a 120 ms tick, a split a 90 ms one.
+Over HID they drive the motors' emulation (the compatible-vibration bytes).
+Measured on the pad, that emulation has inertia: after a full-strength step it
+takes about half a second to settle, so short shapes blur. The Xbox output
+(below) therefore plays a hit as one flat step at the pulse's level for the
+whole pulse: its shaped fade dropped the handle motors below what they answer,
+which left a hit in the trigger motors alone. A broken block and a split are
+one step on either path.
 
 The DualSense has no motors, but two voice-coil actuators, and on USB it is
 also a four-channel 48 kHz audio device whose channels 3 and 4 drive them
@@ -789,6 +985,116 @@ flags), the pad reporting a feedback and a weapon trigger effect as active,
 and the writer thread. Verified against the references only: everything
 else, the flag-less stop, the attenuation and LED reset reports, and all of
 Bluetooth.
+
+## Xbox One output
+
+Gilrs only reads the pads, and its force feedback has no trigger motors. A pad
+in use is also written to directly: Microsoft's Xbox One and Series pads
+(045e; the ids in `horizon-dualsense`'s `xbox::XBOX_ONE`) over hidapi, and, on
+Windows, any Xbox-style pad Windows.Gaming.Input lists (a GameSir G7, an
+8BitDo in Xbox mode) through WGI, whose four motors don't need Microsoft's
+ids.
+
+- **Report.** The pad has four motors: the two handles (heavy and light) and
+  one in each trigger, the impulse triggers. A vibration writes all four:
+  report 0x09 over USB, 13 bytes (GIP's rumble command, 0x0F to set both
+  handles and both triggers, the trigger levels, the handle levels, then the
+  effect's duration, delay and loop bytes); report 0x03 over Bluetooth, 9
+  bytes, with the same four levels. SDL's `ControllerHasTriggerRumble` marks
+  only Microsoft's own pads: a licensed third-party pad takes the same bytes
+  and buzzes its handles, with nothing in its triggers. On Windows,
+  Windows.Gaming.Input's four motors reach a third-party Xbox-style pad's
+  handles too, so a GameSir or an 8BitDo in Xbox mode buzzes both sides and
+  both triggers when it has them. Unit tests pin the bytes to SDL's
+  `SDL_hidapi_xboxone.c`.
+- **Windows on a cable.** A wired pad's HID endpoint is XGIP's stand-in and
+  takes no output report (SDL skips every `\\?\HID#` path there). Windows.
+  Gaming.Input is the way to its trigger motors: `Gamepad::SetVibration`
+  carries `LeftMotor`, `RightMotor`, `LeftTrigger` and `RightTrigger`, all
+  0..1, and it shares the pad with other programs (the launcher) instead of
+  opening its HID endpoint. A player's wired 1708 pad proved the trigger motors
+  reach it: the right trigger buzzed on a broken block, and the four motors
+  played over Bluetooth. Windows needs the app's window in front for any
+  vibration: it stops when the window loses focus. A Bluetooth pad is a real HID device on every OS, and Chromium's own
+  Xbox HID writer drives it there too, so on Windows Bluetooth takes the report
+  above and WGI is only the fallback when the endpoint can't be opened. On
+  Linux and macOS a wired pad takes the USB report. iOS has no hidapi, so the
+  crate builds without output there.
+- **Which link the pad is on.** Windows.Gaming.Input answers it (`IsWireless`),
+  so on Windows WGI is asked first: a wired pad takes WGI's four motors even
+  when Windows still lists a paired Bluetooth entry for it, and a wireless one
+  takes its HID report and falls back to WGI. That also settles the case where
+  a cable is plugged into a pad that is still paired over Bluetooth, which
+  otherwise opened a dead Bluetooth handle.
+- **Which pad.** The output follows the pad the player is using, not the first
+  one the system lists: the writer takes its ids and its place among identical
+  pads, then asks WGI or hidapi for that one. Connecting a second controller
+  therefore neither takes the first one's output nor silences it, and each pad
+  keeps its own four motors.
+- **Splitscreen.** Each player's pad keeps its own four motors. P1's game owns
+  its output while its turn runs; a guest's game has no output path of its own,
+  so the router that feeds the guests opens one link per guest pad, with that
+  player's Impulse Triggers setting, and writes all four motors. Without it a
+  guest's vibration fell back to gilrs' force feedback, which moves the grips
+  alone.
+- **Switching links.** When a controller connects or disconnects, the pad's
+  own output is dropped instead of kept: a handle to the old link keeps
+  accepting writes and buzzes nothing. The next frame opens the pad afresh on
+  the link it is on now, so cable ↔ Bluetooth both ways works without
+  restarting the game.
+- **One output path.** While the pad's own output is open, every vibration goes
+  through it, handles included. The trigger motors have no other path, and
+  riding along keeps gilrs' force feedback (Windows.Gaming.Input on Windows,
+  which always sets the triggers to zero) from cutting a trigger between
+  steps.
+- **Trigger levels.** The triggers feel where the action is: a broken block
+  buzzes both, a stack split both lightly, an explosion and a totem both, a hit
+  both (the handles carry it too), and the radial menu's ticks neither. The
+  broken block's tick is one fixed level: the grips at 60% for 120 ms, the
+  triggers at 35%, so every block feels the same and all four motors answer.
+  35% on the grips for 100 ms sat below what those motors deliver, and only the
+  triggers buzzed. A hit holds one flat step for its whole pulse (the handles
+  70–90%, the triggers 65%, 200–450 ms), so the grips spin up too. A split is
+  lighter and shorter: 55% in the grips, 30% in the triggers, 90 ms.
+  **Impulse Triggers** (`impulseTriggers:`, on by default) stops the trigger
+  motors and leaves the handles; **Haptic Feedback from Bedrock**
+  (`blockVibration:`) turns off the broken block's tick, and **Split
+  Vibration** (`splitVibration:`) the split's.
+- **Handles and triggers.** Windows lists an Xbox pad twice, the WGI gamepad
+  with force feedback and a raw HID entry without one; when the pad in use is
+  the second, falling back to gilrs' rumble goes to its gamepad twin. That
+  fallback only runs while the pad's own output isn't open.
+- **Thread.** A report can block for milliseconds, so a thread of its own owns
+  the pad, as the DualSense's does: the game hands it the vibration's steps, it
+  writes the motors and ends them, and it looks for the pad again when it goes.
+- **Failures.** A failed write drops the handle and the thread scans again. The
+  writer does *not* probe with a zero-timeout read first: on Windows hidapi's
+  overlapped read answers `ERROR_BUSY` (0xAA) whenever no input report is
+  waiting, which closed the link on the first vibration over Bluetooth. A
+  handle the launcher holds makes the HID open fail, and the writer then tries
+  WGI, which isn't exclusive.
+
+Byte layout from public references, read for facts; no code is copied from
+them (Chromium's writer is BSD):
+
+| Reference | Read at | What it settles |
+| --- | --- | --- |
+| SDL [`SDL_hidapi_xboxone.c`](https://github.com/libsdl-org/SDL/blob/6defbc0129b5ba90bab3f6c67bbc1e9329e24ff1/src/joystick/hidapi/SDL_hidapi_xboxone.c) (zlib) | `6defbc0` | the 13-byte USB and 9-byte Bluetooth reports, 0x0F, the device ids, `ControllerHasTriggerRumble`, the Windows `\\?\HID#` skip |
+| Chromium [`xbox_hid_controller.cc`](https://chromium.googlesource.com/chromium/src/+/main/device/gamepad/xbox_hid_controller.cc) (BSD) | 2026-11 | the same output report driven on every OS over Bluetooth |
+| Windows [`Gamepad.SetVibration`](https://learn.microsoft.com/uwp/api/windows.gaming.input.gamepad.setvibration) | 2026-11 | `GamepadVibration`'s four motor fields and their 0..1 range |
+
+Verified against the references and a player's pads: `cargo run -p
+horizon-dualsense --example xbox -- handles`, `-- triggers` and `-- link` each
+played physically over Bluetooth (the four motors and the link's stop). In the
+game on the player's wired 1708 pad, all four motors buzz on a broken block
+after the tick's level was raised (the grips did not answer 35% for 100 ms),
+and cable ↔ Bluetooth worked both ways without a restart —
+Windows.Gaming.Input's trigger motors do reach a wired pad. The flat hit step,
+a splitscreen guest's triggers, the split's tick and a GameSir G7 still need a
+physical check.
+
+`cargo run -p horizon-dualsense --example xbox -- all` plays each motor on a
+real pad, which is how to check a change without the game.
 
 ## Steam Deck
 

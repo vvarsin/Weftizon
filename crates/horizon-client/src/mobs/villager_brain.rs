@@ -9,6 +9,10 @@
 //! the mob's own random drives positions, sounds and jumps. `RunOne` and the
 //! other `GateBehavior`s shuffle with a random of their own, seeded with
 //! `Brain::shuffle_seed` when the brain is built.
+mod reputation;
+pub use reputation::murder_witnesses;
+use reputation::targetable;
+
 use super::{
     Mob, MobEvent, MobWorld, Species, Who,
     brain::{Timed, living_near},
@@ -16,7 +20,7 @@ use super::{
 };
 use horizon_core::{
     geometry::Vec3,
-    random::{LegacyRandom, RandomSource},
+    random::{LegacyRandom, LevelRandom, RandomSource},
 };
 
 /// `MemorySlot.NEVER_EXPIRE`.
@@ -351,7 +355,7 @@ fn mem(m: &mut Mob) -> &mut Memories {
 fn cant_reach(m: &mut Mob) -> &mut Slot<i64> {
     &mut mem(m).cant_reach_walk_target_since
 }
-fn mem_ref(m: &Mob) -> Option<&Memories> {
+pub(super) fn mem_ref(m: &Mob) -> Option<&Memories> {
     brain(m).map(|b| &b.mem)
 }
 
@@ -452,7 +456,7 @@ pub fn init(m: &mut Mob, game_time: i64, day_time: i64, shuffle_seed: i64) {
 /// What behaviours read and emit during a brain tick.
 pub struct Bx<'a, 'w> {
     pub w: &'a MobWorld<'w>,
-    pub lr: &'a mut LegacyRandom,
+    pub lr: &'a mut LevelRandom,
     pub events: &'a mut Vec<MobEvent>,
     pub now: i64,
     /// `Villager.refreshBrain` was asked for.
@@ -460,7 +464,7 @@ pub struct Bx<'a, 'w> {
 }
 
 /// `Brain.tick`, called from the villager's server AI phase.
-pub fn tick(m: &mut Mob, w: &MobWorld, lr: &mut LegacyRandom, events: &mut Vec<MobEvent>) {
+pub fn tick(m: &mut Mob, w: &MobWorld, lr: &mut LevelRandom, events: &mut Vec<MobEvent>) {
     if brain(m).is_none() {
         let seed = i64::from(m.id);
         init(m, w.game_time, w.day_time, seed);
@@ -511,7 +515,7 @@ pub fn tick(m: &mut Mob, w: &MobWorld, lr: &mut LegacyRandom, events: &mut Vec<M
 pub fn age_boundary_reached(
     m: &mut Mob,
     w: &MobWorld,
-    lr: &mut LegacyRandom,
+    lr: &mut LevelRandom,
     events: &mut Vec<MobEvent>,
 ) {
     if brain(m).is_none() {
@@ -569,7 +573,7 @@ fn sync(m: &mut Mob, now: i64) {
 
 // ---- Sensors ------------------------------------------------------------
 
-fn tick_sensors(m: &mut Mob, w: &MobWorld, lr: &mut LegacyRandom) {
+fn tick_sensors(m: &mut Mob, w: &MobWorld, lr: &mut LevelRandom) {
     for i in 0..9 {
         let fire = {
             let b = brain_mut(m);
@@ -608,17 +612,6 @@ fn sense_living(m: &mut Mob, w: &MobWorld) {
         list,
         cache: Vec::new(),
     });
-}
-/// `Sensor.isEntityTargetable`: `TargetingConditions.forNonCombat()` within
-/// the follow range, in sight.
-fn targetable(m: &mut Mob, w: &MobWorld, who: Who) -> bool {
-    match who {
-        Who::Player => m.can_see_player(w, FOLLOW_RANGE),
-        Who::Mob(id) => {
-            let Some(s) = w.seen(id) else { return false };
-            s.alive && m.distance_sqr(s.position) <= FOLLOW_RANGE * FOLLOW_RANGE && m.sees(w, who)
-        }
-    }
 }
 /// The visible-entities memory's line-of-sight test, cached per memory.
 fn visible_test(m: &mut Mob, w: &MobWorld, who: Who) -> bool {
@@ -679,7 +672,7 @@ fn sense_players(m: &mut Mob, w: &MobWorld) {
 }
 /// `NearestBedSensor`: babies remember the nearest reachable bed, trying
 /// at most four beds a scan and skipping the ones tried lately.
-fn sense_bed(m: &mut Mob, w: &MobWorld, lr: &mut LegacyRandom) {
+fn sense_bed(m: &mut Mob, w: &MobWorld, lr: &mut LevelRandom) {
     if !m.is_baby() {
         return;
     }
@@ -928,12 +921,12 @@ fn chunk_pois(
         return;
     };
     let kind = |state: u32| poi_of_state(w, horizon_world::registry::BlockStateId(state));
-    let min = w.world.bottom_y();
-    for s in (y0 - min) >> 4..=(y1 - min) >> 4 {
-        let section = &chunk.sections[s as usize];
-        for &(i, poi) in w.world.pois.get((qx, s, qz), section, kind).iter() {
+    let (min, mut lists) = (w.world.bottom_y(), Vec::new());
+    w.world.pois.column(chunk, min, (y0, y1), kind, &mut lists);
+    for (base, pois) in &lists {
+        for &(i, poi) in pois.iter() {
             let i = i32::from(i);
-            let y = min + s * 16 + (i >> 8);
+            let y = base + (i >> 8);
             if (y0..=y1).contains(&y) {
                 visit(poi, [qx * 16 + (i & 15), y, qz * 16 + (i >> 4 & 15)]);
             }
@@ -3384,7 +3377,7 @@ fn same_path(a: Option<&Path>, b: Option<&Path>) -> bool {
 }
 /// `Swim`: deeper than the jump threshold, or in lava.
 fn swim_condition(m: &Mob) -> bool {
-    m.fluids.water > m.fluid_jump_threshold() || m.fluids.in_lava
+    m.floats()
 }
 fn panic_condition(m: &Mob) -> bool {
     mem_ref(m).is_some_and(|mm| mm.hurt_by.present() || mm.nearest_hostile.present())
@@ -3509,7 +3502,7 @@ fn play_work_sound(m: &mut Mob, cx: &mut Bx) {
     }
 }
 /// `WorkAtPoi.start`'s restock.
-fn restock_if_due(m: &mut Mob, w: &MobWorld) {
+pub(super) fn restock_if_due(m: &mut Mob, w: &MobWorld) {
     let day = w.day_time.div_euclid(24000);
     if let Some(t) = m.extra.trade.as_mut()
         && t.should_restock(w.game_time, day)
@@ -4609,3 +4602,6 @@ pub fn seen_memories(
 #[cfg(test)]
 #[path = "villager_trades_tests.rs"]
 mod trades_tests;
+
+#[cfg(test)]
+mod reputation_witness_tests;

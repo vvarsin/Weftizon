@@ -3,7 +3,9 @@
 //! `TRIGGER_BLOCK`: no damage, only knockback and the blocks that react).
 use super::Game;
 use super::entity::{Blast, Entity as _, for_each_entity_mut};
+use super::minecarts::CartHit;
 use horizon_client::advancements::EntityView;
+use horizon_client::chunk::LevelShape;
 use horizon_client::join_seq::Joined as _;
 use horizon_client::{
     Result,
@@ -12,9 +14,9 @@ use horizon_client::{
     projectiles::{Hit, Projectile, ProjectileKind},
 };
 use horizon_core::{
-    geometry::{Direction, Vec3},
+    geometry::{Aabb, Direction, Vec3},
     position::BlockPos,
-    random::RandomSource,
+    random::{LegacyRandom, RandomSource},
 };
 use horizon_world::level::PlayerContext;
 use std::collections::BTreeSet;
@@ -25,13 +27,99 @@ const PLAYER_KNOCKBACK: f32 = 1.22;
 /// `BreezeWindCharge.RADIUS`.
 const BREEZE_RADIUS: f32 = 3.0;
 
+/// The wind charges that met a boat or a minecart in a tick's projectile pass,
+/// as they were before it: one whose vehicle an earlier charge of the tick
+/// breaks ticks again without it (`Game::broken_vehicle_retick`).
+pub(super) struct VehicleWinds {
+    vehicles: Vec<u32>,
+    before: Vec<Projectile>,
+}
+impl VehicleWinds {
+    /// `p` before its tick, when it may come to need a second one.
+    pub(super) fn before(&self, p: &Projectile) -> Option<Projectile> {
+        let wind = matches!(
+            p.kind,
+            ProjectileKind::WindCharge | ProjectileKind::BreezeWindCharge
+        );
+        (wind && p.guest.is_none() && !self.vehicles.is_empty()).then(|| p.clone())
+    }
+    /// Keeps `before` when the tick's `hit` is a boat or a minecart.
+    pub(super) fn met(&mut self, before: Option<Projectile>, hit: Hit) {
+        if let Hit::Entity {
+            who: Who::Mob(id), ..
+        } = hit
+            && self.vehicles.contains(&id)
+            && let Some(before) = before
+        {
+            self.before.push(before);
+        }
+    }
+}
+
 /// A burst `wind_burst` puts off until a guest's turn is over.
 pub(super) struct Burst {
     center: [f64; 3],
     radius: f32,
     multiplier: f32,
+    src: Source,
+}
+/// The burst's sound: the breeze's own for its charges and for a Wind Charged
+/// mob's death, the player's charge's for a wind charge and a mace's Wind Burst.
+const BREEZE_BURST: &str = "minecraft:entity.breeze.wind_burst";
+const WIND_CHARGE_BURST: &str = "minecraft:entity.wind_charge.wind_burst";
+
+/// What set a burst off, as much of `ServerExplosion`'s source as the burst
+/// reads: the sound `ServerLevel.explode` was given, whether the source is a
+/// breeze's charge (`canTriggerBlocks` needs mob griefing for that one alone),
+/// whether it is a wind charge (`ServerPlayer.onExplosionHit`'s fall), whether
+/// a mob is the indirect source (`VehicleEntity.ignoreExplosion`), and whether
+/// the source is silent (`ServerLevel.explode`'s `playSound`).
+#[derive(Clone, Copy)]
+pub(super) struct Source {
+    sound: &'static str,
     breeze: bool,
     wind_charge: bool,
+    mob: bool,
+    silent: bool,
+}
+
+impl Source {
+    /// `WindCharge.explode` and `BreezeWindCharge.explode`: the charge itself
+    /// is the source, and a breeze's charge's indirect source is its breeze.
+    pub(super) fn charge(breeze: bool, silent: bool) -> Self {
+        Self {
+            sound: if breeze {
+                BREEZE_BURST
+            } else {
+                WIND_CHARGE_BURST
+            },
+            breeze,
+            wind_charge: !breeze,
+            mob: breeze,
+            silent,
+        }
+    }
+    /// `WindChargedMobEffect.onMobRemoved`: the dying mob is the source, so it
+    /// makes the breeze's sound while its blocks react whatever mob griefing
+    /// says and vehicles stay put when it is off; a `Silent` mob's is mute.
+    pub(super) fn wind_charged(player: bool, silent: bool) -> Self {
+        Self {
+            sound: BREEZE_BURST,
+            breeze: false,
+            wind_charge: false,
+            mob: !player,
+            silent,
+        }
+    }
+    /// The `minecraft:explode` of the Wind Burst enchantment: the attacker is
+    /// the source, so it makes the wind charge's sound and its blocks react.
+    pub(super) const WIND_BURST: Self = Self {
+        sound: WIND_CHARGE_BURST,
+        breeze: false,
+        wind_charge: false,
+        mob: false,
+        silent: false,
+    };
 }
 /// Whether a wind push must wait for the entity's own tick: it joined before
 /// the charge (`id` below the charge's), so vanilla has ticked it already this
@@ -43,7 +131,10 @@ fn push_waits_for_tick<T: PartialOrd>(
 ) -> bool {
     ticks_after_projectiles && charge.is_some_and(|c| joined < c)
 }
-/// `Projectile.deflect` with `ProjectileDeflection.REVERSE`.
+/// `Projectile.deflect` with `ProjectileDeflection.REVERSE`, as a breeze's
+/// deflection is: the motion turns around at half speed, the yaw by
+/// `170 + 20 * jitter` degrees, `needsSync` sends that at once, and
+/// `AbstractHurtingProjectile.onDeflection` by no attack halves the power.
 pub(super) fn reverse(p: &mut Projectile, jitter: f32) {
     p.velocity = Vec3::new(
         p.velocity.x * -0.5,
@@ -51,6 +142,16 @@ pub(super) fn reverse(p: &mut Projectile, jitter: f32) {
         p.velocity.z * -0.5,
     );
     p.yaw += 170.0 + jitter * 20.0;
+    p.needs_sync = true;
+    p.on_deflection(false);
+}
+/// `AbstractWindCharge.tick`: a charge whose block Y is above the level's
+/// `getMaxY() + 30` bursts where it is, whatever it would have met. `shape`
+/// is the level's own height, not the chunks' widened column
+/// (`LevelShape::max_y` is `getMaxY() + 1`), and `getBlockY` is
+/// `floor(y)`, so `floor(y) > getMaxY() + 30` is `y >= max_y + 30`.
+pub(super) fn above_the_top(shape: LevelShape, y: f64) -> bool {
+    y >= f64::from(shape.max_y() + 30)
 }
 /// Whether a block reacts to a wind charge's burst by being used.
 fn triggers(name: &str) -> bool {
@@ -63,6 +164,50 @@ fn triggers(name: &str) -> bool {
         || n == "bell"
 }
 impl Game<'_> {
+    /// `Player.itemAttackInteraction` applies trigger-only held-item effects
+    /// after an EnderDragonPart is successfully hit.
+    pub(super) fn post_attack_dragon_burst(&mut self) {
+        if let Some(held) = self.held().cloned() {
+            self.post_attack_bursts(&held, "minecraft:ender_dragon");
+        }
+    }
+
+    /// `ServerExplosion.hurtEntities` knockback for a trigger-only blast such
+    /// as Wind Burst. The dragon is not in the normal entity lists, but its
+    /// body still receives the blast impulse (without taking damage).
+    pub(super) fn wind_burst_knockback(
+        &mut self,
+        center: [f64; 3],
+        radius: f32,
+        multiplier: f32,
+        blocks: &[[i32; 3]],
+    ) {
+        let Some(d) = self.dragon.as_ref() else {
+            return;
+        };
+        let whole = d.whole_box();
+        let (lo, hi) = (whole.min_position(), whole.max_position());
+        let exposure = self.seen_percent(center, [lo.x, lo.y, lo.z], [hi.x, hi.y, hi.z]);
+        let Some((id, mut push)) = self
+            .dragon
+            .as_ref()
+            .and_then(|d| Some((d.id, d.explosion_knockback(center, radius, exposure)?)))
+        else {
+            return;
+        };
+        for component in &mut push {
+            *component *= f64::from(multiplier);
+        }
+        self.native_explosion_knockback(self.dim.id(), center, blocks, Some(id), &mut push);
+        if let Some(d) = self.dragon.as_mut() {
+            d.velocity = Vec3::new(
+                d.velocity.x + push[0],
+                d.velocity.y + push[1],
+                d.velocity.z + push[2],
+            );
+        }
+    }
+
     /// `WindChargeItem.use`.
     pub(super) fn throw_wind_charge(&mut self) -> Result<bool> {
         let (Some(eye), Some(p)) = (self.eye_position(), self.player.as_ref()) else {
@@ -72,16 +217,7 @@ impl Game<'_> {
         let velocity = self.known_player_movement();
         let start = Vec3::new(pos.x, eye[1], pos.z);
         let mut proj = Projectile::new(ProjectileKind::WindCharge, start, Some(Who::Player));
-        proj.shoot_from_rotation(
-            &mut self.world.random,
-            self.pitch,
-            self.yaw,
-            0.0,
-            1.5,
-            1.0,
-            velocity,
-            on_ground,
-        );
+        proj.shoot_from_rotation(self.pitch, self.yaw, 0.0, 1.5, 1.0, velocity, on_ground);
         self.add_projectile(proj);
         let pitch = 0.4 / (self.world.random.next_float() * 0.4 + 0.8);
         self.audio
@@ -120,9 +256,96 @@ impl Game<'_> {
             Hit::None => return Ok(()),
         };
         self.creatures.wind_source = Some(p.join_seq());
-        let burst = self.wind_burst(center, radius, knockback, breeze, !breeze);
+        let silent = self.entity_silent(p.id);
+        let burst = self.wind_burst(center, radius, knockback, Source::charge(breeze, silent));
         self.creatures.wind_source = None;
         burst
+    }
+    /// A projectile's hurt of `amount` on the boat or minecart `id`
+    /// (`VehicleEntity.hurtServer`), or the item frame (`ItemFrame.hurtServer`,
+    /// which any non-explosion hit makes give up its item): even 0 shakes it (`Snowball`, `ThrownEgg`,
+    /// `ThrownEnderpearl` `.onHitEntity`), 5 from a small fireball destroys it.
+    pub(super) fn hurt_vehicle(&mut self, p: &Projectile, id: u32, amount: f32) {
+        let creative = p.owner == Some(Who::Player) && self.creative;
+        let by = super::nonliving_hurt::projectile_by(p);
+        if let Some(i) = self.boats.iter().position(|b| b.id == id) {
+            self.hurt_boat_by(i, amount, creative, by);
+        } else if let Some(i) = self.carts.iter().position(|c| c.id == id) {
+            self.hurt_cart(
+                i,
+                amount,
+                creative,
+                false,
+                CartHit::projectile(p.owner, p.guest),
+            );
+        } else {
+            self.projectile_hurts_frame(id, p.owner == Some(Who::Player), creative);
+        }
+    }
+    /// The boats and minecarts of this tick's projectile pass.
+    pub(super) fn vehicle_winds(&self) -> VehicleWinds {
+        VehicleWinds {
+            vehicles: (self.boats.iter().map(|b| b.id))
+                .chain(self.carts.iter().map(|c| c.id))
+                .collect(),
+            before: Vec::new(),
+        }
+    }
+    /// The hit to resolve for `p`. Vanilla ticks its entities one after the
+    /// other, so a wind charge never meets a boat or a minecart that an earlier
+    /// charge of the same tick broke (`Entity.canBeHitByProjectile`: alive):
+    /// it flies on to the next one in its way, or past. Here the tick's hits
+    /// were all found first, so such a charge (`winds` holds it as it was
+    /// before the tick) ticks again now, without the broken vehicle. None: it
+    /// met nothing this time and flies on.
+    pub(super) fn broken_vehicle_retick(
+        &mut self,
+        p: Projectile,
+        hit: Hit,
+        winds: &mut VehicleWinds,
+    ) -> Option<(Projectile, Hit)> {
+        let Hit::Entity {
+            who: Who::Mob(id), ..
+        } = hit
+        else {
+            return Some((p, hit));
+        };
+        let Some(k) = winds.before.iter().position(|w| w.id == p.id) else {
+            return Some((p, hit));
+        };
+        let mut again = winds.before.swap_remove(k);
+        if self.boats.iter().any(|b| b.id == id) || self.carts.iter().any(|c| c.id == id) {
+            return Some((p, hit));
+        }
+        let mut targets = self.projectile_targets();
+        if again.owner != Some(Who::Player) || super::lan_pvp::meets_players(&again.kind) {
+            targets.extend(self.lan_projectile_targets());
+        }
+        let border = Some(self.border.bounds());
+        let (mut keep, mut hit) = {
+            let w = self.mob_world_base(&[]);
+            again.tick(&super::creatures::ProjWorld {
+                w: &w,
+                targets,
+                border,
+            })
+        };
+        // The first run of this tick already gave these.
+        again.take_shoot_event();
+        again.bubble_surfaces.clear();
+        // AbstractWindCharge.tick: above the world's top it bursts.
+        if keep && above_the_top(self.world.shape, again.position.y) {
+            keep = false;
+            hit = Hit::Block {
+                pos: [0; 3],
+                at: again.position,
+                face: [0; 3],
+            };
+        }
+        if keep {
+            self.add_projectile(again.clone());
+        }
+        (hit != Hit::None).then_some((again, hit))
     }
     /// `AbstractWindCharge.onHitEntity`: one point of damage.
     fn wind_charge_damage(&mut self, p: &Projectile, who: Who) {
@@ -151,9 +374,16 @@ impl Game<'_> {
                     );
                 }
             }
+            // A boat or a minecart (`VehicleEntity.hurtServer`): the point of
+            // damage shakes it, and the fifth one in a row breaks it.
+            Who::Mob(id) if !self.mobs.iter().any(|m| m.id == id) => {
+                self.hurt_vehicle(p, id, 1.0);
+            }
             Who::Mob(id) => {
+                // AbstractWindCharge.onHitEntity: `damageSources().windCharge`
+                // (`minecraft:wind_charge`, whose message id is `mob`).
                 let source = Damage {
-                    kind: DamageKind::Thrown,
+                    kind: DamageKind::WindCharge,
                     attacker: p.owner,
                     from: Some([p.previous.x, p.previous.y, p.previous.z]),
                     attacker_species: owner_breeze.then_some(Species::Breeze),
@@ -248,12 +478,11 @@ impl Game<'_> {
         center: [f64; 3],
         radius: f32,
         multiplier: f32,
-        breeze: bool,
-        wind_charge: bool,
+        src: Source,
         blocks: &[[i32; 3]],
     ) -> Vec<(u32, [f64; 3])> {
         // ServerExplosion.shouldAffectBlocklikeEntities
-        let blocklike = !breeze && !wind_charge && self.ui.rules.bool("mob_griefing");
+        let blocklike = !src.breeze && !src.wind_charge && self.ui.rules.bool("mob_griefing");
         let diameter = f64::from(radius * 2.0);
         let distance = |p: [f64; 3]| {
             ((p[0] - center[0]).powi(2) + (p[1] - center[1]).powi(2) + (p[2] - center[2]).powi(2))
@@ -275,7 +504,7 @@ impl Game<'_> {
         // The player, then every other player in the level (LAN guests),
         // each swapped in as the player. In a guest's turn (a mace's wind
         // burst) the player is that guest.
-        let own = self.wind_push_player(center, radius, multiplier, breeze, wind_charge, blocks);
+        let own = self.wind_push_player(center, radius, multiplier, src, blocks);
         let mut pushed: Vec<_> = self.lan_acting.zip(own).into_iter().collect();
         if let Some(mut host) = self.lan.take() {
             let guests: Vec<u32> = host
@@ -287,7 +516,7 @@ impl Game<'_> {
                 .collect();
             for conn in guests {
                 let push = self.as_guest(&mut host, conn, |g| {
-                    g.wind_push_player(center, radius, multiplier, breeze, wind_charge, blocks)
+                    g.wind_push_player(center, radius, multiplier, src, blocks)
                 });
                 if let Some(Some(push)) = push {
                     pushed.push((conn, push));
@@ -301,7 +530,7 @@ impl Game<'_> {
         // out where its `ignoreExplosion` says (items and visible stands for a
         // charge, vehicles for a mob's burst with mob griefing off).
         let burst = Blast {
-            vehicles_ignore: breeze && !self.ui.rules.bool("mob_griefing"),
+            vehicles_ignore: src.mob && !self.ui.rules.bool("mob_griefing"),
             items_ignore: !blocklike,
             spared: None,
         };
@@ -333,9 +562,10 @@ impl Game<'_> {
             // push is for its next tick; here its kind ticks after the
             // projectiles, so the push waits for that tick to run.
             // Joined before the charge and not ticked yet: the push is for its next tick.
-            let waiting = entity.ticks_after_projectiles()
-                && done.is_none_or(|d| entity.join_seq() > d);
-            if push_waits_for_tick(waiting, entity.join_seq(), source) {
+            // Where it ticks: where it joined, or where it started ticking again.
+            let key = self.ordered.tick_key(entity.join_seq());
+            let waiting = entity.ticks_after_projectiles() && done.is_none_or(|d| key > d);
+            if push_waits_for_tick(waiting, key, source) {
                 late.push((entity.id(), push));
             } else {
                 entity.push_from_explosion(push);
@@ -354,7 +584,9 @@ impl Game<'_> {
         }
         let mut entities = self.take_entities();
         for_each_entity_mut!(entities, entity => {
-            if let Some((_, push)) = late.iter().find(|(id, _)| *id == entity.id()) {
+            // Every burst of the tick pushed it, one after the other.
+            let id = entity.id();
+            for (_, push) in late.iter().filter(|(pushed, _)| *pushed == id) {
                 entity.push_from_explosion(*push);
             }
         });
@@ -368,8 +600,7 @@ impl Game<'_> {
         center: [f64; 3],
         radius: f32,
         multiplier: f32,
-        breeze: bool,
-        wind_charge: bool,
+        src: Source,
         blocks: &[[i32; 3]],
     ) -> Option<[f64; 3]> {
         if self.spectator() {
@@ -421,12 +652,12 @@ impl Game<'_> {
         // ServerPlayer.onExplosionHit: a wind charge's burst cancels the
         // fall; any other burst ends the grace of the last impulse.
         let at = p.position;
-        p.impulse.set_ignore_fall_damage(wind_charge, Some(at));
+        p.impulse.set_ignore_fall_damage(src.wind_charge, Some(at));
         // The cause is the charge that burst (`ServerExplosion.source`); a mace's
         // burst has none.
-        let cause = if wind_charge {
+        let cause = if src.wind_charge {
             Some("minecraft:wind_charge")
-        } else if breeze {
+        } else if src.breeze {
             Some("minecraft:breeze_wind_charge")
         } else {
             None
@@ -439,14 +670,32 @@ impl Game<'_> {
         self.adv.marks.blast = Some(([at.x, at.y, at.z], cause));
         (!flying).then_some(push)
     }
+    /// `WindChargedMobEffect.onMobRemoved`: the burst a Wind Charged mob (or
+    /// player) makes as it is removed, centred at half its height with a
+    /// radius of 3 to 5 drawn from the dying entity's own random. It makes the
+    /// breeze's sound, is mute from a silent source, and its source is the
+    /// dying entity: its blocks react whatever mob griefing says, while
+    /// vehicles stay put when it is off.
+    pub(super) fn wind_charged_burst(
+        &mut self,
+        bounds: Aabb,
+        player: bool,
+        silent: bool,
+        random: Option<&mut LegacyRandom>,
+    ) -> Result<()> {
+        let feet = bounds.bottom_center();
+        let center = [feet.x, feet.y + bounds.size().y / 2.0, feet.z];
+        let r = random.unwrap_or(&mut self.world.random);
+        let radius = 3.0 + r.next_float() * 2.0;
+        self.wind_burst(center, radius, 1.0, Source::wind_charged(player, silent))
+    }
     /// The burst: knockback, the blocks that react, the gust and the sound.
     pub(super) fn wind_burst(
         &mut self,
         center: [f64; 3],
         radius: f32,
         multiplier: f32,
-        breeze: bool,
-        wind_charge: bool,
+        src: Source,
     ) -> Result<()> {
         // In a guest's turn (their charge landing, their mace's burst) the
         // host holds the other players (`as_guest`): the burst waits for the
@@ -456,8 +705,7 @@ impl Game<'_> {
                 center,
                 radius,
                 multiplier,
-                breeze,
-                wind_charge,
+                src,
             });
             return Ok(());
         }
@@ -465,10 +713,11 @@ impl Game<'_> {
         let ctx = horizon_client::sculk::Context::default();
         self.post_game_event("minecraft:explode", center, ctx);
         let mut targets = self.wind_positions(center, radius);
-        let pushed = self.wind_knockback(center, radius, multiplier, breeze, wind_charge, &targets);
+        let pushed = self.wind_knockback(center, radius, multiplier, src, &targets);
+        self.wind_burst_knockback(center, radius, multiplier, &targets);
         let block_count = targets.len();
         // Explosion.canTriggerBlocks: a breeze's charge needs mob griefing.
-        if !breeze || self.ui.rules.bool("mob_griefing") {
+        if !src.breeze || self.ui.rules.bool("mob_griefing") {
             // Util.shuffle(list, level.random)
             for i in (2..=targets.len()).rev() {
                 let swap = self.world.random.next_int_bound(i as i32).unwrap_or(0) as usize;
@@ -480,15 +729,14 @@ impl Game<'_> {
                 self.wind_trigger_block(pos)?;
             }
         }
-        let sound = if breeze {
-            "minecraft:entity.breeze.wind_burst"
-        } else {
-            "minecraft:entity.wind_charge.wind_burst"
-        };
-        let pitch = (1.0
-            + (super::explosion::client_float() - super::explosion::client_float()) * 0.2)
-            * 0.7;
-        self.audio.play(sound, Some(center), 4.0, pitch);
+        // `ServerLevel.explode`'s `playSound`: a silent source's burst is mute,
+        // and the pitch's two client draws only happen when it is heard.
+        if !src.silent {
+            let pitch = (1.0
+                + (super::explosion::client_float() - super::explosion::client_float()) * 0.2)
+                * 0.7;
+            self.audio.play(src.sound, Some(center), 4.0, pitch);
+        }
         // Explosion.isSmall: below a radius of 2.
         let ty = if radius < 2.0 {
             ParticleType::GustEmitterSmall
@@ -497,14 +745,14 @@ impl Game<'_> {
         };
         self.particles
             .add(&ParticleOptions::simple(ty), center, [1.0, 0.0, 0.0]);
-        self.lan_wind_burst(center, radius, sound, block_count, &pushed);
+        self.lan_wind_burst(center, radius, src.sound, block_count, &pushed);
         Ok(())
     }
     /// The bursts guests' turns put off.
     pub(super) fn flush_wind_bursts(&mut self) -> Result<()> {
         self.flush_smash_pushes();
         for b in std::mem::take(&mut self.creatures.wind_bursts) {
-            self.wind_burst(b.center, b.radius, b.multiplier, b.breeze, b.wind_charge)?;
+            self.wind_burst(b.center, b.radius, b.multiplier, b.src)?;
         }
         Ok(())
     }
@@ -571,6 +819,7 @@ impl Game<'_> {
             may_build: true,
             can_eat: false,
             game_master: false,
+            respawn_point: None,
         };
         self.with_level(|b, level, ticks| {
             b.use_without_item(
@@ -635,6 +884,14 @@ impl Game<'_> {
     }
 }
 #[cfg(test)]
+#[path = "wind_charged_tests.rs"]
+mod wind_charged_tests;
+
+#[cfg(test)]
+#[path = "wind_dragon_tests.rs"]
+mod wind_dragon_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -660,6 +917,7 @@ mod tests {
         assert!(!push_waits_for_tick(false, 3, Some(7)), "ticks before it");
         assert!(!push_waits_for_tick(true, 3, None), "not a charge's burst");
         let tnt = crate::game::tnt::PrimedTnt {
+            used_portal: false,
             rotation: [0.0, 0.0],
             id: 1,
             position: Vec3::ZERO,
@@ -688,5 +946,38 @@ mod tests {
         reverse(&mut p, 0.5);
         assert!((p.velocity.x + 1.0).abs() < 1e-9 && (p.velocity.y - 0.5).abs() < 1e-9);
         assert!((p.yaw - 180.0).abs() < 1e-4);
+        // ProjectileDeflection.REVERSE sets needsSync, so ServerEntity sends
+        // the turn this tick instead of at the snowball's tenth.
+        assert!(p.needs_sync, "the turn goes out at once");
+        // A snowball is no AbstractHurtingProjectile: Projectile.onDeflection
+        // is empty, so the power it carries is left as it was.
+        assert_eq!(p.acceleration, 0.1);
+    }
+
+    #[test]
+    fn a_breeze_deflect_halves_a_fireballs_power() {
+        // Breeze.PROJECTILE_DEFLECTION: ProjectileDeflection.REVERSE at power
+        // (1, 1, 1), then Projectile.deflect calls
+        // AbstractHurtingProjectile.onDeflection(false), which halves
+        // accelerationPower from 0.1 to 0.05 and so slows it down.
+        let mut p = Projectile::fireball(
+            ProjectileKind::LargeFireball { power: 1 },
+            Vec3::new(0.0, 64.0, 0.0),
+            Some(Who::Mob(3)),
+            [1.0, 0.0, 0.0],
+        );
+        assert_eq!(p.acceleration, 0.1);
+        reverse(&mut p, 0.25);
+        assert!(p.needs_sync);
+        assert_eq!(p.acceleration, 0.05);
+        assert!((p.velocity.x + 0.05).abs() < 1e-12, "{:?}", p.velocity);
+        // AbstractHurtingProjectile.addAdditionalSaveData saves that power,
+        // so a deflected fireball comes back from a save as slow.
+        let tag = crate::entity_nbt::fireball_to_nbt(&p, [1, 2, 3, 4], None, None)
+            .expect("a fireball is saved");
+        let back = crate::entity_nbt::fireball_from_nbt(&tag, None).expect("and loaded");
+        assert_eq!(back.acceleration, 0.05);
+        // The power a server sends with the turn is the halved one.
+        assert_eq!(p.acceleration_power(), Some(0.05));
     }
 }

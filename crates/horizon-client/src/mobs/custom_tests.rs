@@ -464,7 +464,7 @@ fn declared_melee_hits_from_its_reach() {
             });
             let mut m = Mob::new(1, kind, Vec3::new(0.0, 64.0, 0.0), 0.0);
             m.ai.target = Some(Who::Mob(10));
-            let mut lr = LegacyRandom::new(5);
+            let mut lr = horizon_core::random::LevelRandom::for_level(LegacyRandom::new(5));
             let mut events = Vec::new();
             for _ in 0..40 {
                 let mut goals = std::mem::take(&mut m.ai.goals);
@@ -548,7 +548,7 @@ fn declared_targets_hunt_by_kind() {
         );
         let ran = crate::mobs::world::with_test_world(&others, |w, _| {
             let mut m = mob_of(declared(&json), 1, Vec3::new(0.0, 64.0, 0.0));
-            let mut lr = LegacyRandom::new(5);
+            let mut lr = horizon_core::random::LevelRandom::for_level(LegacyRandom::new(5));
             let mut events = Vec::new();
             for _ in 0..200 {
                 let mut targets = std::mem::take(&mut m.ai.targets);

@@ -182,7 +182,7 @@ pub(super) trait Entity: EntityRules {
     fn fluid_eye_y(&self) -> f64 {
         self.bounds().max_position().y
     }
-    /// `Entity.updateFluidHeightAndDoFluidPushing`: its water and lava heights
+    /// `Entity.updateFluidInteraction`: its water and lava heights
     /// (`(0, 0)` for a kind that is not pushed by fluid), and the current of
     /// each fluid added to its velocity. One body for every kind.
     fn push_by_fluid(
@@ -241,11 +241,16 @@ pub(super) trait Entity: EntityRules {
         PushReaction::PushPull
     }
     /// Width and height of the box a portal sweep follows, or None for a kind
-    /// the game does not carry through portals (so far armor stands and
-    /// falling blocks; fishing hooks are off the walk, and
-    /// `FishingHook.canUsePortal` is false in vanilla).
+    /// the game does not carry through portals (so far falling blocks; fishing
+    /// hooks are off the walk, and `FishingHook.canUsePortal` is false in
+    /// vanilla).
     fn portal_size(&self) -> Option<(f32, f32)> {
         None
+    }
+    /// Whether [`Self::portal_size`] is Some, without working the size out (a
+    /// mob's depends on its age, scale and pose).
+    fn sweeps_portals(&self) -> bool {
+        self.portal_size().is_some()
     }
     /// `Entity.canUsePortal(false)` for a kind in `portal_size`. A kind that
     /// cannot stays tracked, so its cooldown and process run out.
@@ -255,6 +260,14 @@ pub(super) trait Entity: EntityRules {
     /// A boat or minecart: the kinds whose portal pass opens the tick, before
     /// they move (`AbstractMinecart.tick` handles its portal first).
     fn is_vehicle(&self) -> bool {
+        false
+    }
+    /// `Entity.getDimensionChangingDelay`, overridden by vehicles and projectiles.
+    fn dimension_changing_delay(&self) -> i32 {
+        horizon_client::nether_portal::ENTITY_DELAY
+    }
+    /// Whether movement applies portal block effects before Entity's base tick.
+    fn portal_after_move(&self) -> bool {
         false
     }
     /// Where it stood at the start of its tick, for the kinds that store it
@@ -272,10 +285,18 @@ pub(super) trait Entity: EntityRules {
         let position = self.position_mut();
         *position = position.add_vector(movement);
     }
+    /// Bounds for `AbstractArrow.shouldFall` after a non-SELF piston move.
+    fn piston_release_bounds(&self) -> Option<Aabb> {
+        None
+    }
+    fn release_after_piston(&mut self, _no_block_collision: bool) {}
     /// `setOnGroundWithMovement` at the end of a piston's or shulker lid's
     /// `Entity.move`, for the kinds that keep the flag: on a server it runs
     /// for every push, sideways ones and those the collision turned away included.
     fn set_piston_on_ground(&mut self, _on_ground: bool) {}
+    /// `Entity.setOnGround` from outside the entity's own move (`/tp`'s
+    /// `TeleportCommand.performTeleport`); kinds that keep no ground flag ignore it.
+    fn set_on_ground(&mut self, _on_ground: bool) {}
     /// `PistonMovingBlockEntity.causeBounce`: a slime block sets the velocity
     /// along the movement axis.
     fn piston_slime_bounce(&mut self, movement: Direction) {
@@ -310,7 +331,14 @@ impl RenderEntityBounds for Mob {
             self.species(),
             Species::Guardian | Species::ElderGuardian | Species::Phantom
         ) {
-            let radius = width.max(height) * 2.5 + 3.0;
+            // The model's root scales its appendages too (the elder guardian
+            // uses 2.35), so the margin must grow along with the model.
+            let root_scale = self.kind.model.pose[6..]
+                .iter()
+                .copied()
+                .map(f32::abs)
+                .fold(1.0, f32::max);
+            let radius = width.max(height) * 2.5 + 3.0 * f64::from(root_scale * self.model_scale());
             return Aabb::of_size(at, Vec3::new(radius * 2.0, radius * 2.0, radius * 2.0));
         }
 
@@ -526,7 +554,9 @@ mod render_bounds_tests {
             invisible: false,
             check_interval: 0,
             custom_name: None,
-            random: horizon_core::random::LegacyRandom::new(0),
+            random: horizon_core::random::EntityRandom::own(
+                horizon_core::random::LegacyRandom::new(0),
+            ),
         };
         let bounds = frame.render_bounds(1.0);
         assert!(bounds.min_position().x <= -0.71875);
@@ -573,8 +603,9 @@ macro_rules! stored_motion {
 }
 
 impl Game<'_> {
-    /// Tick an item owned by the caller. The two results are ordinary survival
-    /// and explicit consumption by a block-contact handler. `escape_speed`:
+    /// Tick an item owned by the caller. The results are ordinary survival,
+    /// explicit consumption by a block-contact handler, and the fall it landed
+    /// with on a server (its block's `fallOn` is the caller's). `escape_speed`:
     /// the item is inside a block and moves without physics this tick, pushed
     /// out at this speed.
     pub(super) fn tick_item_with_block_contacts(
@@ -584,24 +615,13 @@ impl Game<'_> {
         entity_boxes: &[Aabb],
         client: bool,
         splash: &mut impl FnMut(horizon_client::entities::ItemSplash),
-    ) -> (bool, bool) {
+    ) -> (bool, bool, super::item_entities::ahead::Landed) {
         let no_physics = escape_speed.is_some();
-        let heights = item.push_by_fluid(&self.world, &self.res.motion().fluids);
-        // Entity.baseTick splashes before moving, except on the first tick.
-        item.water_entry(heights.0 > 0.0, item.ticks == 0, splash);
-        let step = item.tick_move_before_block_effects(
-            &self.world,
-            self.res.facts(),
-            self.collision,
-            no_physics,
-            escape_speed,
-            heights,
-            entity_boxes,
-            Some(self.border.geometry()),
-        );
-        if let Some(pos) =
-            item.vertical_contact(&self.world, self.collision, &self.res.motion().blocks, step)
-        {
+        let (step, landed) = self
+            .item_tables()
+            .move_item(item, escape_speed, entity_boxes, splash);
+        let landed = landed.filter(|_| !client);
+        if let Some(pos) = step.vertical_contact {
             let state = self.world.block(pos.x, pos.y, pos.z);
             let position = item.position;
             let mut discarded = false;
@@ -616,27 +636,13 @@ impl Game<'_> {
                 &mut discarded,
             );
             if discarded || item.stack.count == 0 {
-                return (false, true);
+                return (false, true, landed);
             }
         }
-        item.finish_move_block_effects(
-            &self.world,
-            self.res.facts(),
-            no_physics,
-            Some(&self.res.motion().blocks),
-            step,
-        );
-        item.push_by_bubble_column(
-            &self.world,
-            self.pack.assets.registry,
-            self.res.facts(),
-            self.collision,
-        );
-        let alive = item.tick_settle(&self.world, self.res.facts(), no_physics, step);
-        // ItemEntity.tick refreshes immersion and splashes on water entry.
-        let (water, _) = item.push_by_fluid(&self.world, &self.res.motion().fluids);
-        item.water_entry(water > 0.0, false, splash);
-        (alive, false)
+        let alive = self
+            .item_tables()
+            .settle_item(item, no_physics, step, splash);
+        (alive, false, landed)
     }
 
     /// Keep new joins after the active batch, so they tick next time.
@@ -987,14 +993,6 @@ impl Game<'_> {
         super::boats::any_boat_wood(kind)
             .is_some_and(|(wood, chest)| self.boat_models.has(wood, chest))
     }
-    /// Whether `load_listed` loads `kind` as a vehicle that takes its mob
-    /// riders (`take_mob_passengers`): a mob, boat, minecart or primed TNT.
-    pub(super) fn listed_kind_takes_riders(&self, kind: &str) -> bool {
-        self.loads_as_mob(kind)
-            || self.loads_as_boat(kind)
-            || loads_as_cart(kind)
-            || loads_as_tnt(kind)
-    }
     /// Loads a saved entity as the first kind in `entity_lists!` that claims
     /// its type id: `Err` hands the compound back when none does.
     pub(super) fn load_listed(
@@ -1040,6 +1038,9 @@ impl Game<'_> {
 }
 
 impl Entity for Mob {
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     /// `Entity.move(MoverType.PISTON, ...)` ends in `setPos`, which `Shulker`
     /// overrides to snap to the block centre.
     fn move_by_piston(&mut self, movement: Vec3) {
@@ -1091,13 +1092,17 @@ impl Entity for Mob {
     fn portal_size(&self) -> Option<(f32, f32)> {
         Some((self.width(), self.height()))
     }
+    fn sweeps_portals(&self) -> bool {
+        true
+    }
     fn can_use_portal(&self, game: &Game<'_>) -> bool {
         game.mob_can_use_portal(self)
     }
     /// `PersistentEntitySectionManager.Callback.onRemove`: discard stops
-    /// section enumeration immediately, before the entity list is swept.
+    /// section enumeration immediately, before the entity list is swept; and
+    /// `EntitySelectorParser`'s `Entity::isAlive` drops a dying mob at once.
     fn selector_target(&self) -> Option<Target> {
-        (!self.removed && self.death_time == 0).then_some(Target::Mob(self.id))
+        (!self.removed && self.alive()).then_some(Target::Mob(self.id))
     }
     fn bounds(&self) -> Aabb {
         Mob::bounds(self)
@@ -1164,6 +1169,9 @@ impl Entity for Mob {
 }
 
 impl Entity for ItemEntity {
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn rotation(&self) -> [f32; 2] {
         self.rotation
     }
@@ -1230,6 +1238,9 @@ impl Entity for ItemEntity {
 }
 
 impl Entity for ExperienceOrb {
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn rotation(&self) -> [f32; 2] {
         self.rotation
     }
@@ -1294,6 +1305,15 @@ impl Entity for ExperienceOrb {
 }
 
 impl Entity for Boat {
+    fn dimension_changing_delay(&self) -> i32 {
+        10
+    }
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
+    fn set_piston_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn rotation(&self) -> [f32; 2] {
         [self.yaw, self.pitch]
     }
@@ -1363,6 +1383,15 @@ impl Entity for Boat {
 }
 
 impl Entity for Minecart {
+    fn dimension_changing_delay(&self) -> i32 {
+        10
+    }
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
+    fn set_piston_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn rotation(&self) -> [f32; 2] {
         [self.yaw, self.pitch]
     }
@@ -1442,6 +1471,9 @@ fn armor_stand_size(stand: &ArmorStand) -> (f64, f64) {
 }
 
 impl Entity for ArmorStand {
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn rotation(&self) -> [f32; 2] {
         [self.yaw, self.pitch]
     }
@@ -1531,9 +1563,11 @@ impl Entity for ArmorStand {
     }
     /// A NoGravity stand is not swept for the blocks it stands in (plates,
     /// fire): measured beside the real server, it never presses a plate nor
-    /// catches fire, and does again once `NoGravity` is cleared.
+    /// catches fire, and does again once `NoGravity` is cleared. A marker is
+    /// not either: `ArmorStand.hasPhysics` is false for it too, so
+    /// `noPhysics` keeps it out of `applyEffectsFromBlocks`.
     fn sweeps_blocks_inside(&self) -> bool {
-        !self.no_gravity
+        !self.marker && !self.no_gravity
     }
     fn pushed_by_explosion(&self) -> bool {
         false
@@ -1546,9 +1580,24 @@ impl Entity for ArmorStand {
             PushReaction::PushPull
         }
     }
+    /// `ArmorStand.getDefaultDimensions`: the box a portal sweep follows, and
+    /// the size its exit is placed by. `ArmorStand.readAdditionalSaveData`
+    /// makes a stand without `hasPhysics` (a marker or a `NoGravity` one)
+    /// `noPhysics`, so `Entity.isAffectedByBlocks` never runs its sweep and it
+    /// enters no portal; a marker's box is `MARKER_DIMENSIONS`, 0 by 0, too.
+    fn portal_size(&self) -> Option<(f32, f32)> {
+        if self.marker || self.no_gravity {
+            return None;
+        }
+        let (width, height) = armor_stand_size(self);
+        Some((width as f32, height as f32))
+    }
 }
 
 impl Entity for PrimedTnt {
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn rotation(&self) -> [f32; 2] {
         self.rotation
     }
@@ -1631,6 +1680,16 @@ impl Entity for FallingBlock {
         let pitch = if pitch.is_nan() { previous[1] } else { pitch };
         self.rotation = [yaw, pitch.clamp(-90.0, 90.0)];
     }
+    fn on_ground(&self) -> bool {
+        self.on_ground
+    }
+    /// `Entity.move(MoverType.PISTON)` ends in `setOnGroundWithMovement`.
+    fn set_piston_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
     fn ticks_after_projectiles(&self) -> bool {
         true
     }
@@ -1667,6 +1726,16 @@ impl Entity for FallingBlock {
 }
 
 impl Entity for Projectile {
+    fn portal_after_move(&self) -> bool {
+        !matches!(
+            self.kind,
+            horizon_client::projectiles::ProjectileKind::LlamaSpit
+                | horizon_client::projectiles::ProjectileKind::ShulkerBullet { .. }
+        )
+    }
+    fn dimension_changing_delay(&self) -> i32 {
+        2
+    }
     fn rotation(&self) -> [f32; 2] {
         [self.yaw, self.pitch]
     }
@@ -1678,6 +1747,16 @@ impl Entity for Projectile {
         self.pitch = pitch.clamp(-90.0, 90.0);
         self.previous_yaw = self.yaw;
         self.previous_pitch = self.pitch;
+    }
+    fn on_ground(&self) -> bool {
+        self.on_ground
+    }
+    /// `Entity.move(MoverType.PISTON)` ends in `setOnGroundWithMovement`.
+    fn set_piston_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
     }
     fn native_type(&self) -> Cow<'static, str> {
         self.entity_type().into()
@@ -1701,7 +1780,7 @@ impl Entity for Projectile {
                 game.load_arrow(tag, uuid, player_uuid)
             }
             "minecraft:llama_spit" | "minecraft:shulker_bullet" => {
-                game.load_spit_or_bullet(tag, player_uuid)
+                game.load_spit_or_bullet(tag, uuid, player_uuid)
             }
             "minecraft:fireball"
             | "minecraft:small_fireball"
@@ -1763,16 +1842,23 @@ impl Entity for Projectile {
         Projectile::bounds(self)
     }
     fn move_by_piston(&mut self, movement: Vec3) {
-        self.position = self.position.add_vector(movement);
-        self.needs_sync = true;
+        Projectile::move_by_piston(self, movement);
+    }
+    fn piston_release_bounds(&self) -> Option<Aabb> {
+        Projectile::piston_release_bounds(self)
+    }
+    fn release_after_piston(&mut self, no_block_collision: bool) {
+        Projectile::release_after_piston(self, no_block_collision);
     }
     fn piston_slime_bounce(&mut self, movement: Direction) {
-        self.velocity = piston_push::bounce_velocity(movement, self.velocity);
-        self.needs_sync = true;
+        Projectile::piston_slime_bounce(self, movement);
     }
 }
 
 impl Entity for Rocket {
+    fn dimension_changing_delay(&self) -> i32 {
+        2
+    }
     fn rotation(&self) -> [f32; 2] {
         self.rotation
     }
@@ -1781,6 +1867,16 @@ impl Entity for Rocket {
         let yaw = if yaw.is_finite() { yaw } else { previous[0] };
         let pitch = if pitch.is_nan() { previous[1] } else { pitch };
         self.rotation = [yaw, pitch.clamp(-90.0, 90.0)];
+    }
+    fn on_ground(&self) -> bool {
+        self.on_ground
+    }
+    /// `Entity.move(MoverType.PISTON)` ends in `setOnGroundWithMovement`.
+    fn set_piston_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
     }
     fn native_type(&self) -> Cow<'static, str> {
         "minecraft:firework_rocket".into()
@@ -1830,6 +1926,12 @@ impl Entity for Rocket {
 }
 
 impl Entity for ThrownTrident {
+    fn portal_after_move(&self) -> bool {
+        true
+    }
+    fn dimension_changing_delay(&self) -> i32 {
+        2
+    }
     fn rotation(&self) -> [f32; 2] {
         [self.yaw, self.pitch]
     }
@@ -1839,6 +1941,16 @@ impl Entity for ThrownTrident {
         let pitch = if pitch.is_nan() { previous[1] } else { pitch };
         self.yaw = yaw;
         self.pitch = pitch.clamp(-90.0, 90.0);
+    }
+    fn on_ground(&self) -> bool {
+        self.on_ground
+    }
+    /// `Entity.move(MoverType.PISTON)` ends in `setOnGroundWithMovement`.
+    fn set_piston_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
+    }
+    fn set_on_ground(&mut self, on_ground: bool) {
+        self.on_ground = on_ground;
     }
     fn native_type(&self) -> Cow<'static, str> {
         "minecraft:trident".into()
@@ -1890,6 +2002,18 @@ impl Entity for ThrownTrident {
             Vec3::new(p.x - 0.25, p.y, p.z - 0.25),
             Vec3::new(p.x + 0.25, p.y + 0.5, p.z + 0.25),
         )
+    }
+    fn move_by_piston(&mut self, movement: Vec3) {
+        ThrownTrident::move_by_piston(self, movement);
+    }
+    fn piston_release_bounds(&self) -> Option<Aabb> {
+        ThrownTrident::piston_release_bounds(self)
+    }
+    fn release_after_piston(&mut self, no_block_collision: bool) {
+        ThrownTrident::release_after_piston(self, no_block_collision);
+    }
+    fn piston_slime_bounce(&mut self, movement: Direction) {
+        ThrownTrident::piston_slime_bounce(self, movement);
     }
     /// `GameLevel::tick_blocks` sweeps tridents itself.
     fn sweeps_blocks_inside(&self) -> bool {
@@ -1952,6 +2076,7 @@ mod no_gravity_stand_tests {
         assert!(!stand.sweeps_blocks_inside());
         stand.no_gravity = false;
         stand.marker = true;
+        assert!(!stand.sweeps_blocks_inside());
         assert!(!stand.triggers_blocks());
     }
 }
@@ -2161,6 +2286,7 @@ mod set_rotation_tests {
     #[test]
     fn set_rotation_keeps_yaw_and_clamps_pitch_on_kinds_that_had_none() {
         let mut orb = ExperienceOrb {
+            fall_distance: 0.0,
             join: Default::default(),
             no_gravity: false,
             id: 0,
@@ -2173,8 +2299,10 @@ mod set_rotation_tests {
             count: 1,
             ticks: 0,
             health: 5,
+            air: 300,
             rotation: [0.0, 0.0],
             following: None,
+            fire_ticks: 0,
         };
         orb.set_rotation([90.0, 10.0]);
         assert_eq!(orb.rotation(), [90.0, 10.0]);

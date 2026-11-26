@@ -9,15 +9,15 @@
 use super::{
     Mob, MobEvent, MobWorld, Species, Who,
     goals::{
-        Breed, Cx, Float, Goal, LOOK, LookAtPlayer, MOVE, Panic, RandomLookAround, Stroll, Tempt,
-        goal_clone,
+        AnimalPanic, Breed, Cx, Float, Goal, LOOK, LookAtPlayer, MOVE, RandomLookAround, Stroll,
+        Tempt, goal_clone,
     },
     sync,
 };
 use crate::blocks::Fluid;
 use horizon_core::{
     geometry::Vec3,
-    random::{LegacyRandom, RandomSource},
+    random::{LevelRandom, RandomSource},
 };
 use std::fmt::Debug;
 
@@ -117,7 +117,7 @@ pub fn register(m: &mut Mob) {
     g.add(0, Float);
     // `FrogAi.initCoreActivity`: `AnimalPanic(2.0)` — the panic speed
     // multiplier is 2.0, not the 1.25 its temptation uses.
-    g.add(1, Panic::new(2.0));
+    g.add(1, AnimalPanic::new(2.0));
     // `FrogAi.initIdleActivity`: `AnimalMakeLove` first, then `FollowTemptation(1.25)`.
     g.add(2, Breed::new(1.0));
     g.add(3, Unless(is_pregnant, Tempt::new(1.25, food, false)));
@@ -399,6 +399,16 @@ impl LaySpawn {
             if open_top && supports && Self::is_air(cx.w, spawn) {
                 if let Some(state) = cx.w.registry.default_state("minecraft:frogspawn") {
                     cx.events.push(MobEvent::SetBlock { pos: spawn, state });
+                    cx.events.push(MobEvent::GameEvent {
+                        event: "minecraft:block_place",
+                        at: [
+                            f64::from(spawn[0]) + 0.5,
+                            f64::from(spawn[1]) + 0.5,
+                            f64::from(spawn[2]) + 0.5,
+                        ],
+                        source: m.id,
+                        state,
+                    });
                 }
                 cx.events.push(MobEvent::entity_sound(
                     m,
@@ -617,14 +627,14 @@ pub(super) fn count_down_cooldown(m: &mut Mob) {
     }
 }
 /// `LONG_JUMP_COOLDOWN_TICKS`.
-fn jump_cooldown(m: &Mob) -> Option<i64> {
+pub(crate) fn jump_cooldown(m: &Mob) -> Option<i64> {
     m.extra
         .memories
         .iter()
         .find(|x| x.0 == LONG_JUMP_COOLDOWN)
         .map(|x| x.1)
 }
-fn set_jump_cooldown(m: &mut Mob, ticks: Option<i64>) {
+pub(crate) fn set_jump_cooldown(m: &mut Mob, ticks: Option<i64>) {
     let memories = &mut m.extra.memories;
     let at = memories.iter().position(|x| x.0 == LONG_JUMP_COOLDOWN);
     match (at, ticks) {
@@ -638,7 +648,7 @@ fn set_jump_cooldown(m: &mut Mob, ticks: Option<i64>) {
 }
 /// `TIME_BETWEEN_LONG_JUMPS.sample` from the level's random, divided as the
 /// caller asks.
-fn sample_cooldown(m: &mut Mob, lr: &mut LegacyRandom, div: i32) {
+fn sample_cooldown(m: &mut Mob, lr: &mut LevelRandom, div: i32) {
     let (lo, hi) = if m.species() == Species::Goat {
         GOAT_TIME_BETWEEN_LONG_JUMPS
     } else {
@@ -731,7 +741,7 @@ pub(super) struct LongJump {
 impl LongJump {
     /// `WeightedRandom.getRandomItem` with the level's random over the
     /// candidates, removed once drawn.
-    fn draw(&mut self, lr: &mut LegacyRandom) -> Option<Candidate> {
+    fn draw(&mut self, lr: &mut LevelRandom) -> Option<Candidate> {
         let total: i32 = self.candidates.iter().map(|c| c.1).sum();
         if total == 0 {
             return None;
@@ -745,7 +755,7 @@ impl LongJump {
     }
     /// `LongJumpToPreferredBlock.getJumpCandidate`: while it wants them, the
     /// first drawn spot over a preferred block, else the first one passed over.
-    fn candidate(&mut self, w: &MobWorld, lr: &mut LegacyRandom) -> Option<Candidate> {
+    fn candidate(&mut self, w: &MobWorld, lr: &mut LevelRandom) -> Option<Candidate> {
         if !self.wanting_preferred {
             return self.draw(lr);
         }
@@ -762,7 +772,7 @@ impl LongJump {
     }
     /// `LongJumpToRandomPos.pickCandidate`: the first acceptable spot it can
     /// reach in an arc but not by an 8 block path.
-    fn pick(&mut self, m: &mut Mob, w: &MobWorld, lr: &mut LegacyRandom) {
+    fn pick(&mut self, m: &mut Mob, w: &MobWorld, lr: &mut LevelRandom) {
         while !self.candidates.is_empty() {
             let Some((target, _)) = self.candidate(w, lr) else {
                 continue;
@@ -1076,7 +1086,7 @@ mod tests {
             ..LongJump::default()
         };
         let mut r = LegacyRandom::new(7);
-        let mut lr = r.clone();
+        let mut lr = LevelRandom::for_level(r.clone());
         let pick = r.next_int_bound(14).unwrap();
         let want = if pick < 1 {
             0
@@ -1131,7 +1141,7 @@ mod tests {
     fn the_long_jump_cooldown_counts_down_and_is_erased() {
         let mut m = frog();
         let own = m.random.state();
-        sample_cooldown(&mut m, &mut LegacyRandom::new(3), 2);
+        sample_cooldown(&mut m, &mut crate::mobs::world::level_random(3), 2);
         let t = jump_cooldown(&m).unwrap();
         assert!((50..=70).contains(&t));
         assert_eq!(m.random.state(), own);
@@ -1181,18 +1191,118 @@ mod tests {
                     i64::from(m.age),
                 ));
                 let mut events = Vec::new();
-                let mut lr = LegacyRandom::new(0);
+                let mut lr = crate::mobs::world::level_random(0);
                 let mut cx = Cx {
                     w,
                     lr: &mut lr,
                     events: &mut events,
                 };
                 let mut goals = std::mem::take(&mut m.ai.goals);
-                goals.tick(&mut m, &mut cx);
+                // `AnimalPanic` looks for a spot every tick until
+                // `LandRandomPos` finds one; the walk target carries the
+                // speed multiplier.
+                for _ in 0..20 {
+                    goals.tick(&mut m, &mut cx);
+                    if m.ai.nav.speed_modifier == 2.0 {
+                        break;
+                    }
+                }
                 assert!(goals.is_running("Panic"), "the hurt frog should flee");
                 m.ai.goals = goals;
                 assert!(m.ai.panicking);
                 assert_eq!(m.ai.nav.speed_modifier, 2.0);
+            },
+        );
+        let _ = ran;
+    }
+
+    /// `Frog` keeps its pregnancy as the `IS_PREGNANT` brain memory, and
+    /// `Brain.Packed` saves every memory: `mob_to_nbt`/`mob_from_nbt` are the
+    /// pair `Game::mob_tree_nbt` and `Game::load_mob` go through. Horizon read
+    /// the memory back but wrote no `Brain` for a frog, so a frog made
+    /// pregnant in play that unloaded with its chunk came back unpregnant and
+    /// never laid its frogspawn.
+    #[test]
+    fn a_pregnant_frog_keeps_its_pregnancy_through_a_save() {
+        use crate::entity_nbt::{mob_from_nbt, mob_to_nbt};
+        use horizon_world::nbt::Tag;
+        let memory = |tag: &Tag| {
+            tag.get("Brain")
+                .and_then(|b| b.get("memories"))
+                .and_then(|b| b.get("minecraft:is_pregnant"))
+                .cloned()
+        };
+        let mut m = frog();
+        set_pregnant(&mut m, true);
+        let saved = mob_to_nbt(&m, [1, 2, 3, 4], None, None, |_| None);
+        assert_eq!(
+            memory(&saved),
+            Some(Tag::compound([(
+                "value",
+                Tag::Compound(Default::default())
+            )])),
+            "the save names the pregnancy"
+        );
+        let types = std::collections::HashMap::from([(m.kind.id.clone(), m.kind.clone())]);
+        let back = mob_from_nbt(&saved, &types, 2, None).unwrap();
+        assert!(is_pregnant(&back), "the reloaded frog is pregnant");
+        // A frog that laid its spawn saves no memory, even over a compound
+        // that still names one.
+        set_pregnant(&mut m, false);
+        let saved = mob_to_nbt(&m, [1, 2, 3, 4], Some(&saved), None, |_| None);
+        assert_eq!(memory(&saved), None, "a laid frog saves no pregnancy");
+        let back = mob_from_nbt(&saved, &types, 3, None).unwrap();
+        assert!(!is_pregnant(&back), "and does not come back pregnant");
+    }
+
+    /// `TryLaySpawnOnFluidNearLand`: the frogspawn is set, then
+    /// `block_place` is posted from the frog at the new block, then the lay
+    /// sound, and the pregnancy is erased.
+    #[test]
+    fn laying_frogspawn_posts_block_place_from_the_frog() {
+        let ran = crate::mobs::world::with_built_test_world(
+            &[],
+            |world, registry| {
+                world.chunks.insert(
+                    (0, 0),
+                    std::sync::Arc::new(crate::chunk::Chunk::empty(0, 0)),
+                );
+                let water = registry.default_state("minecraft:water").unwrap();
+                world.set(8, 63, 7, water).unwrap();
+            },
+            |w, _| {
+                let mut m = frog();
+                m.position = Vec3::new(8.5, 64.0, 8.5);
+                m.on_ground = true;
+                set_pregnant(&mut m, true);
+                let mut lr = crate::mobs::world::level_random(3);
+                let mut events = Vec::new();
+                let mut cx = Cx {
+                    w,
+                    lr: &mut lr,
+                    events: &mut events,
+                };
+                LaySpawn::lay(&mut m, &mut cx);
+                let spawn = w.registry.default_state("minecraft:frogspawn").unwrap();
+                assert!(
+                    events
+                        .iter()
+                        .any(|e| matches!(e, MobEvent::SetBlock { pos: [8, 64, 7], state } if *state == spawn)),
+                    "the frogspawn is set: {events:?}"
+                );
+                assert!(
+                    events.iter().any(|e| matches!(
+                        e,
+                        MobEvent::GameEvent {
+                            event: "minecraft:block_place",
+                            at: [8.5, 64.5, 7.5],
+                            source: 1,
+                            state,
+                        } if *state == spawn
+                    )),
+                    "the new frogspawn posts block_place from the frog: {events:?}"
+                );
+                assert!(!is_pregnant(&m), "laying erases the pregnancy");
             },
         );
         let _ = ran;

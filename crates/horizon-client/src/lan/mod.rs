@@ -9,7 +9,10 @@ mod advancements;
 pub mod anticheat;
 pub mod arrivals;
 pub mod attributes;
+mod biome_resend;
+mod body;
 pub mod border;
+pub mod chunk_sync;
 pub mod chunks;
 pub mod code_of_conduct;
 mod command_order;
@@ -19,7 +22,9 @@ pub mod conn;
 pub mod containers;
 pub mod data;
 pub mod discovery;
+mod effect_meta;
 pub mod entity;
+pub mod equipment_cache;
 pub mod far;
 pub mod forwarding;
 pub mod guest;
@@ -31,11 +36,13 @@ pub mod menu;
 pub mod playerdata;
 pub mod prediction;
 pub mod recipes;
+mod registry_names;
 pub mod scoreboard;
 mod sound_order;
 pub mod tracking;
 pub mod waypoints;
 
+pub use body::Body;
 pub use conn::{Holding, PlayerSender, flush_all};
 use horizon_protocol::packets::play;
 use horizon_protocol::{
@@ -440,8 +447,9 @@ pub struct Shared {
     /// `DedicatedServer.setAcceptsTransfers`: whether a login by transfer from another server
     /// is accepted (`accepts-transfers`), live.
     accepts_transfers: AtomicBool,
-    /// PlayerList.players in join order: profile id and name.
-    online: Mutex<Vec<(u128, String)>>,
+    /// PlayerList.players in join order: profile id, name, and `ServerPlayer.allowsListing`
+    /// (the client's "Allow Server Listings", true until its client information says otherwise).
+    online: Mutex<Vec<(u128, String, bool)>>,
     next: AtomicU32,
     stop: AtomicBool,
     random: Mutex<u64>,
@@ -483,6 +491,19 @@ impl Shared {
         if self.shutting_down.load(Ordering::Relaxed) {
             return Some(translatable("multiplayer.disconnect.server_shutdown", &[]));
         }
+        // IntegratedPlayerList.canPlayerLogin: the owner's name (ignoring case,
+        // `isSingleplayerOwner`) is refused while a player of that name is online.
+        if let Some((owner, _)) = &self.config.singleplayer_profile
+            && owner.eq_ignore_ascii_case(name)
+            && self
+                .online
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, online, _)| online.eq_ignore_ascii_case(name))
+        {
+            return Some(translatable("multiplayer.disconnect.name_taken", &[]));
+        }
         if let Some(gate) = &self.config.gate
             && let Some(reason) = gate(address, uuid, name)
         {
@@ -506,7 +527,10 @@ impl Shared {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        self.online.lock().unwrap().push((uuid, name.to_owned()));
+        self.online
+            .lock()
+            .unwrap()
+            .push((uuid, name.to_owned(), true));
         None
     }
     /// A stop has begun: every login from now on is refused as the server's shutdown.
@@ -514,7 +538,11 @@ impl Shared {
         self.shutting_down.store(true, Ordering::Relaxed);
     }
     fn is_online(&self, uuid: u128) -> bool {
-        self.online.lock().unwrap().iter().any(|(u, _)| *u == uuid)
+        self.online
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(u, _, _)| *u == uuid)
     }
     pub fn motd(&self) -> String {
         self.motd.lock().unwrap().clone()
@@ -552,7 +580,16 @@ impl Shared {
         self.accepts_transfers.store(accept, Ordering::Relaxed);
     }
     pub fn release(&self, uuid: u128) {
-        self.online.lock().unwrap().retain(|(u, _)| *u != uuid);
+        self.online.lock().unwrap().retain(|(u, _, _)| *u != uuid);
+    }
+    /// `ServerPlayer.updateOptions`: whether the player's client allows server listings, which
+    /// `MinecraftServer.buildPlayerStatus` reads for the status sample.
+    pub fn set_listed(&self, uuid: u128, listed: bool) {
+        for entry in self.online.lock().unwrap().iter_mut() {
+            if entry.0 == uuid {
+                entry.2 = listed;
+            }
+        }
     }
     pub fn online(&self) -> usize {
         self.online.lock().unwrap().len()
@@ -574,7 +611,7 @@ impl Shared {
     pub fn status_json_for(&self, protocol: i32) -> String {
         use crate::server::json::Json;
         let motd = self.motd.lock().unwrap().clone();
-        let online: Vec<(u128, String)> = self.online.lock().unwrap().clone();
+        let online: Vec<(u128, String, bool)> = self.online.lock().unwrap().clone();
         let count = self.online();
         let mut players = vec![
             (
@@ -586,7 +623,7 @@ impl Shared {
         if !self.hide_online_players() && !online.is_empty() {
             let size = online.len().min(12);
             let offset = self.next_random(online.len() - size + 1);
-            let mut sample: Vec<(u128, String)> = online[offset..offset + size].to_vec();
+            let mut sample: Vec<(u128, String, bool)> = online[offset..offset + size].to_vec();
             for i in (1..sample.len()).rev() {
                 let j = self.next_random(i + 1);
                 sample.swap(i, j);
@@ -596,6 +633,14 @@ impl Shared {
                 Json::Array(
                     sample
                         .into_iter()
+                        // ANONYMOUS_PLAYER_PROFILE for a player who allows no listing.
+                        .map(|(u, n, listed)| {
+                            if listed {
+                                (u, n)
+                            } else {
+                                (0, "Anonymous Player".to_owned())
+                            }
+                        })
                         .map(|(u, n)| {
                             Json::Object(vec![
                                 ("id".to_owned(), Json::String(uuid_string(u))),
@@ -1172,6 +1217,37 @@ mod tests {
         assert_eq!(lan.shared.online(), 1);
     }
 
+    /// `IntegratedPlayerList.canPlayerLogin`: a login whose name is the
+    /// singleplayer owner's (`IntegratedServer.isSingleplayerOwner`, ignoring
+    /// case) is refused with `multiplayer.disconnect.name_taken` while a player
+    /// of that name is online. The owner's own first login, and any other name,
+    /// get in; a server with no owner profile (a dedicated one) has no such rule.
+    #[test]
+    fn a_login_with_the_owners_name_is_refused_while_the_owner_is_online() {
+        let owned = NetConfig {
+            announce: false,
+            listen: false,
+            singleplayer_profile: Some(("Owner".to_owned(), 1)),
+            ..NetConfig::loopback(0, "Owned".into(), 8)
+        };
+        let lan = Lan::start_with(Arc::new(data::SyncData::empty()), owned).unwrap();
+        let taken = Some(translatable("multiplayer.disconnect.name_taken", &[]));
+        assert!(lan.shared.try_admit(MEMORY_ADDRESS, 1, "Owner").is_none());
+        assert_eq!(lan.shared.try_admit(MEMORY_ADDRESS, 2, "oWNER"), taken);
+        assert_eq!(lan.shared.try_admit(MEMORY_ADDRESS, 1, "Owner"), taken);
+        assert!(lan.shared.try_admit(MEMORY_ADDRESS, 3, "Guest").is_none());
+        assert_eq!(lan.shared.online(), 2);
+
+        let dedicated = NetConfig {
+            announce: false,
+            listen: false,
+            ..NetConfig::loopback(0, "Dedicated".into(), 8)
+        };
+        let lan = Lan::start_with(Arc::new(data::SyncData::empty()), dedicated).unwrap();
+        assert!(lan.shared.try_admit(MEMORY_ADDRESS, 1, "Owner").is_none());
+        assert!(lan.shared.try_admit(MEMORY_ADDRESS, 2, "oWNER").is_none());
+    }
+
     #[test]
     fn hide_online_players_updates_status_response() {
         let config = NetConfig {
@@ -1186,6 +1262,40 @@ mod tests {
         let hidden = lan.shared.status_json();
         assert!(!hidden.contains("\"sample\""));
         assert!(!hidden.contains("Player"));
+    }
+
+    /// MinecraftServer.buildPlayerStatus: a player whose client turned off "Allow Server Listings"
+    /// is in the sample as ANONYMOUS_PLAYER_PROFILE (the nil uuid, "Anonymous Player"); turned on
+    /// again, as itself.
+    #[test]
+    fn a_player_who_allows_no_listing_is_an_anonymous_player_in_the_status_sample() {
+        let config = NetConfig {
+            announce: false,
+            listen: false,
+            ..NetConfig::loopback(0, "Status".into(), 8)
+        };
+        let lan = Lan::start_with(Arc::new(data::SyncData::empty()), config).unwrap();
+        let uuid = 0x1234_5678_9abc_def0_1234_5678_9abc_def0;
+        assert!(lan.shared.try_admit(MEMORY_ADDRESS, uuid, "Shy").is_none());
+        lan.shared.set_listed(uuid, false);
+        let status = lan.shared.status_json();
+        assert!(
+            status.contains(
+                r#""sample":[{"id":"00000000-0000-0000-0000-000000000000","name":"Anonymous Player"}]"#
+            ),
+            "{status}"
+        );
+        assert!(!status.contains("Shy"), "{status}");
+        assert!(!status.contains("12345678-9abc-def0"), "{status}");
+        assert!(status.contains(r#""online":1"#), "{status}");
+        lan.shared.set_listed(uuid, true);
+        let status = lan.shared.status_json();
+        assert!(
+            status.contains(
+                r#""sample":[{"id":"12345678-9abc-def0-1234-56789abcdef0","name":"Shy"}]"#
+            ),
+            "{status}"
+        );
     }
 
     /// One public address takes at most [`PER_ADDRESS`] places, its own coming back as they end;

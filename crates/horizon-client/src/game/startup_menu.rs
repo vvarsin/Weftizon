@@ -56,16 +56,27 @@ pub(super) struct StartupMenu {
     pub perf: horizon_client::telemetry::Session,
 }
 
+/// `QuickPlay.joinMultiplayerWorld`: an address the server list lacks is saved
+/// first, as a hidden entry, so the server's resource pack answer is kept.
+fn quick_play_server(saves: &std::path::Path, address: &str, name: String) -> PendingWorldEntry {
+    horizon_client::multiplayer::remember_direct_join(saves, address);
+    PendingWorldEntry::Server {
+        address: address.to_owned(),
+        name,
+        cookies: None,
+        lan: false,
+        realm: false,
+    }
+}
+
 impl StartupMenu {
     pub fn new(options: &Options, pack_error: Option<&str>) -> Result<Self> {
         let pending = if let Some(address) = &options.server {
-            Some(PendingWorldEntry::Server {
-                address: address.clone(),
-                name: options.player_name(),
-                cookies: None,
-                lan: false,
-                realm: false,
-            })
+            Some(quick_play_server(
+                &super::server_packs::saves(),
+                address,
+                options.player_name(),
+            ))
         } else {
             options
                 .world
@@ -353,6 +364,26 @@ fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("Box<dyn Any>")
 }
 
+/// Resolve vanilla and native content before applying the selected resource packs.
+pub(super) fn startup_resource_root(
+    vanilla_root: &std::path::Path,
+    settings: &Settings,
+    dev_mods: &[PathBuf],
+) -> (PathBuf, Option<String>) {
+    let base = mods::content_root(
+        vanilla_root,
+        &settings.mods.enabled,
+        &settings.mods.disabled,
+        dev_mods,
+    );
+    // Content mods' dimension types, before any world opens.
+    Dim::load_custom(&base);
+    match packs::startup_root(vanilla_root, &base, &settings.resource_packs, &[]) {
+        Ok(root) => (root, None),
+        Err(error) => (base, Some(error.to_string())),
+    }
+}
+
 /// Each generation has its own channel and progress. Pack changes wait for the
 /// old tail before starting another generation, including cache/global writes.
 pub(super) fn spawn_loader(
@@ -371,13 +402,7 @@ pub(super) fn spawn_loader(
     let handle = std::thread::Builder::new()
         .name("resource-loader".into())
         .spawn(move || {
-            let mut pack_error = None;
-            let base = mods::content_root(&vanilla_root, &settings.mods.enabled, &dev_mods);
-            let root = packs::startup_root(&vanilla_root, &base, &settings.resource_packs, &[])
-                .unwrap_or_else(|error| {
-                    pack_error = Some(error.to_string());
-                    base.clone()
-                });
+            let (root, pack_error) = startup_resource_root(&vanilla_root, &settings, &dev_mods);
             let result = load_resources(
                 root,
                 world.as_deref(),
@@ -522,6 +547,7 @@ impl Loading {
         self.menu.options.open_at(false, page);
         self.menu.options.languages = horizon_client::lang::available(&[&self.menu.root]);
         self.menu.options.pack_infos = packs::pack_infos(&self.vanilla_root, &[]);
+        self.menu.options.pack_configs = packs::pack_configs(&self.vanilla_root);
         self.menu.options.pack_selection = self.settings.resource_packs.clone();
         self.menu.options.pack_screen = None;
         self.menu.options_open = true;
@@ -554,10 +580,23 @@ impl Loading {
                     self.save_menu_settings();
                     self.menu.reload_packs = true;
                 }
+                Event::PackOptions { entries, chosen } => {
+                    packs::save_pack_options(&entries, chosen);
+                    self.menu.options.pack_configs = packs::pack_configs(&self.vanilla_root);
+                    self.menu.reload_packs = true;
+                }
                 Event::OpenPackFolder => {
                     let dir = packs::packs_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     packs::open_folder(&dir);
+                }
+                Event::ImportPacks(paths) => {
+                    packs::import_resource_packs(
+                        &mut self.menu.options,
+                        &self.vanilla_root,
+                        &[],
+                        &paths,
+                    );
                 }
                 Event::DownloadPack(i) => {
                     let dir = packs::packs_dir();
@@ -1037,7 +1076,16 @@ impl Loading {
             // `PackSelectionScreen.onFilesDrop`: a pack dropped on the window
             // joins the Create New World screen's data packs.
             WindowEvent::DroppedFile(path) => {
-                if let Some(title) = &mut self.menu.title {
+                let batch = HudBatch::new(self.menu_size());
+                let handled = self.menu.options_open
+                    && self.gui.as_ref().is_some_and(|gui| {
+                        self.menu.options.drop_resource_pack(
+                            path.clone(),
+                            &gui.atlas,
+                            (batch.width, batch.height),
+                        )
+                    });
+                if !handled && let Some(title) = &mut self.menu.title {
                     title.drop_file(path);
                 }
             }
@@ -1247,9 +1295,17 @@ impl Loading {
                 self.menu.win = None;
             }
         } else if self.menu.options_open {
+            let pack = (self.renderer.as_ref()).and_then(|r| r.native_pack_name());
+            if self.settings.running_pack.as_deref() != pack {
+                self.settings.running_pack = pack.map(str::to_owned);
+            }
+            let output = self
+                .renderer
+                .as_ref()
+                .map_or(Default::default(), |r| r.output());
             self.menu
                 .options
-                .draw(&self.settings, batch, &gui.atlas, self.menu.cursor);
+                .draw(&self.settings, output, batch, &gui.atlas, self.menu.cursor);
         } else if let Some(title) = &mut self.menu.title {
             title.poll_backup();
             if std::mem::take(&mut title.onboarding_finished) {
@@ -1338,6 +1394,26 @@ impl Loading {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_server_joined_at_start_is_kept_in_the_server_list() {
+        let root = std::env::temp_dir().join(format!("horizon-quick-play-{}", std::process::id()));
+        let saves = root.join("saves");
+        std::fs::create_dir_all(&saves).unwrap();
+        let entry = quick_play_server(&saves, "play.example.org:25570", "Player".into());
+        assert!(
+            matches!(&entry, PendingWorldEntry::Server { address, .. } if address == "play.example.org:25570")
+        );
+        quick_play_server(&saves, "play.example.org:25570", "Player".into());
+        let file = horizon_client::multiplayer::servers_file(&saves);
+        let (shown, hidden) = horizon_protocol::servers::load_all(&file);
+        let _ = std::fs::remove_dir_all(&root);
+        // One hidden entry, which the pack prompt's answer is saved to.
+        assert!(shown.is_empty());
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].ip, "play.example.org:25570");
+        assert_eq!(hidden[0].accept_textures, None);
+    }
+
     fn gui(root: &std::path::Path) -> UiResources {
         UiResources {
             atlas: HudAtlas::fonts(root).unwrap(),
@@ -1372,6 +1448,134 @@ mod tests {
             menu: StartupMenu::default(),
             error: None,
         }
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES and scratch homes/cwd"]
+    fn resource_pack_drops_import_from_startup_and_game_options() {
+        struct Loop;
+        impl super::super::event_loop::EventLoopCtl for Loop {
+            fn exit(&self) {}
+            fn set_control_flow(&self, _: winit::event_loop::ControlFlow) {}
+        }
+        let root =
+            PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").expect("prepared resources"));
+        let game_dir = std::env::current_dir().unwrap();
+        assert!(
+            std::fs::read_dir(&game_dir).unwrap().next().is_none(),
+            "run the built test executable directly from an empty scratch game directory"
+        );
+        let source = game_dir.join("drop-fixtures");
+        std::fs::create_dir(&source).unwrap();
+        for name in ["Startup pack", "Game pack"] {
+            let path = source.join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(
+                path.join("pack.mcmeta"),
+                br#"{"pack":{"pack_format":1,"description":"Drop test"}}"#,
+            )
+            .unwrap();
+        }
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut loading = loading(receiver);
+        loading.gui = Some(gui(&root));
+        loading.vanilla_root = root.clone();
+        loading.open_menu_options(Page::Packs);
+        loading
+            .menu_event(&Loop, WindowEvent::DroppedFile(source.join("Startup pack")))
+            .unwrap();
+        assert!(
+            loading
+                .menu
+                .options
+                .pack_screen
+                .as_ref()
+                .unwrap()
+                .confirming()
+        );
+        assert!(!packs::packs_dir().join("Startup pack").exists());
+        let batch = HudBatch::new(loading.menu_size());
+        let events = loading.menu.options.click(
+            &mut loading.settings,
+            &loading.gui.as_ref().unwrap().atlas,
+            batch.width / 2.0 - 150.0,
+            batch.height / 2.0 + 20.0,
+            (batch.width, batch.height),
+            [1280, 720],
+            false,
+            false,
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::ImportPacks(_))));
+        loading.menu_option_events(events);
+        assert!(
+            packs::packs_dir()
+                .join("Startup pack/pack.mcmeta")
+                .is_file()
+        );
+        assert!(
+            loading
+                .menu
+                .options
+                .pack_infos
+                .iter()
+                .any(|p| p.id == "file/Startup pack")
+        );
+        assert!(loading.settings.resource_packs.is_empty());
+
+        let settings = Settings::default();
+        let loaded = load_resources(
+            root.clone(),
+            None,
+            &root,
+            &settings,
+            Instant::now(),
+            false,
+            true,
+            &Progress::new(),
+            &mut |_, _| unreachable!(),
+        )
+        .unwrap();
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.execution_role = execution_role::ExecutionRole::IntegratedServer;
+        let resources = Box::leak(Box::new(loaded.resources));
+        let mut game = Game::new(
+            resources,
+            loaded.pack,
+            loaded.gui.unwrap(),
+            options,
+            settings,
+            Audio::silent(&root),
+            None,
+        )
+        .unwrap();
+        game.title = Some(Title::new(PathBuf::from("saves"), &root));
+        game.open_options_at(true, Page::Packs);
+        game.handle_window_event_inner(&Loop, WindowEvent::DroppedFile(source.join("Game pack")));
+        assert!(game.ui.options.pack_screen.as_ref().unwrap().confirming());
+        assert!(!packs::packs_dir().join("Game pack").exists());
+        let size = game.gui_size();
+        let events = game.ui.options.click(
+            &mut game.settings,
+            &game.gui.atlas,
+            size.0 / 2.0 - 150.0,
+            size.1 / 2.0 + 20.0,
+            size,
+            [1280, 720],
+            false,
+            false,
+        );
+        assert!(events.iter().any(|e| matches!(e, Event::ImportPacks(_))));
+        game.handle_option_events(events).unwrap();
+        assert!(packs::packs_dir().join("Game pack/pack.mcmeta").is_file());
+        assert!(
+            game.ui
+                .options
+                .pack_infos
+                .iter()
+                .any(|p| p.id == "file/Game pack")
+        );
+        assert!(game.settings.resource_packs.is_empty());
     }
 
     #[test]

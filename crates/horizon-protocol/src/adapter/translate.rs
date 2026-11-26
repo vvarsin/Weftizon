@@ -510,7 +510,7 @@ pub fn serverbound(
             let action = r.varint()?;
             let action = match action {
                 0 => 0,
-                1 => return Ok(None),
+                1 | 8 => return Ok(None),
                 n => n - 1,
             };
             let mut w = Writer::new();
@@ -1216,7 +1216,8 @@ pub(crate) mod v1_21_11 {
         let kind = session.kinds.lock().unwrap().get(&data.id).copied();
         if kind.is_some_and(|k| AGEABLE.contains(&k)) {
             for (index, _, _) in &mut data.values {
-                if *index >= 17 {
+                // 0xFF is the end of the list: an index the shift would make it stays put.
+                if (17..0xFE).contains(index) {
                     *index += 1;
                 }
             }
@@ -2884,6 +2885,7 @@ mod tests {
         assert_eq!(action(0), Some(0)); // start destroying
         assert_eq!(action(1), None); // change_destroy_direction, new in 26.3
         assert_eq!(action(3), Some(2)); // stop destroying: 3 in 26.3, 2 in 26.2
+        assert_eq!(action(8), None); // stab, new in 26.3
     }
 }
 

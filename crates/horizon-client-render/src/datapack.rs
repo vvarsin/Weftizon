@@ -1,6 +1,7 @@
 //! Data packs (`<world>/datapacks`: folders and zips with `pack.mcmeta`) and
 //! the parts of them commands use: `.mcfunction` functions (with macros and
 //! line continuation), function tags and predicates.
+mod slot_sources;
 use crate::zip::Zip;
 use horizon_world::{
     nbt::Tag,
@@ -152,19 +153,41 @@ pub fn discover(world: &Path) -> Vec<DataPack> {
 /// `FolderRepositorySource.loadPacks`: packs in Create World's temporary
 /// folder or a world's data-pack directory, with required folder metadata.
 pub fn discover_folder(dir: &Path) -> Vec<DataPack> {
+    discover_folder_with(dir, &crate::packs::DirectoryValidator::game())
+}
+/// [`discover_folder`] under an explicit `allowed_symlinks.txt` validator.
+pub(crate) fn discover_folder_with(
+    dir: &Path,
+    validator: &crate::packs::DirectoryValidator,
+) -> Vec<DataPack> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut packs = Vec::new();
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        let path = e.path();
+        // `PackDetector.detectPackResources`: a link, or a pack holding one, is
+        // not a pack unless the validator allows the target; the id stays the
+        // entry's name while the contents come from the target.
+        let path = match crate::packs::detected_pack_path(&e.path(), validator) {
+            Ok(Some(path)) => path,
+            Ok(None) => continue,
+            Err(err) => {
+                log::warn!(
+                    "Failed to read properties of '{}', ignoring: {err}",
+                    e.path().display()
+                );
+                continue;
+            }
+        };
         if path.is_dir() && folder_metadata_present(&path) {
             packs.push(DataPack {
                 id: format!("file/{name}"),
                 source: Source::Dir(path),
             });
-        } else if name.ends_with(".zip")
+        } else if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().ends_with(".zip"))
             && let Ok(z) = Zip::open(&path)
             && z.contains("pack.mcmeta")
         {
@@ -643,7 +666,15 @@ pub fn parse_function(id: &str, text: &str) -> Result<Function, String> {
             });
         }
         if let Some(m) = line.strip_prefix('$') {
-            for p in macro_parameters(m)? {
+            let names = macro_parameters(m)?;
+            // `StringTemplate.fromString`: a `$` line with no `$(…)` is not a
+            // macro, and fails the whole file rather than running unchanged.
+            if names.is_empty() {
+                return Err(format!(
+                    "Can't parse function line {number}: '{m}': No variables in macro"
+                ));
+            }
+            for p in names {
                 if !parameters.contains(&p) {
                     parameters.push(p);
                 }
@@ -669,6 +700,10 @@ pub struct DataStore {
     pub predicates: BTreeMap<String, serde_json::Value>,
     /// `item_modifier` files, for `/item modify`.
     pub item_modifiers: BTreeMap<String, serde_json::Value>,
+    /// `slot_source` definitions, evaluated against a command's live accessor.
+    pub slot_sources: BTreeMap<String, serde_json::Value>,
+    /// Slot-source tags belong to the same loaded snapshot as their definitions.
+    pub slot_source_tags: BTreeMap<String, Vec<(String, bool)>>,
     /// The content tables' raw files from the packs after the built-in one:
     /// `recipe/`, `recipe_filter/`, `loot_table/`, `advancement/`, `dialog/`, `damage_type/`, `data_maps/`, `enchantment/` and `tags/…/` files, by
     /// `<kind-dir>/<ns>:<path>`, each id's files in pack order. The tables
@@ -728,6 +763,7 @@ impl DataStore {
                 "predicate",
                 "recipe",
                 "recipe_filter",
+                "slot_source",
                 "tags",
                 "trade_set",
                 "villager_trade",
@@ -764,6 +800,21 @@ impl DataStore {
                     && let Ok(v) = serde_json::from_slice(&bytes)
                 {
                     s.item_modifiers.insert(id, v);
+                } else if let Some(id) = resource_id(&f, "tags/slot_source", ".json")
+                    && let Some(bytes) = pack.read(&f)
+                    && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                {
+                    let entries = tag_entries(&v);
+                    let slot = s.slot_source_tags.entry(id).or_default();
+                    if v["replace"].as_bool() == Some(true) {
+                        slot.clear();
+                    }
+                    slot.extend(entries);
+                } else if let Some(id) = resource_id(&f, "slot_source", ".json")
+                    && let Some(bytes) = pack.read(&f)
+                    && let Ok(v) = serde_json::from_slice(&bytes)
+                {
+                    s.slot_sources.insert(id, v);
                 } else if !builtin
                     && let Some(id) = content_id(&f)
                     && let Some(bytes) = pack.read(&f)
@@ -1296,6 +1347,55 @@ mod tests {
         // A plain function needs no arguments.
         let plain = parse_function("a:p", "say 1").unwrap();
         assert_eq!(plain.instantiate(None).unwrap(), ["say 1"]);
+    }
+
+    /// `StringTemplate.fromString` throws "No variables in macro" for a `$`
+    /// line with no `$(…)`, so `FunctionBuilder.addMacro` fails and
+    /// `ServerFunctionLibrary.reload` leaves the whole file out: `/function`
+    /// reports it unknown instead of running the line unchanged.
+    #[test]
+    fn a_macro_line_without_a_variable_drops_the_whole_file() {
+        let dir = std::env::temp_dir().join(format!("hz-datapack-macro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let pack = dir.join("datapacks/macros");
+        let write = |p: &str, t: &str| {
+            let path = pack.join(p);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, t).unwrap();
+        };
+        write(
+            "pack.mcmeta",
+            "{\"pack\":{\"description\":\"Macros\",\"pack_format\":1}}",
+        );
+        // A plain line before and after does not save the file.
+        write(
+            "data/t/function/novar.mcfunction",
+            "say before\n$say hello\nsay after\n",
+        );
+        write("data/t/function/lone.mcfunction", "$\n");
+        // A `$` not followed by `(` is text, not a variable.
+        write(
+            "data/t/function/dollar.mcfunction",
+            "$say $(who) costs $5\n",
+        );
+        write("data/t/function/plain.mcfunction", "say plain\n");
+        let packs = discover(&dir);
+        let store = DataStore::load(&[&packs[0]]);
+        for id in ["t:novar", "t:lone"] {
+            assert!(!store.functions.contains_key(id), "{id} was registered");
+            assert!(
+                store
+                    .errors
+                    .iter()
+                    .any(|(e, m)| e == id && m.contains("No variables in macro")),
+                "{id} has no load error: {:?}",
+                store.errors
+            );
+        }
+        let dollar = &store.functions["t:dollar"];
+        assert_eq!(dollar.parameters, ["who"]);
+        assert!(store.functions.contains_key("t:plain"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

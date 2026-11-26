@@ -12,6 +12,11 @@ use horizon_core::geometry::trig::Mth;
 use std::borrow::Cow;
 use std::f32::consts::PI;
 
+// The invisible body a viewer still sees (`Entity.isInvisibleTo`), beside this file.
+#[path = "invisible_body.rs"]
+mod invisible_body;
+pub use invisible_body::render_seen_invisible;
+
 /// A texture lookup into the shared atlas (name without namespace -> uv rect).
 pub type Atlas<'a> = &'a dyn Fn(&str) -> Option<[f32; 4]>;
 
@@ -152,15 +157,7 @@ pub fn armor_tint(undyed: Option<u32>, stack: Option<&crate::items::ItemStack>) 
         .unwrap_or(undyed);
     abgr(dyed)
 }
-/// ColorLerper.Type.SHEEP colour: white is 0xE6E6E6, others 75% of the dye.
-pub fn sheep_wool_rgb(color: u8) -> u32 {
-    if color == 0 {
-        return 0xE6E6E6;
-    }
-    let src = DYE[color as usize & 15];
-    let f = |c: u32| ((c as f32 * 0.75).floor() as u32).min(255);
-    f(src >> 16 & 255) << 16 | f(src >> 8 & 255) << 8 | f(src & 255)
-}
+pub use crate::pack_palette::{diffuse as dye, sheep_wool as sheep_wool_rgb};
 /// `ColorLerper.getLerpedColor(ColorLerper.Type.SHEEP, ageInTicks)`: the 16
 /// wool colours in DyeColor order, one per 25 ticks, lerped in between. The
 /// colour a `jeb_` sheep's wool takes.
@@ -623,7 +620,7 @@ fn template_body(m: &Mob) -> (Cow<'static, str>, Cow<'static, str>) {
 pub fn body_color(m: &Mob, alpha: f32) -> u32 {
     match m.species() {
         Species::Wolf => super::tame::tint(m, alpha),
-        Species::TropicalFish => abgr(DYE[m.extra.variant2 as usize & 15]),
+        Species::TropicalFish => abgr(dye(m.extra.variant2 as usize)),
         // LivingEntityRenderer.submit: a spectator is invisible
         // (Player.updateInvisibilityStatus) but not to another spectator or
         // itself, so its body is forced translucent (654311423, alpha 38).
@@ -727,7 +724,7 @@ fn template_layers(m: &Mob, age: f32) -> Vec<Layer> {
                 &mut v,
                 model,
                 texture,
-                abgr(DYE[m.extra.color as usize & 15]),
+                abgr(dye(m.extra.color as usize)),
                 false,
             );
         }
@@ -814,7 +811,7 @@ fn template_layers(m: &Mob, age: f32) -> Vec<Layer> {
             if let Some(armor) = m.extra.body.as_deref()
                 && let Some(material) = armor
                     .strip_prefix("minecraft:")
-                    .and_then(|a| a.strip_suffix("_horse_armor"))
+                    .and_then(super::equine::horse_armor_asset)
             {
                 let tex = interned(format_args!("entity/equipment/horse_body/{material}"));
                 let color = if material == "leather" {
@@ -857,7 +854,7 @@ fn template_layers(m: &Mob, age: f32) -> Vec<Layer> {
                 &mut v,
                 model,
                 texture,
-                abgr(DYE[m.extra.color as usize & 15]),
+                abgr(dye(m.extra.color as usize)),
                 false,
             );
         }
@@ -1003,7 +1000,7 @@ fn template_layers(m: &Mob, age: f32) -> Vec<Layer> {
                 &mut v,
                 model,
                 interned(format_args!("entity/fish/tropical_{letter}_pattern_{n}")),
-                abgr(DYE[m.extra.variant3 as usize & 15]),
+                abgr(dye(m.extra.variant3 as usize)),
                 false,
             );
         }
@@ -1647,6 +1644,7 @@ pub fn render_with(
     extra: &[(&Part, [f32; 4], u32, u32, bool)],
     out: &mut Vec<Vertex>,
 ) {
+    let paint = Some(body_color(m, alpha));
     // The invisibility effect hides the model (a drinking wandering trader);
     // an illusioner shows its four mirror images instead.
     if super::trader::is_invisible(m) {
@@ -1657,23 +1655,13 @@ pub fn render_with(
                 let shifted =
                     camera - glam::DVec3::new(off[0] + w[0], off[1] + w[1], off[2] + w[2]);
                 let base = base_transform(m, alpha, shifted);
-                render_visible(m, alpha, base, atlas, light, data, extra, true, out, None);
+                render_visible(m, alpha, base, atlas, light, data, extra, paint, out, None);
             }
         }
         return;
     }
-    render_visible(
-        m,
-        alpha,
-        base_transform(m, alpha, camera),
-        atlas,
-        light,
-        data,
-        extra,
-        true,
-        out,
-        None,
-    );
+    let base = base_transform(m, alpha, camera);
+    render_visible(m, alpha, base, atlas, light, data, extra, paint, out, None);
 }
 /// `render` with the model's ordinary draws posed on the GPU when the mob
 /// allows it (`super::skin`): the same picture, no vertices on the CPU.
@@ -1700,7 +1688,7 @@ pub fn render_skinned(
         light,
         data,
         &[],
-        true,
+        Some(body_color(m, alpha)),
         out,
         Some(skin),
     );
@@ -1960,7 +1948,7 @@ pub fn render_layers(
     out: &mut Vec<Vertex>,
 ) {
     let base = base_transform(m, alpha, camera);
-    render_visible(m, alpha, base, atlas, light, data, extra, false, out, None);
+    render_visible(m, alpha, base, atlas, light, data, extra, None, out, None);
 }
 /// A mob drawn under `origin` instead of at its position (the spinning mob
 /// of `SpawnerRenderer.submitEntityInSpawner`).
@@ -1974,7 +1962,8 @@ pub fn render_posed(
     out: &mut Vec<Vertex>,
 ) {
     let base = base_transform_at(m, alpha, origin);
-    render_visible(m, alpha, base, atlas, light, data, &[], true, out, None);
+    let paint = Some(body_color(m, alpha));
+    render_visible(m, alpha, base, atlas, light, data, &[], paint, out, None);
 }
 /// The custom model's key of a body model: `main` is the wide player model, `kind.model`.
 fn cem_key(model_key: &str) -> &str {
@@ -1992,8 +1981,8 @@ fn cem_key(model_key: &str) -> &str {
 /// choose a variant for each.
 pub fn drawn_textures(m: &Mob, data: &MobData) -> Vec<String> {
     fn push(names: &mut Vec<String>, custom: Option<&super::cem::CemLayer>, vanilla: String) {
-        if let Some(texture) = custom.and_then(|c| c.texture.clone()) {
-            names.push(texture);
+        if let Some(texture) = custom.and_then(|c| c.texture_for(&vanilla)) {
+            names.push(texture.to_owned());
         }
         names.push(vanilla);
     }
@@ -2034,7 +2023,7 @@ fn cem_texture<'a>(
     atlas: Atlas<'_>,
 ) -> &'a str {
     custom
-        .and_then(|c| c.texture.as_deref())
+        .and_then(|c| c.texture_for(vanilla))
         .filter(|t| atlas(t).is_some())
         .unwrap_or(vanilla)
 }
@@ -2090,7 +2079,8 @@ fn render_visible(
     light: u32,
     data: &MobData,
     extra: &[(&Part, [f32; 4], u32, u32, bool)],
-    body_visible: bool,
+    // `submit`'s `tintedColor` to draw the body in, or `None` for its layers only.
+    paint: Option<u32>,
     out: &mut Vec<Vertex>,
     skin: Option<&mut super::skin::Skin>,
 ) {
@@ -2222,7 +2212,7 @@ fn render_visible(
                 None
             }
         });
-        if body_visible && let Some(uv) = uv {
+        if let (Some(tint), Some(uv)) = (paint, uv) {
             let start = out.len();
             put(
                 skin,
@@ -2231,7 +2221,7 @@ fn render_visible(
                 &poses,
                 uv,
                 0.0,
-                body_color(m, alpha),
+                tint,
                 light,
                 body_overlay(m, alpha),
                 out,
@@ -2244,13 +2234,14 @@ fn render_visible(
                     &poses,
                     glow,
                     0.0,
-                    body_color(m, alpha),
+                    tint,
                     FULL_BRIGHT,
                     0,
                     out,
                 );
             }
-            if translucent_body(m) {
+            // A body below full alpha (`forceTransparent`'s 654311423) blends too.
+            if translucent_body(m) || tint >> 24 != 0xFF {
                 mark_oit(&mut out[start..]);
             }
         }
@@ -2393,7 +2384,7 @@ fn render_visible(
             }
         }
         // The eyes render type's glowing eyes also shine in HDR output, at
-        // `EYES_TIER` in the overlay's high bits (entity.wgsl fs_hdr_mark).
+        // `EYES_TIER` in the overlay's high bits (entity.wgsl hdr_entity_mark).
         if layer.full_bright && m.species() != Species::Warden {
             for vertex in &mut out[start..] {
                 vertex.normal = [0; 4];

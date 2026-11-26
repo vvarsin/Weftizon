@@ -16,7 +16,7 @@ pub enum HolderSet {
 }
 impl HolderSet {
     pub fn read(r: &mut Reader) -> Result<Self> {
-        let n = r.varint()? - 1;
+        let n = r.varint()?.wrapping_sub(1);
         if n == -1 {
             return Ok(Self::Tag(r.string(32767)?));
         }
@@ -37,6 +37,12 @@ impl HolderSet {
                 w.string(name);
             }
             Self::Items(ids) => {
+                // Written for an older client: its own item ids, without the items it lacks.
+                let ids: Vec<i32> = ids
+                    .iter()
+                    .map(|&id| crate::adapter::ids::item(id))
+                    .filter(|&id| id >= 0)
+                    .collect();
                 w.varint(ids.len() as i32 + 1);
                 ids.iter().for_each(|id| w.varint(*id));
             }
@@ -86,7 +92,32 @@ pub enum SlotDisplay {
 /// How deep slot displays may nest (composites of composites…).
 const MAX_DEPTH: u32 = 32;
 
+/// How much one legacy smithing-trim preview may expand to ([`SlotDisplay::weight`]). Each
+/// pattern of an old server's trim display gets its own copy of the base and the material, and
+/// those can be trim displays expanded the same way: about 36 times more per level, so a few
+/// hundred bytes asked for a billion nodes. Vanilla's old clients expand nothing here.
+pub const MAX_TRIM_PREVIEW: usize = 4096;
+
 impl SlotDisplay {
+    /// How many displays, and listed items, this tree holds: what copying it costs.
+    pub fn weight(&self) -> usize {
+        1 + match self {
+            Self::WithAnyPotion(d) | Self::OnlyWithComponent(d, _) => d.weight(),
+            Self::Dyed { dye, target } => dye.weight().saturating_add(target.weight()),
+            Self::SmithingTrim { base, material, .. } => {
+                base.weight().saturating_add(material.weight())
+            }
+            Self::WithRemainder { input, remainder } => {
+                input.weight().saturating_add(remainder.weight())
+            }
+            Self::Composite(list) => list
+                .iter()
+                .fold(0usize, |sum, d| sum.saturating_add(d.weight())),
+            Self::Tag(HolderSet::Items(items)) => items.len(),
+            _ => 0,
+        }
+    }
+
     pub fn read(r: &mut Reader) -> Result<Self> {
         Self::read_at(r, 0)
     }
@@ -120,6 +151,10 @@ impl SlotDisplay {
                     let old_pattern = inner(r)?;
                     let mut patterns = Vec::new();
                     old_pattern.legacy_trim_patterns(&mut patterns)?;
+                    let each = base.weight().saturating_add(material.weight());
+                    if patterns.len().saturating_mul(each) > MAX_TRIM_PREVIEW {
+                        return Err(crate::Error::new("legacy trim preview too large"));
+                    }
                     let mut displays: Vec<_> = patterns
                         .into_iter()
                         .map(|id| Self::SmithingTrim {
@@ -140,7 +175,7 @@ impl SlotDisplay {
                             description: r.nbt()?,
                             decal: r.bool()?,
                         },
-                        id => TrimPattern::Id(id - 1),
+                        id => TrimPattern::Id(id.wrapping_sub(1)),
                     };
                     Self::SmithingTrim {
                         base,
@@ -188,32 +223,46 @@ impl SlotDisplay {
         }
         Ok(())
     }
+    /// Writes this display; for an older client (while ids are renumbered down) in its own display
+    /// ids, with the kinds it lacks shown as the display they wrap.
     pub fn write(&self, w: &mut Writer) {
+        use crate::adapter::ids;
+        // This display kind's id on the receiving side: -1 when it has no such kind.
+        let kind = ids::slot_display;
         match self {
-            Self::Empty => w.varint(0),
-            Self::AnyFuel => w.varint(1),
+            Self::Empty => w.varint(kind(0)),
+            Self::AnyFuel => w.varint(kind(1)),
+            Self::WithAnyPotion(d) if kind(2) < 0 => d.write(w),
             Self::WithAnyPotion(d) => {
-                w.varint(2);
+                w.varint(kind(2));
                 d.write(w);
+            }
+            Self::OnlyWithComponent(d, component)
+                if kind(3) < 0 || ids::component(*component) < 0 =>
+            {
+                d.write(w)
             }
             Self::OnlyWithComponent(d, component) => {
-                w.varint(3);
+                w.varint(kind(3));
                 d.write(w);
-                w.varint(*component);
+                w.varint(ids::component(*component));
             }
-            Self::Item(id) => {
-                w.varint(4);
-                w.varint(crate::adapter::ids::item(*id));
-            }
+            Self::Item(id) => match ids::item(*id) {
+                id if id < 0 => w.varint(kind(0)),
+                id => {
+                    w.varint(kind(4));
+                    w.varint(id);
+                }
+            },
             Self::ItemStack(stack) => {
-                w.varint(5);
+                w.varint(kind(5));
                 Template::write(stack, w);
             }
-            Self::Tag(set) if crate::adapter::ids::quirks_written().tag_slot_display_is_id => {
+            Self::Tag(set) if ids::quirks_written().tag_slot_display_is_id => {
                 match set {
                     // TagSlotDisplay of 26.2: the tag's bare id.
                     HolderSet::Tag(name) => {
-                        w.varint(6);
+                        w.varint(kind(6));
                         w.string(name);
                     }
                     // A list of items has no such form: a composite of item displays shows the same.
@@ -224,24 +273,31 @@ impl SlotDisplay {
                 }
             }
             Self::Tag(set) => {
-                w.varint(6);
+                w.varint(kind(6));
                 set.write(w);
             }
+            // Without dyed displays the client shows the dyed item itself.
+            Self::Dyed { target, .. } if kind(7) < 0 => target.write(w),
             Self::Dyed { dye, target } => {
-                w.varint(7);
+                w.varint(kind(7));
                 dye.write(w);
                 target.write(w);
+            }
+            // Before 1.21.5 a trim display named its template, not its pattern: the client is shown
+            // the item being trimmed.
+            Self::SmithingTrim { base, .. } if ids::quirks_written().components_before_1_21_5 => {
+                base.write(w)
             }
             Self::SmithingTrim {
                 base,
                 material,
                 pattern,
             } => {
-                w.varint(8);
+                w.varint(kind(8));
                 base.write(w);
                 material.write(w);
                 match pattern {
-                    TrimPattern::Id(id) => w.varint(id + 1),
+                    TrimPattern::Id(id) => w.varint(id.wrapping_add(1)),
                     TrimPattern::Direct {
                         asset,
                         description,
@@ -255,12 +311,12 @@ impl SlotDisplay {
                 }
             }
             Self::WithRemainder { input, remainder } => {
-                w.varint(9);
+                w.varint(kind(9));
                 input.write(w);
                 remainder.write(w);
             }
             Self::Composite(list) => {
-                w.varint(10);
+                w.varint(kind(10));
                 w.varint(list.len() as i32);
                 list.iter().for_each(|d| d.write(w));
             }
@@ -654,6 +710,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_legacy_trim_display_that_would_balloon_is_refused() {
+        use crate::adapter::{ServerVersion, ids};
+        let _up = ids::renumbering(ServerVersion::V1_21_4.ids().unwrap(), ids::Way::Up);
+        let templates = (ids::item(800), ids::item(801));
+        let _trims = ids::trim_patterns(std::collections::HashMap::from([
+            (templates.0, 1),
+            (templates.1, 2),
+        ]));
+        // A 1.21.4 trim display whose base is again such a display, `levels` deep: each level
+        // has two patterns, so each copies its base twice.
+        // The old server's own slot-display ids for item (4), trim (8) and composite (10).
+        let wire = |display| {
+            (0..32)
+                .find(|&id| ids::slot_display(id) == display)
+                .unwrap()
+        };
+        let (item, trim, composite) = (wire(4), wire(8), wire(10));
+        let nested = |w: &mut Writer, levels: u32| {
+            for _ in 0..levels {
+                w.varint(trim);
+            }
+            w.varint(item);
+            w.varint(5);
+            for _ in 0..levels {
+                w.varint(item);
+                w.varint(6);
+                w.varint(composite);
+                w.varint(2);
+                for template in [800, 801] {
+                    w.varint(item);
+                    w.varint(template);
+                }
+            }
+        };
+        let read = |levels| {
+            let mut w = Writer::new();
+            nested(&mut w, levels);
+            SlotDisplay::read(&mut Reader::new(&w.data))
+        };
+        let small = read(4).unwrap();
+        assert!(small.weight() > 30, "{}", small.weight());
+        let err = read(24).unwrap_err();
+        assert!(err.to_string().contains("trim preview too large"), "{err}");
+    }
+
+    #[test]
     fn book_entries_round_trip() {
         let add = RecipeBookAdd {
             entries: vec![
@@ -708,6 +810,51 @@ mod tests {
         RecipeBookAdd::write(&add, &mut w);
         let mut r = Reader::new(&w.data);
         assert_eq!(RecipeBookAdd::read(&mut r).unwrap(), add);
+        assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn displays_written_for_a_1_21_11_client_read_back_as_that_version() {
+        use crate::adapter::{ServerVersion, ids};
+        let old = ServerVersion::V1_21_11.ids().unwrap();
+        let (stick, apple) = (ids::item(880), ids::item(900));
+        let display = SlotDisplay::Composite(vec![
+            SlotDisplay::Item(stick),
+            SlotDisplay::WithAnyPotion(Box::new(SlotDisplay::Item(apple))),
+            SlotDisplay::Dyed {
+                dye: Box::new(SlotDisplay::Item(apple)),
+                target: Box::new(SlotDisplay::Item(stick)),
+            },
+            SlotDisplay::WithRemainder {
+                input: Box::new(SlotDisplay::Item(stick)),
+                remainder: Box::new(SlotDisplay::Empty),
+            },
+        ]);
+        let mut w = Writer::new();
+        {
+            let _down = ids::renumbering(old, ids::Way::Down);
+            display.write(&mut w);
+            HolderSet::Items(vec![stick, apple]).write(&mut w);
+        }
+        // Read as a 1.21.11 server's packet is: the kinds 1.21.11 lacks show what they wrap.
+        let _up = ids::renumbering(old, ids::Way::Up);
+        let mut r = Reader::new(&w.data);
+        assert_eq!(
+            SlotDisplay::read(&mut r).unwrap(),
+            SlotDisplay::Composite(vec![
+                SlotDisplay::Item(stick),
+                SlotDisplay::Item(apple),
+                SlotDisplay::Item(stick),
+                SlotDisplay::WithRemainder {
+                    input: Box::new(SlotDisplay::Item(stick)),
+                    remainder: Box::new(SlotDisplay::Empty),
+                },
+            ])
+        );
+        assert_eq!(
+            HolderSet::read(&mut r).unwrap(),
+            HolderSet::Items(vec![stick, apple])
+        );
         assert_eq!(r.remaining(), 0);
     }
 }

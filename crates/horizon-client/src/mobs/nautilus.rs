@@ -7,7 +7,7 @@ use super::{
     Mob, MobEvent, MobWorld, Species, Who,
     anim::{Poses, State},
     control::{LookKind, MoveKind, Operation},
-    goals::{Breed, Cx, Goal, LOOK, LookAtPlayer, MOVE, Panic, Stroll, Tempt, goal_clone},
+    goals::{AnimalPanic, Breed, Cx, Goal, LOOK, MOVE, Stroll, Tempt, goal_clone},
     keyframes::Animation,
     nav::NavKind,
 };
@@ -57,22 +57,20 @@ pub fn register(m: &mut Mob) {
         g.add(1, t);
         g.add(2, Charge::new(0.5));
         g.add(3, Stroll::swimming(1.0, 1));
-        g.add(3, LookAtPlayer::new(6.0));
     } else {
-        g.add(0, Panic::new(1.6));
+        g.add(0, AnimalPanic::new(1.6));
         g.add(1, Breed::new(0.4));
         let mut t = Tempt::new(1.3, tempt, false);
         t.stop_distance = stop;
         g.add(2, t);
         g.add(3, Charge::new(0.6));
         g.add(4, Stroll::swimming(1.0, 1));
-        g.add(4, LookAtPlayer::new(6.0));
     }
 }
 /// `finalizeSpawn`: `NautilusAi.initMemories` (2400 to 3600 ticks before it
 /// first looks for prey) and the zombie's variant by biome.
-pub fn finalize(m: &mut Mob, warm_ocean: bool) {
-    m.extra.counter = 2400 + m.random.next_int_bound(1201).unwrap_or(0);
+pub fn finalize(m: &mut Mob, warm_ocean: bool, r: &mut impl RandomSource) {
+    m.extra.counter = 2400 + r.next_int_bound(1201).unwrap_or(0);
     m.extra.nautilus_attack_cooldown_ttl = Some(i64::MAX);
     if zombie(m) {
         m.extra.variant = u8::from(warm_ocean);
@@ -89,6 +87,11 @@ pub fn is_food(m: &Mob, item: &str, taming: &[String]) -> bool {
     } else {
         m.kind.food.iter().any(|t| t == item)
     }
+}
+/// `TamableAnimal.feed`'s heal: twice the food's nutrition, or 1 for an item
+/// without a food component (a fish bucket).
+pub fn feed_heal(nutrition: Option<i32>) -> f32 {
+    nutrition.map_or(1.0, |n| 2.0 * n as f32)
 }
 /// The ambient, hurt and death sounds by age and whether it is under water.
 pub fn sounds(m: &Mob) -> [&'static str; 3] {
@@ -281,7 +284,7 @@ fn check_restriction(m: &mut Mob) {
 pub fn ai_step(
     m: &mut Mob,
     w: &MobWorld,
-    level_random: &mut horizon_core::random::LegacyRandom,
+    level_random: &mut horizon_core::random::LevelRandom,
     events: &mut Vec<MobEvent>,
 ) {
     // customServerAiStep: the home is kept before the rest of the step.
@@ -404,7 +407,7 @@ pub fn aggravated(m: &Mob) -> bool {
 fn find_target(
     m: &mut Mob,
     w: &MobWorld,
-    level_random: &mut horizon_core::random::LegacyRandom,
+    level_random: &mut horizon_core::random::LevelRandom,
 ) -> Option<Who> {
     if m.extra.in_love > 0 || !m.fluids.in_water || m.is_baby() || m.extra.tame {
         return None;
@@ -572,6 +575,7 @@ impl Goal for Charge {
                 x: f64::from(horizon_core::geometry::trig::sin(yaw)),
                 z: -f64::from(horizon_core::geometry::trig::cos(yaw)),
                 source: super::Damage::mob(m.id, from),
+                apply_blocking: None,
             });
             m.velocity = Vec3::new(m.velocity.x * 0.6, m.velocity.y, m.velocity.z * 0.6);
         }
@@ -671,7 +675,7 @@ pub fn from_nbt(m: &mut Mob, tag: &horizon_world::nbt::Tag) {
     use horizon_world::nbt::Tag;
     m.extra.owner = crate::save::uuid_from_tag(tag.get("Owner"));
     m.extra.tame = m.extra.owner.is_some();
-    m.extra.sitting = crate::entity_nbt::flag(tag, "Sitting");
+    crate::mobs::tame::restore_sitting(m, crate::entity_nbt::flag(tag, "Sitting"));
     if let Some(Tag::String(v)) = tag.get("variant") {
         let v = v.to_string().unwrap_or_default();
         m.extra.variant = u8::from(v.trim_start_matches("minecraft:") == "warm");
@@ -741,6 +745,26 @@ mod tests {
         }
     }
 
+    /// `NautilusAi` and `ZombieNautilusAi` have no `LookAtPlayerGoal`: the
+    /// idle activity's walk from a look target never runs (no sensor writes
+    /// `LOOK_TARGET`), so a nautilus never turns to stare at a player.
+    #[test]
+    fn neither_brain_looks_at_a_player() {
+        for (id, species) in [
+            ("minecraft:nautilus", Species::Nautilus),
+            ("minecraft:zombie_nautilus", Species::ZombieNautilus),
+        ] {
+            let mut kind = (*crate::mobs::sensor_scan_tests::kind()).clone();
+            kind.id = id.into();
+            kind.species = species;
+            let mut m = Mob::new(1, Arc::new(kind), Vec3::ZERO, 0.0);
+            register(&mut m);
+            // The stroll is there, so the list is the brain's own.
+            assert!(m.ai.goals.has("RandomSwimming"), "{id} strolls");
+            assert!(!m.ai.goals.has("LookAtPlayer"), "{id} looks at players");
+        }
+    }
+
     /// `ChargeAttack.dealKnockBack` is `causeExtraKnockback`: `LivingEntity.knockback`
     /// on the target, away from (sin(yaw), -cos(yaw)), not a raw push of its motion.
     #[test]
@@ -758,7 +782,7 @@ mod tests {
             );
             m.ai.target = Some(Who::Player);
             let mut goal = Charge::new(0.5);
-            let mut lr = horizon_core::random::LegacyRandom::new(1);
+            let mut lr = crate::mobs::world::level_random(1);
             let mut cx = Cx {
                 w: &w,
                 lr: &mut lr,
@@ -892,7 +916,7 @@ mod hostile_target_tests {
                 .map(|seed| {
                     let mut m = Mob::new(1, kind.clone(), Vec3::new(0.5, 62.0, 0.5), 270.0);
                     m.fluids.in_water = true;
-                    let mut level = horizon_core::random::LegacyRandom::new(seed);
+                    let mut level = crate::mobs::world::level_random(seed);
                     find_target(&mut m, w, &mut level)
                 })
                 .collect();
@@ -1077,7 +1101,7 @@ mod cooldown_memory_tests {
                         let tag = raw(id, state, no_ai);
                         let mut m = crate::entity_nbt::mob_from_nbt(&tag, &types, 7, None).unwrap();
                         m.attrs.speed = 0.0;
-                        let mut level_random = horizon_core::random::LegacyRandom::new(140);
+                        let mut level_random = crate::mobs::world::level_random(140);
                         let mut events = Vec::new();
                         for elapsed in 0..=6 {
                             if elapsed > 0 {
@@ -1120,5 +1144,24 @@ mod cooldown_memory_tests {
             failures.is_empty(),
             "nautilus cooldown tick/save mismatches: {failures:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod feed_heal_tests {
+    use super::feed_heal;
+
+    #[test]
+    fn heals_twice_the_nutrition_of_vanilla_foods() {
+        // Foods.java: cod 2, pufferfish 1, cooked cod 5, cooked salmon 6.
+        assert_eq!(feed_heal(Some(2)), 4.0);
+        assert_eq!(feed_heal(Some(1)), 2.0);
+        assert_eq!(feed_heal(Some(5)), 10.0);
+        assert_eq!(feed_heal(Some(6)), 12.0);
+    }
+
+    #[test]
+    fn item_without_food_component_heals_one() {
+        assert_eq!(feed_heal(None), 1.0);
     }
 }

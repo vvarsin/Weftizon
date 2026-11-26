@@ -14,9 +14,10 @@ pub(super) struct Weather {
     count: u32,
 }
 impl Weather {
+    /// The weather's pipeline onto a frame of `format`, holding linear light when `linear`.
     pub fn new(
         device: &wgpu::Device,
-        format: wgpu::TextureFormat,
+        (format, linear): (wgpu::TextureFormat, bool),
         entities: &wgpu::BindGroupLayout,
         shader: &wgpu::ShaderModule,
     ) -> Self {
@@ -62,7 +63,10 @@ impl Weather {
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_weather"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &super::linear_blend::frame_constants(format, linear),
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -135,33 +139,24 @@ impl Weather {
         pipeline: &wgpu::RenderPipeline,
         entities: &wgpu::BindGroup,
     ) {
-        if self.count == 0 {
-            return;
-        }
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, entities, &[]);
-        pass.set_bind_group(1, &self.group, &[]);
-        pass.set_vertex_buffer(0, self.vertices.slice(..));
-        pass.draw_indexed(0..self.count / 4 * 6, 0, 0..1);
+        self.draw_bound(pass, entities, |pass| pass.set_pipeline(pipeline));
     }
-    /// Draws the streaks, through a native pack's weather stage when `native` is given (its
-    /// pipeline and the pack's frame group).
-    pub fn draw(
+    /// Draws the streaks.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, entities: &wgpu::BindGroup) {
+        self.draw_bound(pass, entities, |pass| pass.set_pipeline(&self.pipeline));
+    }
+    /// Draws the streaks, if any, through the pipeline `bind` sets with any groups of its own
+    /// beyond 0 and 1.
+    pub fn draw_bound(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         entities: &wgpu::BindGroup,
-        native: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
+        bind: impl FnOnce(&mut wgpu::RenderPass<'_>),
     ) {
         if self.count == 0 {
             return;
         }
-        match native {
-            Some((pipeline, frame)) => {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(horizon_shader_api::stages::GROUP, frame, &[]);
-            }
-            None => pass.set_pipeline(&self.pipeline),
-        }
+        bind(pass);
         pass.set_bind_group(0, entities, &[]);
         pass.set_bind_group(1, &self.group, &[]);
         pass.set_vertex_buffer(0, self.vertices.slice(..));
@@ -225,11 +220,11 @@ struct HorizonWeatherOut {
 ";
 
 /// The shader of a native pack's weather stage `source`.
-fn native_source(source: &str, api: horizon_shader_api::Api) -> String {
+fn native_source(source: &str, linear: bool) -> String {
     format!(
         "{source}\n// Horizon's weather (entity.wgsl)\n{}{}{NATIVE_ENTRIES}",
         super::wgsl_prefix::prefixed(&super::entity_shader(), "horizon_entity_"),
-        super::native_post::line_helpers(api)
+        super::native_post::line_helpers(linear)
     )
 }
 
@@ -246,7 +241,7 @@ pub(super) fn native_pipeline(
     constants: &[(String, f64)],
 ) -> Result<wgpu::RenderPipeline, String> {
     use horizon_shader_api::stages::GROUP;
-    let text = native_source(&stage.source, frame.api);
+    let text = native_source(&stage.source, frame.linear);
     let module = naga::front::wgsl::parse_str(&text)
         .map_err(|e| format!("{}: {}", stage.file, e.emit_to_string(&text)))?;
     let present = super::native_post::present_constants(&module, constants);
@@ -261,7 +256,7 @@ pub(super) fn native_pipeline(
     });
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(&stage.label),
+        label: Some(&super::dx12_compiler::module_label(&stage.label)),
         source: wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(module)),
     });
     let options = wgpu::PipelineCompilationOptions {
@@ -297,7 +292,7 @@ pub(super) fn native_pipeline(
                 format,
                 blend: Some(wgpu::BlendState {
                     color: wgpu::BlendState::ALPHA_BLENDING.color,
-                    // The frame's alpha stays as the surfaces left it (entities mark it 0).
+                    // The frame's alpha stays as the surfaces left it.
                     alpha: wgpu::BlendComponent {
                         src_factor: wgpu::BlendFactor::Zero,
                         dst_factor: wgpu::BlendFactor::One,
@@ -322,21 +317,19 @@ mod tests {
 
     #[test]
     fn a_native_weather_stage_validates() {
-        use horizon_shader_api::{Api, stages::StageKind};
-        for api in [Api::V0_1, Api::V0_2] {
-            let source = StageKind::Weather.prelude(api)
-                + "fn weather(input: WeatherInput) -> vec4<f32> {\n    \
-                   return input.color * vec4(input.light, input.position.x, f32(input.snow));\n}\n";
-            let text = native_source(&source, api);
-            let module = naga::front::wgsl::parse_str(&text)
-                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
-            naga::valid::Validator::new(
-                naga::valid::ValidationFlags::all(),
-                naga::valid::Capabilities::all(),
-            )
-            .validate(&module)
+        use horizon_shader_api::stages::StageKind;
+        let source = StageKind::Weather.prelude()
+            + "fn weather(input: WeatherInput) -> vec4<f32> {\n    \
+               return input.color * vec4(input.light, input.position.x, f32(input.snow));\n}\n";
+        let text = native_source(&source, false);
+        let module = naga::front::wgsl::parse_str(&text)
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
-        }
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
     }
     use crate::weather::{Parameters, Time};
     use wgpu::util::DeviceExt;

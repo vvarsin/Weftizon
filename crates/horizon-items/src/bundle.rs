@@ -61,11 +61,30 @@ fn max_stack(items: &Items, stack: &ItemStack) -> u32 {
     items.get(&stack.item).map_or(64, |i| i.max_stack).max(1)
 }
 
-/// The stack's `bundle_contents`, when it has the component.
+/// `BundleItem.playInsertSound` and `playRemoveOneSound`: volume 0.8, pitch
+/// `0.8 + level.getRandom().nextFloat() * 0.4`; `playInsertFailSound` 1, 1 and
+/// no draw.
+pub fn sound_volume_pitch(sound: &str, next_float: impl FnOnce() -> f32) -> (f32, f32) {
+    if sound == INSERT_FAIL {
+        (1.0, 1.0)
+    } else {
+        (0.8, 0.8 + next_float() * 0.4)
+    }
+}
+
+/// Whether the stack's item is a bundle (`BundleItem`): its prototype carries
+/// the component.
+fn is_bundle_item(items: &Items, stack: &ItemStack) -> bool {
+    items.get(&stack.item).is_some_and(|i| i.bundle)
+}
+
+/// `stack.get(BUNDLE_CONTENTS)`: the prototype's empty contents unless a
+/// `!minecraft:bundle_contents` patch removed them, or the stack's own.
 fn contents_of<'a>(items: &Items, stack: &'a ItemStack) -> Option<&'a [ItemStack]> {
-    let inside = stack.data().map_or(&[][..], |d| &d.bundle_contents[..]);
-    let bundle = items.get(&stack.item).is_some_and(|i| i.bundle);
-    (bundle || !inside.is_empty()).then_some(inside)
+    let data = stack.data();
+    let inside = data.map_or(&[][..], |d| &d.bundle_contents[..]);
+    let removed = data.is_some_and(|d| d.other("!minecraft:bundle_contents").is_some());
+    (!inside.is_empty() || (is_bundle_item(items, stack) && !removed)).then_some(inside)
 }
 
 /// `BundleContents.getWeight`: a nested bundle weighs its contents plus
@@ -133,8 +152,14 @@ impl Contents {
             selected: -1,
         }
     }
-    /// The bundle's contents; None when the stack is no bundle.
+    /// The bundle's contents; None when the stack is no bundle. `BundleItem`'s
+    /// overrides (`overrideStackedOnOther`, `overrideOtherStackedOnMe`,
+    /// `getTooltipImage`) need the item **and** the component: a bundle with
+    /// it removed, or another item carrying it, is a plain item.
     pub fn of(items: &Items, stack: &ItemStack) -> Option<Self> {
+        if !is_bundle_item(items, stack) {
+            return None;
+        }
         let inside = contents_of(items, stack)?.to_vec();
         let weight = contents_weight(items, &inside);
         let selected = stack.data().map_or(-1, |d| d.bundle_selected.0);
@@ -277,6 +302,10 @@ pub fn toggle_selected(bundle: &mut ItemStack, index: i32) {
 }
 
 #[cfg(test)]
+#[path = "bundle_component_tests.rs"]
+mod component_tests;
+
+#[cfg(test)]
 mod tests {
     use super::Weight;
 
@@ -329,12 +358,14 @@ pub fn tooltip_layout(
     x: f32,
     y: f32,
     box_width: f32,
+    description_lines: usize,
 ) -> Option<TooltipLayout> {
     let contents = Contents::of(items, stack)?;
     let offset = ((box_width - 96.0) / 2.0).floor();
     if contents.items().is_empty() {
-        // The description takes the top; the bar follows it.
-        let description_height = 9.0 * 2.0;
+        // The description takes the top; the bar follows it. Its lines are
+        // the caller's font's (`getEmptyBundleDescriptionTextHeight`).
+        let description_height = 9.0 * description_lines as f32;
         return Some(TooltipLayout {
             width: 96.0,
             height: description_height + 13.0 + 8.0,
@@ -419,7 +450,7 @@ mod tooltip_tests {
     fn a_grid_shows_twelve_stacks_and_counts_the_rest() {
         let Some(items) = items() else { return };
         let twelve: Vec<(&str, u32)> = (0..12).map(|_| ("minecraft:stone", 1)).collect();
-        let layout = tooltip_layout(&items, &bundle_with(&twelve), 0.0, 0.0, 96.0).unwrap();
+        let layout = tooltip_layout(&items, &bundle_with(&twelve), 0.0, 0.0, 96.0, 2).unwrap();
         assert_eq!(layout.slots.len(), 12);
         assert_eq!(layout.overflow, None);
         assert_eq!(layout.height, 3.0 * 24.0 + 13.0 + 8.0);
@@ -429,14 +460,14 @@ mod tooltip_tests {
         assert_eq!(&*layout.slots[0].1.item, "minecraft:stone");
         assert_eq!(layout.slots[11].0, [0.0, 0.0]);
         // A wider tooltip centres the 96 pixel column in it.
-        let centred = tooltip_layout(&items, &bundle_with(&twelve), 0.0, 0.0, 120.0).unwrap();
+        let centred = tooltip_layout(&items, &bundle_with(&twelve), 0.0, 0.0, 120.0, 2).unwrap();
         assert_eq!(centred.slots[0].0[0], 12.0 + 96.0 - 24.0);
         // Thirteen stacks: `getNumberOfItemsToShow` leaves the last row room
         // for the count, so 8 slots show and `+6` (four stones and two dirt)
         // takes the first cell.
         let mut counts = twelve;
         counts.push(("minecraft:dirt", 2));
-        let layout = tooltip_layout(&items, &bundle_with(&counts), 0.0, 0.0, 96.0).unwrap();
+        let layout = tooltip_layout(&items, &bundle_with(&counts), 0.0, 0.0, 96.0, 2).unwrap();
         assert_eq!(layout.slots.len(), 8);
         assert_eq!(layout.overflow, Some(([96.0 - 24.0, 48.0], 6)));
     }
@@ -444,7 +475,7 @@ mod tooltip_tests {
     #[test]
     fn the_bar_fills_with_the_weight_and_an_empty_bundle_explains_itself() {
         let Some(items) = items() else { return };
-        let layout = tooltip_layout(&items, &bundle_with(&[]), 4.0, 8.0, 96.0).unwrap();
+        let layout = tooltip_layout(&items, &bundle_with(&[]), 4.0, 8.0, 96.0, 2).unwrap();
         assert!(layout.slots.is_empty());
         assert_eq!(layout.fill, 0.0);
         assert_eq!(layout.label, Some("item.minecraft.bundle.empty"));
@@ -457,6 +488,7 @@ mod tooltip_tests {
             0.0,
             0.0,
             96.0,
+            2,
         )
         .unwrap();
         assert!(layout.full);
@@ -464,6 +496,16 @@ mod tooltip_tests {
         assert_eq!(layout.label, Some("item.minecraft.bundle.full"));
         // Something that is not a bundle has no component.
         let dirt = ItemStack::new("minecraft:dirt", 1);
-        assert!(tooltip_layout(&items, &dirt, 0.0, 0.0, 96.0).is_none());
+        assert!(tooltip_layout(&items, &dirt, 0.0, 0.0, 96.0, 2).is_none());
+    }
+    /// `getEmptyBundleBackgroundHeight`: the description's wrapped height (9 a
+    /// line) plus the bar's 13 and the tooltip's 8, not a fixed two lines.
+    #[test]
+    fn an_empty_bundles_height_follows_its_description_lines() {
+        let Some(items) = items() else { return };
+        let layout = tooltip_layout(&items, &bundle_with(&[]), 4.0, 8.0, 96.0, 3).unwrap();
+        assert_eq!(layout.height, 3.0 * 9.0 + 13.0 + 8.0);
+        assert_eq!(layout.bar, [4.0, 8.0 + 3.0 * 9.0 + 4.0]);
+        assert_eq!(layout.empty_description, Some([4.0, 8.0]));
     }
 }

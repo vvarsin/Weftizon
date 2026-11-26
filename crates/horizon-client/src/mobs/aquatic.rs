@@ -216,19 +216,19 @@ pub fn tick(m: &mut Mob, events: &mut Vec<MobEvent>) {
     let puff = m.extra.size;
     if m.extra.counter > 0 {
         if puff == 0 {
-            m.sound("entity.puffer_fish.blow_up", events);
+            m.voice("entity.puffer_fish.blow_up", events);
             m.extra.size = 1;
         } else if m.extra.counter > 40 && puff == 1 {
-            m.sound("entity.puffer_fish.blow_up", events);
+            m.voice("entity.puffer_fish.blow_up", events);
             m.extra.size = 2;
         }
         m.extra.counter += 1;
     } else if puff != 0 {
         if m.extra.counter2 > 60 && puff == 2 {
-            m.sound("entity.puffer_fish.blow_out", events);
+            m.voice("entity.puffer_fish.blow_out", events);
             m.extra.size = 1;
         } else if m.extra.counter2 > 100 && puff == 1 {
-            m.sound("entity.puffer_fish.blow_out", events);
+            m.voice("entity.puffer_fish.blow_out", events);
             m.extra.size = 0;
         }
         m.extra.counter2 += 1;
@@ -250,12 +250,63 @@ pub fn puff_scale(state: i32) -> f64 {
         _ => 1.0,
     }
 }
+/// `Bucketable.fromBucket` of a fish or an axolotl; a tadpole's is always true
+/// (`Tadpole.setFromBucket` does nothing).
+pub fn from_bucket(m: &Mob) -> bool {
+    m.extra.from_bucket || m.species() == Species::Tadpole
+}
 /// `Tadpole.setAgeLockedData`: a golden dandelion flips the lock, puts the
 /// age back to 0 and starts the particle timer (40 ticks).
 pub fn set_age_locked_data(m: &mut Mob) {
     m.extra.age_locked = !m.extra.age_locked;
     m.extra.age = 0;
     m.extra.age_lock_particle_timer = 40;
+}
+/// Species aiStep additions when serverAiStep is skipped by NoAI.
+pub(super) fn no_ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
+    if m.species() == Species::Pufferfish {
+        // Pufferfish.aiStep's mob contacts run even when serverAiStep is skipped.
+        sting_touching_mobs(m, w, events);
+    }
+    if matches!(m.species(), Species::Squid | Species::GlowSquid) {
+        // Squid.aiStep runs outside serverAiStep: tentacle cycle, rotation
+        // and sinking velocity on land update even when NoAI skips server AI.
+        squid_ai_step(m);
+    }
+    if m.species() == Species::GlowSquid {
+        glow_squid_dark_tick(m);
+    }
+    if m.species() == Species::Tadpole {
+        // Tadpole.aiStep ages it outside serverAiStep too.
+        grow_up(m, events);
+        super::ai::make_age_locked_particle(m, events);
+    }
+}
+/// `Tadpole.aiStep`: growing up into a frog after 24000 ticks.
+fn grow_up(m: &mut Mob, events: &mut Vec<MobEvent>) {
+    if !m.extra.age_locked {
+        m.extra.age += 1;
+        if m.extra.age >= 24_000 && !m.removed {
+            m.removed = true;
+            // Tadpole.ageUp: playSound at its feet, volume 0.15 (not
+            // when silent: Entity.playSound).
+            if !m.silent {
+                let at = [m.position.x, m.position.y, m.position.z];
+                events.push(MobEvent::Sound("entity.tadpole.grow_up", at, 0.15, 1.0));
+            }
+            // `ConversionParams.single(this, false, false)`; the game
+            // finalizes the frog and keeps it persistent.
+            events.push(MobEvent::Convert {
+                from: Box::new(m.clone()),
+                kind: "minecraft:frog",
+                params: super::conversion::Params {
+                    keep_equipment: false,
+                    preserve_can_pick_up_loot: false,
+                },
+                after: super::conversion::After::Finalize,
+            });
+        }
+    }
 }
 /// Species aiStep additions.
 pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
@@ -267,29 +318,7 @@ pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
             glow_squid_ai_step(m, events);
         }
         S::Tadpole => {
-            // Tadpole.aiStep: growing up into a frog after 24000 ticks.
-            if m.extra.age >= 0 && !m.extra.age_locked {
-                m.extra.age += 1;
-                if m.extra.age >= 24_000 && !m.removed {
-                    m.removed = true;
-                    // Tadpole.ageUp: playSound at its feet, volume 0.15 (not
-                    // when silent: Entity.playSound).
-                    if !m.silent {
-                        let at = [m.position.x, m.position.y, m.position.z];
-                        events.push(MobEvent::Sound("entity.tadpole.grow_up", at, 0.15, 1.0));
-                    }
-                    // `ConversionParams.single(this, false, false)`; the game
-                    // finalizes the frog and keeps it persistent.
-                    events.push(MobEvent::Convert {
-                        from: Box::new(m.clone()),
-                        kind: "minecraft:frog",
-                        params: super::conversion::Params {
-                            keep_equipment: false,
-                            preserve_can_pick_up_loot: false,
-                        },
-                    });
-                }
-            }
+            grow_up(m, events);
             if !m.fluids.in_water && m.on_ground && m.vertical_collision_below {
                 let (a, b) = (m.random.next_float(), m.random.next_float());
                 m.velocity = Vec3::new(
@@ -298,7 +327,7 @@ pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
                     m.velocity.z + f64::from((b * 2.0 - 1.0) * 0.05),
                 );
                 m.on_ground = false;
-                m.sound("entity.tadpole.flop", events);
+                m.voice("entity.tadpole.flop", events);
             }
             // Tadpole.aiStep: the age lock's particles, after the age.
             super::ai::make_age_locked_particle(m, events);
@@ -319,21 +348,7 @@ pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
                     S::TropicalFish => "entity.tropical_fish.flop",
                     _ => "entity.puffer_fish.flop",
                 };
-                m.sound(flop, events);
-            }
-            if m.species() == S::Pufferfish && m.alive() && m.extra.size > 0 {
-                // Preserve the existing AI-side audio path. Player damage
-                // and poison are dispatched by the player tick, not fish AI.
-                if let Some(p) = &w.player
-                    && p.alive
-                    && !p.creative
-                    && m.bounds()
-                        .inflate(Vec3::new(0.3, 0.3, 0.3))
-                        .intersects(p.bounds)
-                    && m.ai.no_action_time % 10 == 0
-                {
-                    m.sound("entity.puffer_fish.sting", events);
-                }
+                m.voice(flop, events);
             }
             if m.species() == S::Pufferfish {
                 sting_touching_mobs(m, w, events);
@@ -360,10 +375,6 @@ pub fn ai_step(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
                     m.yaw = m.random.next_float() * 360.0;
                     m.on_ground = false;
                 }
-            }
-            // LivingEntity air: dolphins drown underwater and refill instantly in air.
-            if !m.fluids.eye_in_water {
-                m.air = 4800;
             }
         }
         _ => {}
@@ -429,7 +440,7 @@ pub(super) fn sting_touching_mobs(m: &mut Mob, w: &MobWorld, events: &mut Vec<Mo
 }
 
 /// Squid.aiStep: tentacle cycle, propulsion and body rotation.
-fn squid_ai_step(m: &mut Mob) {
+pub fn squid_ai_step(m: &mut Mob) {
     squid_step(m, false);
 }
 
@@ -567,8 +578,17 @@ fn squid_step(m: &mut Mob, client: bool) {
     } else {
         v[TENTACLE_ANGLE] = v[TENTACLE_MOVEMENT].msin().abs() * PI * 0.25;
         if !client {
-            let yd = m.velocity.y - m.kind.gravity;
-            m.velocity = Vec3::new(0.0, yd * 0.98, 0.0);
+            let yd = if let Some((_, _, amp)) = m
+                .extra
+                .effects
+                .iter()
+                .find(|e| e.0 == "minecraft:levitation" || e.0 == "levitation")
+            {
+                0.05 * f64::from(amp + 1)
+            } else {
+                m.velocity.y - m.gravity()
+            };
+            m.velocity = Vec3::new(0.0, yd * f64::from(0.98_f32), 0.0);
         }
         let v = &mut m.anim.v;
         v[X_BODY_ROT] += (-90.0 - v[X_BODY_ROT]) * 0.02;
@@ -730,6 +750,21 @@ impl Goal for SquidFlee {
         }
     }
 }
+/// `AbstractFish.removeWhenFarAway` and `Axolotl.removeWhenFarAway`: a fish or
+/// an axolotl with a custom name is never removed for distance, and one let out
+/// of a bucket is persistent before it (`isPersistenceRequired`).
+pub fn named_keeps_it(m: &Mob) -> bool {
+    m.custom_name.is_some()
+        && matches!(
+            m.species(),
+            Species::Cod
+                | Species::Salmon
+                | Species::TropicalFish
+                | Species::Pufferfish
+                | Species::Tadpole
+                | Species::Axolotl
+        )
+}
 /// `AbstractSchoolingFish`: cod, salmon and tropical fish.
 fn schooling(s: Species) -> bool {
     matches!(s, Species::Cod | Species::Salmon | Species::TropicalFish)
@@ -749,18 +784,35 @@ fn can_be_followed(s: Species, followers: i32) -> bool {
 }
 /// `startFollowing` on a recruit, applied after the recruiter's tick. A fish
 /// another leader took this tick (its snapshot was older) stays with it.
-pub fn start_following(mobs: &mut [Mob], fish: u32, leader: u32) {
-    let alive = |mobs: &[Mob], id: u32| mobs.iter().any(|m| m.id == id && m.alive() && !m.removed);
-    let Some(current) = mobs.iter().find(|m| m.id == fish).map(|m| m.extra.leader) else {
+pub fn start_following<M: super::MobSlot>(mobs: &mut [M], fish: u32, leader: u32) {
+    let alive = |mobs: &[M], id: u32| {
+        mobs.iter()
+            .map(super::MobSlot::mob)
+            .any(|m| m.id == id && m.alive() && !m.removed)
+    };
+    let Some(current) = mobs
+        .iter()
+        .map(super::MobSlot::mob)
+        .find(|m| m.id == fish)
+        .map(|m| m.extra.leader)
+    else {
         return;
     };
     if current.is_some_and(|l| alive(mobs, l)) {
         return;
     }
-    if let Some(m) = mobs.iter_mut().find(|m| m.id == fish) {
+    if let Some(m) = mobs
+        .iter_mut()
+        .map(super::MobSlot::mob_mut)
+        .find(|m| m.id == fish)
+    {
         m.extra.leader = Some(leader);
     }
-    if let Some(m) = mobs.iter_mut().find(|m| m.id == leader) {
+    if let Some(m) = mobs
+        .iter_mut()
+        .map(super::MobSlot::mob_mut)
+        .find(|m| m.id == leader)
+    {
         m.extra.followers += 1;
     }
 }
@@ -944,9 +996,9 @@ impl Goal for PufferfishPuff {
     fn can_use(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
         let area = m.bounds().inflate(Vec3::new(2.0, 2.0, 2.0));
         let player =
-            cx.w.player
-                .as_ref()
-                .is_some_and(|p| p.alive && !p.creative && area.intersects(p.bounds));
+            cx.w.player.as_ref().is_some_and(|p| {
+                p.alive && !p.creative && !p.spectator && area.intersects(p.bounds)
+            });
         // TARGETING_CONDITIONS: not #not_scary_for_pufferfish, and alive.
         let mob = cx.w.others_near(area).any(|s| {
             s.id != m.id
@@ -990,18 +1042,15 @@ pub const COMMON_TROPICAL: [(u8, u8, u8); 22] = [
     (3, 9, 4),
     (6, 4, 4),
 ];
-pub fn finalize(m: &mut Mob) {
+pub fn finalize(m: &mut Mob, r: &mut impl RandomSource) {
     if m.species() == Species::TropicalFish {
-        let (p, b, c) = if m.random.next_float() < 0.9 {
-            COMMON_TROPICAL[m
-                .random
-                .next_int_bound(COMMON_TROPICAL.len() as i32)
-                .unwrap_or(0) as usize]
+        let (p, b, c) = if r.next_float() < 0.9 {
+            COMMON_TROPICAL[r.next_int_bound(COMMON_TROPICAL.len() as i32).unwrap_or(0) as usize]
         } else {
             (
-                m.random.next_int_bound(12).unwrap_or(0) as u8,
-                m.random.next_int_bound(16).unwrap_or(0) as u8,
-                m.random.next_int_bound(16).unwrap_or(0) as u8,
+                r.next_int_bound(12).unwrap_or(0) as u8,
+                r.next_int_bound(16).unwrap_or(0) as u8,
+                r.next_int_bound(16).unwrap_or(0) as u8,
             )
         };
         m.extra.variant = p;
@@ -1233,8 +1282,7 @@ mod school_tests {
 mod pufferfish_sting_tests {
     use super::*;
     use crate::mobs::apply_brain_events;
-    use crate::mobs::world::with_test_world;
-    use horizon_core::random::LegacyRandom;
+    use crate::mobs::world::{level_random, with_test_world};
     use std::sync::Arc;
 
     #[test]
@@ -1264,7 +1312,7 @@ mod pufferfish_sting_tests {
                     fish.persistent = true;
                     fish.extra.size = puff;
                     let mut events = Vec::new();
-                    assert!(fish.tick(&world, &mut LegacyRandom::new(0), &mut events));
+                    assert!(fish.tick(&world, &mut level_random(0), &mut events));
                     let stings: Vec<_> = events
                         .iter()
                         .filter_map(|event| match event {
@@ -1383,7 +1431,7 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut events = Vec::new();
-                deflated.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                deflated.tick(&world, &mut level_random(0), &mut events);
                 assert!(
                     !events
                         .iter()
@@ -1393,7 +1441,7 @@ mod pufferfish_sting_tests {
 
                 let mut cod = make_mob(3, "minecraft:cod", Vec3::new(0.5, 64.0, 0.5));
                 let mut events = Vec::new();
-                cod.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                cod.tick(&world, &mut level_random(0), &mut events);
                 assert!(
                     !events
                         .iter()
@@ -1410,7 +1458,7 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut events = Vec::new();
-                fish.tick(&world_far, &mut LegacyRandom::new(0), &mut events);
+                fish.tick(&world_far, &mut level_random(0), &mut events);
                 assert!(
                     !events
                         .iter()
@@ -1432,7 +1480,7 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut events = Vec::new();
-                fish.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                fish.tick(&world, &mut level_random(0), &mut events);
                 assert!(
                     events
                         .iter()
@@ -1464,7 +1512,7 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut events = Vec::new();
-                fish.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                fish.tick(&world, &mut level_random(0), &mut events);
                 assert!(
                     events
                         .iter()
@@ -1499,7 +1547,7 @@ mod pufferfish_sting_tests {
                 let mut events = Vec::new();
 
                 // World Tick 1: Fish ticks first
-                fish.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                fish.tick(&world, &mut level_random(0), &mut events);
                 assert!(
                     events
                         .iter()
@@ -1534,14 +1582,14 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut pig_events = Vec::new();
-                mobs[1].tick(&world_for_pig, &mut LegacyRandom::new(0), &mut pig_events);
+                mobs[1].tick(&world_for_pig, &mut level_random(0), &mut pig_events);
                 assert_eq!(
                     mobs[1].extra.effects[0].1, 119,
                     "poison duration decrements from 120 to 119 in same level tick"
                 );
 
                 // World Tick 2: Pig ticks on second level tick
-                mobs[1].tick(&world_for_pig, &mut LegacyRandom::new(0), &mut pig_events);
+                mobs[1].tick(&world_for_pig, &mut level_random(0), &mut pig_events);
                 assert_eq!(
                     mobs[1].extra.effects[0].1, 118,
                     "poison duration decrements from 119 to 118 on second level tick"
@@ -1562,7 +1610,7 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut events = Vec::new();
-                noai_fish.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                noai_fish.tick(&world, &mut level_random(0), &mut events);
                 let mut mobs = vec![noai_fish, noai_pig];
                 apply_brain_events(&mut mobs, &mut events, 0);
                 assert_eq!(mobs[1].health, 7.0);
@@ -1573,12 +1621,12 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut pig_events = Vec::new();
-                mobs[1].tick(&world_for_pig, &mut LegacyRandom::new(0), &mut pig_events);
+                mobs[1].tick(&world_for_pig, &mut level_random(0), &mut pig_events);
                 assert_eq!(
                     mobs[1].extra.effects[0].1, 119,
                     "NoAI pig decrements poison duration to 119 on tick 1"
                 );
-                mobs[1].tick(&world_for_pig, &mut LegacyRandom::new(0), &mut pig_events);
+                mobs[1].tick(&world_for_pig, &mut level_random(0), &mut pig_events);
                 assert_eq!(
                     mobs[1].extra.effects[0].1, 118,
                     "NoAI pig decrements poison duration to 118 on tick 2"
@@ -1595,7 +1643,7 @@ mod pufferfish_sting_tests {
                     ..w.clone()
                 };
                 let mut events = Vec::new();
-                fish.tick(&world, &mut LegacyRandom::new(0), &mut events);
+                fish.tick(&world, &mut level_random(0), &mut events);
                 let stings: Vec<_> = events
                     .iter()
                     .filter(|e| matches!(e, MobEvent::PufferfishSting { .. }))
@@ -1610,7 +1658,76 @@ mod pufferfish_sting_tests {
             }
         });
     }
+
+    /// `Pufferfish.PufferfishPuffGoal.canUse` targets players with
+    /// `TargetingConditions.forNonCombat()`, which never picks a spectator.
+    #[test]
+    fn a_spectator_does_not_puff_a_pufferfish() {
+        use crate::mobs::world::{test_player, with_test_world};
+        let mut outcomes = Vec::new();
+        if !with_test_world(&[], |w, types| {
+            let kind = Arc::new(types.types["minecraft:pufferfish"].clone());
+            for spectator in [false, true] {
+                let mut world = w.clone();
+                let mut p = test_player(Vec3::new(0.5, 64.0, 0.5));
+                p.spectator = spectator;
+                world.player = Some(p);
+                let mut fish = Mob::new(1, kind.clone(), Vec3::new(0.5, 64.0, 0.5), 0.0);
+                fish.no_gravity = true;
+                fish.ai.goals.add(1, PufferfishPuff);
+                let mut lr = crate::mobs::world::level_random(0);
+                let mut events = Vec::new();
+                let mut cx = Cx {
+                    w: &world,
+                    lr: &mut lr,
+                    events: &mut events,
+                };
+                let mut goals = std::mem::take(&mut fish.ai.goals);
+                goals.tick(&mut fish, &mut cx);
+                outcomes.push(goals.is_running("PufferfishPuff"));
+                fish.ai.goals = goals;
+            }
+        }) {
+            return;
+        }
+        assert_eq!(
+            outcomes,
+            vec![true, false],
+            "a survival player puffs it; a spectator does not"
+        );
+    }
+}
+
+#[cfg(test)]
+mod squid_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// `Squid.aiStep`: sinking velocity on land is applied even when NoAI skips server AI (#14467).
+    #[test]
+    fn noai_squid_on_land_sets_sinking_velocity() {
+        let mut k = crate::mobs::sensor_scan_tests::kind();
+        let km = Arc::make_mut(&mut k);
+        km.id = "minecraft:squid".into();
+        km.species = Species::Squid;
+        km.gravity = 0.08;
+        let mut squid = Mob::new(1, k, Vec3::ZERO, 0.0);
+        squid.no_ai = true;
+        squid_ai_step(&mut squid);
+        assert_eq!(squid.velocity, Vec3::new(0.0, -0.0784000015258789, 0.0));
+
+        use crate::mobs::world::with_test_world;
+        let _ = with_test_world(&[], |w, types| {
+            let kind = Arc::new(types.types["minecraft:squid"].clone());
+            let mut squid = Mob::new(1, kind, Vec3::new(0.5, 64.0, 0.5), 0.0);
+            squid.no_ai = true;
+            squid.tick(w, &mut crate::mobs::world::level_random(0), &mut Vec::new());
+            assert_eq!(squid.velocity, Vec3::new(0.0, -0.0784000015258789, 0.0));
+        });
+    }
 }
 
 #[cfg(test)]
 mod countdown_tests;
+#[cfg(test)]
+mod pufferfish_sound_tests;

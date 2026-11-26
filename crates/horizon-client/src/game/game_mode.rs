@@ -1,7 +1,7 @@
 //! Game modes beyond survival and creative (`GameType`): adventure players
 //! cannot build, spectators fly through blocks and only watch.
 use super::{Game, Screen};
-use horizon_client::{collisions::SceneCollisions, command::args::GameMode};
+use horizon_client::{collisions::SceneCollisions, command::args::GameMode, items::ItemStack};
 use horizon_world::world_movement::in_range_of_ground;
 
 pub(super) fn mode_id_of(mode: GameMode) -> i32 {
@@ -63,7 +63,38 @@ pub(super) fn projectile_predicate_supported(tag: &horizon_world::nbt::Tag) -> b
         _ => false,
     }
 }
+/// `InventoryScreen.containerTick`: a survival inventory left open when the
+/// player gains infinite materials becomes the creative one, so the player
+/// stays in a menu. Vanilla has no other branch: a spectator's open inventory
+/// stays open too.
+fn inventory_after_mode(screen: Screen, creative: bool) -> Screen {
+    if screen == Screen::Inventory && creative {
+        Screen::Creative
+    } else {
+        screen
+    }
+}
+
 impl Game<'_> {
+    /// `InventoryScreen.containerTick` on a mode change: the inventory the player has
+    /// open follows the mode. (`CreativeModeInventoryScreen.containerTick`, the way back
+    /// to survival, is not ported yet.)
+    fn mode_changed_under_inventory(&mut self) {
+        match inventory_after_mode(self.screen, self.creative) {
+            Screen::Creative => {
+                if let Some(c) = self.carried.take() {
+                    let _ = self.give(c);
+                }
+                self.screen = Screen::Creative;
+                self.refresh_creative_tabs();
+                self.creative_screen.reopen();
+                self.refresh_saved_hotbars();
+            }
+            next if next != self.screen => self.screen = next,
+            _ => {}
+        }
+    }
+
     pub(super) fn spectator(&self) -> bool {
         self.mode == GameMode::Spectator
     }
@@ -94,7 +125,7 @@ impl Game<'_> {
         }
         if mode == GameMode::Spectator {
             self.mining = None;
-            self.using = None;
+            self.stop_using();
             self.left = false;
             self.dismount_for_spectator();
             if let Some(p) = self.player.as_mut() {
@@ -134,9 +165,10 @@ impl Game<'_> {
                 p.flying = false;
             }
         }
-        if mode == GameMode::Spectator && self.screen == Screen::Inventory {
-            self.screen = Screen::Playing;
-        }
+        // InventoryScreen.containerTick: the open inventory follows the mode. Here, not in
+        // the command, so the window hears it too: it changes mode through the server's
+        // game event (`set_mode_id`), never through `set_game_mode`.
+        self.mode_changed_under_inventory();
     }
 }
 impl Game<'_> {
@@ -148,14 +180,17 @@ impl Game<'_> {
     /// `saveWithFullMetadata` (no block entity fails). `components` is not
     /// looked at on this path.
     fn adventure_predicate(&self, component: &str, pos: [i32; 3]) -> bool {
-        let Some(tag) = self
-            .held()
-            .and_then(|s| s.data())
+        self.held()
+            .is_some_and(|stack| self.stack_predicate(stack, component, pos))
+    }
+    /// The same predicate read off a named stack: `ItemStack.useOn` tests the
+    /// stack it is called on, which for an off-hand use is not what `held()`
+    /// reads outside that use.
+    fn stack_predicate(&self, stack: &ItemStack, component: &str, pos: [i32; 3]) -> bool {
+        stack
+            .data()
             .and_then(|d| d.other(component))
-        else {
-            return false;
-        };
-        self.adventure_predicate_at(tag, pos)
+            .is_some_and(|tag| self.adventure_predicate_at(tag, pos))
     }
     /// The existing supported block/state portion of `AdventureModePredicate.test`.
     /// The held-item wrapper and the projectile caller supply their own live value.
@@ -257,12 +292,31 @@ impl Game<'_> {
         if self.spectator() {
             return true;
         }
-        !self.may_build() && !self.adventure_predicate("minecraft:can_break", pos)
+        !self.may_build() && !self.can_break_in_adventure(pos)
+    }
+    /// `ItemStack.canBreakBlockInAdventureMode`: an adventure player may break,
+    /// or prime TNT at, only a block their held stack's `can_break` matches.
+    pub(super) fn can_break_in_adventure(&self, pos: [i32; 3]) -> bool {
+        self.adventure_predicate("minecraft:can_break", pos)
     }
     /// `ItemStack.useOn` in adventure mode: the used item's `can_place_on`
     /// matches the clicked block (`Player.mayUseItemAt`).
     pub(super) fn can_place_on_in_adventure(&self, clicked: [i32; 3]) -> bool {
         self.adventure_predicate("minecraft:can_place_on", clicked)
+    }
+    /// `ItemStack.canPlaceOnBlockInAdventureMode` of the stack a use names.
+    pub(super) fn stack_can_place_on_in_adventure(
+        &self,
+        stack: &ItemStack,
+        clicked: [i32; 3],
+    ) -> bool {
+        self.stack_predicate(stack, "minecraft:can_place_on", clicked)
+    }
+    /// `ItemStack.useOn`'s gate before any item's own `useOn`: a player who
+    /// may build, or an adventure player whose held item's `can_place_on`
+    /// matches the clicked block.
+    pub(super) fn may_use_on(&self, clicked: [i32; 3]) -> bool {
+        self.may_build() || self.can_place_on_in_adventure(clicked)
     }
     /// `ServerPlayer.setGameMode(SPECTATOR)`: `stopRiding`.
     fn dismount_for_spectator(&mut self) {
@@ -280,8 +334,12 @@ impl Game<'_> {
 }
 
 #[cfg(test)]
+#[path = "adventure_gate_tests.rs"]
+mod adventure_gate_tests;
+
+#[cfg(test)]
 mod tests {
-    use super::{loads_chunks, projectile_predicate_supported};
+    use super::{Screen, inventory_after_mode, loads_chunks, projectile_predicate_supported};
 
     // Added after the frozen old Game proof: unsupported conjuncts must not
     // become permission from their otherwise matching blocks portion.
@@ -306,6 +364,27 @@ mod tests {
         )
         .unwrap();
         assert!(projectile_predicate_supported(&tag));
+    }
+
+    /// `InventoryScreen.containerTick`: the survival inventory becomes the
+    /// creative one when the player gets infinite materials, and any other
+    /// screen is left where it is.
+    #[test]
+    fn a_survival_inventory_becomes_the_creative_one() {
+        assert!(inventory_after_mode(Screen::Inventory, true) == Screen::Creative);
+        let stays = inventory_after_mode(Screen::Inventory, false);
+        assert!(stays == Screen::Inventory, "survival keeps its inventory");
+        // Vanilla's only branch is `hasInfiniteMaterials`: a spectator's open
+        // inventory stays open.
+        for screen in [
+            Screen::Playing,
+            Screen::Creative,
+            Screen::Paused,
+            Screen::Stats,
+            Screen::Advancements,
+        ] {
+            assert!(inventory_after_mode(screen, true) == screen);
+        }
     }
 
     /// `ChunkMap.skipPlayer`: only a spectator with `spectators_generate_chunks`

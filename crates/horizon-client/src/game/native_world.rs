@@ -58,6 +58,7 @@ fn target_id(t: Target) -> Option<u32> {
         | Target::Rocket(id)
         | Target::Trident(id)
         | Target::Spawner(id)
+        | Target::Knot(id)
         | Target::Cloud(id) => Some(id),
         Target::Player | Target::Guest(_) => None,
     }
@@ -249,7 +250,7 @@ impl Game<'_> {
             Vec3::new(from[0], from[1], from[2]),
             owner.map(Who::Mob),
         );
-        p.shoot(&mut self.world.random, direction, speed.max(0.0), 0.0);
+        p.shoot_own(direction, speed.max(0.0), 0.0);
         if burning {
             p.bonus.flame = true;
             if let Some(a) = p.arrow.as_mut() {

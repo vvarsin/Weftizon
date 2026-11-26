@@ -4,7 +4,7 @@ use super::*;
 
 const HMOD: &str = "e1135345692f6dd8fd4c51920151944b82333e17049c9bb7d756f27b8deefc53";
 const HPACK: &str = "241ac840f9c5ea3f6252d849da10c90d36cb1da4d6cd8d1d268c2760a353cd65";
-const HSHADER: &str = "331cfe29a666a0de804e9a9ff3d19d246eebcfbfa70b4f49bba8482d30ad9f02";
+const HSHADER: &str = "9e7e2f54db26151ff30d4f39a0192b6f82144afa6507d4fffb3157977e15d178";
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/index")
@@ -83,7 +83,7 @@ version = "1.0.0"
 published = "2026-10-26"
 game = "26.3"
 file = "glow-1.0.0.hshader"
-sha256 = "331cfe29a666a0de804e9a9ff3d19d246eebcfbfa70b4f49bba8482d30ad9f02"
+sha256 = "9e7e2f54db26151ff30d4f39a0192b6f82144afa6507d4fffb3157977e15d178"
 "#;
 
 const REVOKED_TOML: &str = r#"[[revoked]]
@@ -322,6 +322,51 @@ fn a_review_protects_published_files() {
 
     let r = review(&[], &[cozy], "newcomer");
     assert_eq!(r.notes, ["cozy: a new modpack by ludovic111"]);
+}
+
+#[test]
+fn a_version_taken_down_by_hash_may_leave_its_entry() {
+    // A lost signing key: the next version comes under a new key, and the old one is dropped.
+    let base: Entry = toml::from_str(&hud_entry()).unwrap();
+    let old = base.versions[0].clone();
+    let mut rotated = base.clone();
+    rotated.versions[0].version = "0.2.0".into();
+    rotated.versions[0].sha256 = HPACK.into();
+    let down = |id: &str, sha256: &str| Revoked {
+        id: id.into(),
+        sha256: Some(sha256.into()),
+        reason: "signed with a lost key".into(),
+        date: "2026-11-09".into(),
+    };
+    let one = std::slice::from_ref(&base);
+    let next = std::slice::from_ref(&rotated);
+
+    let r = review_with_revoked(one, next, &[down("coords_hud", &old.sha256)], "ludovic111");
+    assert!(r.errors.is_empty(), "{r:?}");
+    assert!(
+        r.notes
+            .iter()
+            .any(|n| n == "coords_hud 0.1.0: leaves the entry, taken down in revoked.toml"),
+        "{r:?}"
+    );
+    // Not taken down, another project's take-down, or a take-down of every version
+    // without a hash: still refused.
+    for revoked in [
+        vec![],
+        vec![down("other_mod", &old.sha256)],
+        vec![Revoked {
+            sha256: None,
+            ..down("coords_hud", "")
+        }],
+    ] {
+        let r = review_with_revoked(one, next, &revoked, "ludovic111");
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("coords_hud 0.1.0: removed")),
+            "{revoked:?}: {r:?}"
+        );
+    }
 }
 
 #[test]

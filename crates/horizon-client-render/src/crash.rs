@@ -7,10 +7,11 @@ use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
-use horizon_telemetry::system::machine_arch;
+use horizon_system::{command_output, machine_arch};
 
 /// What the game is doing, set as it goes: graphics adapter, settings, packs, world.
 static DETAILS: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());
@@ -41,6 +42,11 @@ pub fn enter_native_mod(call: NativeModCall) -> NativeModGuard {
     NativeModGuard {
         outer: IN_NATIVE_MOD.with(|c| c.replace(Some(call))),
     }
+}
+
+/// The native mod call this thread is currently inside, if any.
+pub fn current_native_mod() -> Option<NativeModCall> {
+    IN_NATIVE_MOD.with(Cell::get)
 }
 
 /// Puts back the call that `enter_native_mod` found.
@@ -230,15 +236,6 @@ pub fn release_tag() -> Option<String> {
         .then(|| folder.to_owned())
 }
 
-fn command_output(program: &str, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new(program)
-        .args(args)
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    (out.status.success() && !text.is_empty()).then_some(text)
-}
-
 fn read(path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
@@ -253,7 +250,7 @@ fn arch_label(build: &str, machine: &str) -> String {
 }
 
 /// `PRETTY_NAME` of /etc/os-release and the kernel, or the system's own version string.
-fn operating_system() -> String {
+pub(crate) fn operating_system() -> String {
     let arch = arch_label(std::env::consts::ARCH, machine_arch());
     let version = if cfg!(target_os = "linux") {
         let name = read("/etc/os-release").and_then(|t| {
@@ -269,7 +266,7 @@ fn operating_system() -> String {
     } else if cfg!(target_os = "macos") {
         command_output("sw_vers", &["-productVersion"]).map(|v| format!("macOS {v}"))
     } else if cfg!(windows) {
-        horizon_telemetry::system::windows_version()
+        horizon_system::windows_version()
     } else {
         None
     };
@@ -284,11 +281,11 @@ fn operating_system() -> String {
 pub fn cpu() -> String {
     let threads = std::thread::available_parallelism().map_or(0, |n| n.get());
     let name = if cfg!(target_os = "linux") {
-        read("/proc/cpuinfo").and_then(|t| horizon_telemetry::system::linux_cpu_name(&t))
+        read("/proc/cpuinfo").and_then(|t| horizon_system::linux_cpu_name(&t))
     } else if cfg!(target_os = "macos") {
         command_output("sysctl", &["-n", "machdep.cpu.brand_string"])
     } else if cfg!(windows) {
-        horizon_telemetry::system::windows_cpu()
+        horizon_system::windows_cpu()
     } else {
         std::env::var("PROCESSOR_IDENTIFIER").ok()
     };
@@ -387,6 +384,86 @@ fn thread_name(side: &str) -> String {
 /// promise to launchers (docs/api/launch.md), so it never changes within a line of that API.
 pub const SAVED_LINE: &str = "Horizon: crash report saved to ";
 
+/// What runs on each report before it is saved ([`on_report`]).
+pub type ReportHook = fn(&Path, &Report);
+
+static REPORT_HOOKS: std::sync::RwLock<Vec<ReportHook>> = std::sync::RwLock::new(Vec::new());
+
+/// Runs `hook` with every crash report, before it is saved: the game folder and the report. An
+/// extension point for what lives above the engine (Horizon's opt-in telemetry keeps the
+/// report). A hook runs inside the crash handler: it must not panic or block.
+pub fn on_report(hook: ReportHook) {
+    REPORT_HOOKS
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(hook);
+}
+
+type EmergencyHook = std::sync::Arc<dyn Fn() + Send + Sync>;
+static EMERGENCY_SAVE: Mutex<Option<EmergencyHook>> = Mutex::new(None);
+const SAVE_NOT_STARTED: u8 = 0;
+const SAVE_RUNNING: u8 = 1;
+const SAVE_FINISHED: u8 = 2;
+// Taking the hook must not let a second crashing worker exit before the save finishes.
+static EMERGENCY_SAVE_STATE: AtomicU8 = AtomicU8::new(SAVE_NOT_STARTED);
+
+/// Unregisters this emergency save, without removing a newer registration.
+#[must_use]
+pub struct EmergencySave(EmergencyHook);
+
+impl Drop for EmergencySave {
+    fn drop(&mut self) {
+        let mut hook = EMERGENCY_SAVE.lock().unwrap_or_else(|e| e.into_inner());
+        if hook
+            .as_ref()
+            .is_some_and(|f| std::sync::Arc::ptr_eq(f, &self.0))
+        {
+            *hook = None;
+        }
+    }
+}
+
+/// Replaces the process's emergency save. The callback must not panic and must
+/// bound its wait: it runs on the crashing worker, before the process exits.
+pub fn on_emergency_save(f: impl Fn() + Send + Sync + 'static) -> EmergencySave {
+    let hook: EmergencyHook = std::sync::Arc::new(f);
+    *EMERGENCY_SAVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(hook.clone());
+    EmergencySave(hook)
+}
+
+fn emergency_save() {
+    // Leave room for the integrated server's own 30 s save timeout.
+    emergency_save_with_timeout(Duration::from_secs(35));
+}
+
+/// Run once per process; other crashing workers wait rather than cutting the save short.
+fn emergency_save_with_timeout(timeout: Duration) {
+    if EMERGENCY_SAVE_STATE
+        .compare_exchange(
+            SAVE_NOT_STARTED,
+            SAVE_RUNNING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        let started = Instant::now();
+        while EMERGENCY_SAVE_STATE.load(Ordering::Acquire) == SAVE_RUNNING {
+            let Some(left) = timeout.checked_sub(started.elapsed()) else {
+                break;
+            };
+            std::thread::sleep(left.min(Duration::from_millis(5)));
+        }
+        return;
+    }
+    // Never wait on the registry in a panic hook, or hold it while stopping the server.
+    let hook = EMERGENCY_SAVE.try_lock().ok().and_then(|mut h| h.take());
+    if let Some(hook) = hook {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hook()));
+    }
+    EMERGENCY_SAVE_STATE.store(SAVE_FINISHED, Ordering::Release);
+}
+
 /// Writes the report and tells where it is; the log gets the error too.
 fn deliver(home: &Path, report: Report) -> Option<PathBuf> {
     if REPORTED.swap(true, Ordering::SeqCst) {
@@ -407,7 +484,13 @@ fn deliver(home: &Path, report: Report) -> Option<PathBuf> {
         ),
     );
     crate::logging::flush();
-    crate::telemetry::keep_crash(home, &report);
+    for hook in REPORT_HOOKS
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+    {
+        hook(home, &report);
+    }
     // A player of a shared game folder (`--player-dir`) finds the report beside its own log.
     match report.save(crate::logging::player_dir_override().unwrap_or(home)) {
         Ok(path) => {
@@ -422,20 +505,33 @@ fn deliver(home: &Path, report: Report) -> Option<PathBuf> {
     }
 }
 
-/// The report for a hung server tick, written by the watchdog thread
-/// (`ServerWatchdog`): the stuck thread's stack is not available to Rust, so
-/// the report carries none.
-pub fn report_watchdog(home: &Path, side: &'static str, message: String) -> Option<PathBuf> {
+/// The report for a hung server tick, written by the watchdog thread (`ServerWatchdog`): the
+/// stack is the server thread's, read from the watchdog (`horizon_threads::stack_dump`), as
+/// vanilla's report carries the server thread's stack; without it, the details say why.
+pub fn report_watchdog(
+    home: &Path,
+    side: &'static str,
+    message: String,
+    server_stack: Result<String, horizon_threads::stack_dump::NoStack>,
+) -> Option<PathBuf> {
+    let mut details = system_details(side);
+    let stack = match server_stack {
+        Ok(stack) => stack_lines(&stack, false),
+        Err(why) => {
+            details.push(("Server thread stack".into(), why.to_string()));
+            String::new()
+        }
+    };
     deliver(
         home,
         Report {
             time: Local::now(),
             description: "Watching Server".into(),
             error: format!("{message} (Watching Server)"),
-            stack: String::new(),
+            stack,
             thread: thread_name(side),
             side,
-            details: system_details(side),
+            details,
             log: crate::logging::recent_lines(),
         },
     )
@@ -584,6 +680,7 @@ pub fn install(home: PathBuf, side: &'static str) {
             deliver(&home, panic_report(info, side));
         } else if is_worker_thread(std::thread::current().name()) {
             deliver(&home, worker_panic_report(info, side));
+            emergency_save();
             // The crash ends the game, as the relayed report does on vanilla's main thread.
             std::process::exit(101);
         } else {
@@ -692,6 +789,87 @@ pub fn debug_crash_after() -> Option<std::time::Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static EMERGENCY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn reset_emergency_save() {
+        *EMERGENCY_SAVE.lock().unwrap() = None;
+        EMERGENCY_SAVE_STATE.store(SAVE_NOT_STARTED, Ordering::Release);
+    }
+
+    #[test]
+    fn emergency_save_second_caller_waits_for_save() {
+        let _serial = EMERGENCY_TEST_LOCK.lock().unwrap();
+        reset_emergency_save();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let saved = std::sync::Arc::new(AtomicBool::new(false));
+        let (started, running) = std::sync::mpsc::channel();
+        let (count, flag) = (calls.clone(), saved.clone());
+        let _hook = on_emergency_save(move || {
+            count.fetch_add(1, Ordering::Relaxed);
+            started.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            flag.store(true, Ordering::Release);
+        });
+        let first = std::thread::spawn(emergency_save);
+        running.recv_timeout(Duration::from_secs(2)).unwrap();
+        let second = std::thread::spawn(move || {
+            emergency_save();
+            assert!(saved.load(Ordering::Acquire));
+        });
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn emergency_save_waiter_times_out() {
+        let _serial = EMERGENCY_TEST_LOCK.lock().unwrap();
+        reset_emergency_save();
+        EMERGENCY_SAVE_STATE.store(SAVE_RUNNING, Ordering::Release);
+        let bound = Duration::from_millis(20);
+        let started = Instant::now();
+        emergency_save_with_timeout(bound);
+        assert!(started.elapsed() >= bound);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn emergency_save_registry_calls_once_replaces_and_unregisters() {
+        use std::sync::{Arc, atomic::AtomicUsize};
+        let _serial = EMERGENCY_TEST_LOCK.lock().unwrap();
+        reset_emergency_save();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let old = on_emergency_save(move || {
+            count.fetch_add(1, Ordering::Relaxed);
+        });
+        emergency_save();
+        emergency_save();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        reset_emergency_save();
+        let count = calls.clone();
+        let replaced = on_emergency_save(move || {
+            count.fetch_add(10, Ordering::Relaxed);
+        });
+        let count = calls.clone();
+        let latest = on_emergency_save(move || {
+            count.fetch_add(100, Ordering::Relaxed);
+        });
+        drop(old);
+        drop(replaced);
+        emergency_save();
+        assert_eq!(calls.load(Ordering::Relaxed), 101);
+        reset_emergency_save();
+        let count = calls.clone();
+        let removed = on_emergency_save(move || {
+            count.fetch_add(1000, Ordering::Relaxed);
+        });
+        drop(removed);
+        emergency_save();
+        assert_eq!(calls.load(Ordering::Relaxed), 101);
+        drop(latest);
+    }
 
     #[test]
     fn an_emulated_build_names_both_architectures() {

@@ -148,6 +148,8 @@ pub(super) struct Kit {
     pub entity: wgpu::BindGroupLayout,
     pub static_entity: wgpu::BindGroupLayout,
     pub format: wgpu::TextureFormat,
+    /// The frame holds linear light (`linear_blend`).
+    pub linear: bool,
     pub sprite_constants: [(&'static str, f64); 2],
     /// Whether the display offers HDR output: the solid terrain is built lit by it too.
     pub hdr_output: bool,
@@ -162,8 +164,6 @@ pub(super) struct Pipelines {
     pub translucent_items: wgpu::RenderPipeline,
     pub text: wgpu::RenderPipeline,
     pub entity_shadows: wgpu::RenderPipeline,
-    pub hdr_mark: wgpu::RenderPipeline,
-    pub hdr_entity_mark: wgpu::RenderPipeline,
 }
 
 /// The warp's uniform, and what binds it.
@@ -318,21 +318,20 @@ impl WorldWarps {
         };
         let buffered = [Some(vertices), Some(instances.clone())];
         let pulled = [None, Some(instances)];
-        // As gfx.rs's: a float frame takes light where others take marks.
-        let write_light = (
-            "HDR_WRITE_LIGHT",
-            f64::from(u8::from(kit.format == super::LINEAR_FRAME)),
-        );
+        // As gfx.rs's: a float frame takes light.
+        let [write_light, linear] = super::linear_blend::frame_constants(kit.format, kit.linear);
         let lit = [
             kit.sprite_constants[0],
             kit.sprite_constants[1],
             write_light,
+            linear,
         ];
         let plain = [
             kit.sprite_constants[0],
             kit.sprite_constants[1],
             ("HDR_LIGHTING", 0.0),
             write_light,
+            linear,
         ];
         let depth = |write| wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
@@ -454,13 +453,13 @@ impl WorldWarps {
                     module: &entity,
                     entry_point: Some(look.fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[write_light],
+                        constants: &[write_light, linear],
                         ..Default::default()
                     },
                     targets: &[Some(wgpu::ColorTargetState {
                         format: kit.format,
                         blend: look.blend,
-                        write_mask: look.write_mask,
+                        write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
                 multiview_mask: None,
@@ -475,8 +474,6 @@ impl WorldWarps {
             translucent_items: entity_pipeline(&TRANSLUCENT_ITEMS),
             text: entity_pipeline(&TEXT),
             entity_shadows: entity_pipeline(&ENTITY_SHADOWS),
-            hdr_mark: entity_pipeline(&HDR_MARK),
-            hdr_entity_mark: entity_pipeline(&HDR_ENTITY_MARK),
         };
         log::info!(
             "Horizon: a mod's world warp built in {} ms",
@@ -531,7 +528,6 @@ struct EntityLook {
     bias: wgpu::DepthBiasState,
     blend: Option<wgpu::BlendState>,
     fragment: &'static str,
-    write_mask: wgpu::ColorWrites,
 }
 const NO_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: 0,
@@ -550,7 +546,6 @@ const ENTITIES: EntityLook = EntityLook {
     },
     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
     fragment: "fs_entity",
-    write_mask: wgpu::ColorWrites::ALL,
 };
 const STATIC_ENTITIES: EntityLook = EntityLook {
     label: "Warped static block entities",
@@ -587,21 +582,6 @@ const ENTITY_SHADOWS: EntityLook = EntityLook {
     },
     fragment: "fs_entity_shadow",
     ..ENTITIES
-};
-const HDR_MARK: EntityLook = EntityLook {
-    label: "Warped HDR particle mark",
-    depth_write: false,
-    bias: NO_BIAS,
-    blend: Some(wgpu::BlendState::REPLACE),
-    fragment: "fs_hdr_mark",
-    write_mask: wgpu::ColorWrites::ALPHA,
-    ..ENTITIES
-};
-/// `HDR_MARK` at the entities' depth bias, for what they drew.
-const HDR_ENTITY_MARK: EntityLook = EntityLook {
-    label: "Warped HDR entity mark",
-    bias: ENTITIES.bias,
-    ..HDR_MARK
 };
 
 #[cfg(test)]

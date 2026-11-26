@@ -54,10 +54,52 @@ pub enum Info {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
     Option(Opt),
+    /// A switch this screen owns, not a vanilla option: it has no key in `Opt`.
+    Switch(Switch),
     /// Wait for a button to bind to this action.
     Bind(&'static str),
     ResetBinds,
+    /// Opens the radial menu's pages (`radial_editor`).
+    Radial,
     Info(Info),
+}
+
+/// A pad switch the controller screen lists itself, outside the oversized `Opt` matches
+/// (docs/layers.md#file-size).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Switch {
+    /// A broken block ticks the pad, as in Bedrock.
+    BlockVibration,
+    /// Splitting a stack buzzes briefly, as in Bedrock.
+    SplitVibration,
+    /// An Xbox One pad's impulse triggers buzz with its handles.
+    ImpulseTriggers,
+}
+
+impl Switch {
+    fn caption(self) -> &'static str {
+        match self {
+            Switch::BlockVibration => "horizon.options.block_vibration",
+            Switch::SplitVibration => "horizon.options.split_vibration",
+            Switch::ImpulseTriggers => "horizon.options.impulse_triggers",
+        }
+    }
+    fn on(self, s: &Settings) -> bool {
+        match self {
+            Switch::BlockVibration => s.controller.block_vibration,
+            Switch::SplitVibration => s.controller.split_vibration,
+            Switch::ImpulseTriggers => s.controller.impulse_triggers,
+        }
+    }
+    fn toggle(self, s: &mut Settings) {
+        match self {
+            Switch::BlockVibration => s.controller.block_vibration = !s.controller.block_vibration,
+            Switch::SplitVibration => s.controller.split_vibration = !s.controller.split_vibration,
+            Switch::ImpulseTriggers => {
+                s.controller.impulse_triggers = !s.controller.impulse_triggers
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -106,6 +148,15 @@ fn choice_description(opt: Opt, pad: &PadSettings) -> Option<&'static str> {
             }
             gamepad::Lightbar::Off => "A DualSense keeps its own light.",
         },
+        Opt::PadRadialMode => match pad.radial_mode {
+            gamepad::RadialMode::Hold => "horizon.options.radial_mode.hold.about",
+            gamepad::RadialMode::Toggle => "horizon.options.radial_mode.toggle.about",
+        },
+        Opt::PadRadialStick => match pad.radial_stick {
+            gamepad::RadialStick::Right => "horizon.options.radial_stick.right.about",
+            gamepad::RadialStick::Left => "horizon.options.radial_stick.left.about",
+            gamepad::RadialStick::Either => "horizon.options.radial_stick.either.about",
+        },
         _ => return None,
     })
 }
@@ -116,12 +167,23 @@ fn option(opt: Opt, text: &'static str) -> Setting {
         text,
     }
 }
+fn switch(setting: Switch, text: &'static str) -> Setting {
+    Setting {
+        item: Item::Switch(setting),
+        text,
+    }
+}
 fn info(info: Info, text: &'static str) -> Setting {
     Setting {
         item: Item::Info(info),
         text,
     }
 }
+
+/// The radial menu's group, on General (how it opens and selects) and Bindings (its pages).
+const RADIAL_GROUP: &str = "Radial Menu";
+/// The row that opens the radial menu's pages.
+const RADIAL_PAGES: &str = "horizon.pages.open.controller_radial";
 
 /// Shown on a binding's row until it is focused, and in the search.
 const BIND_TEXT: &str = "Press this row, then the button that should do it.";
@@ -202,6 +264,13 @@ pub fn rows() -> Vec<(Page, Vec<(&'static str, Vec<Setting>)>)> {
                     ],
                 ),
                 (
+                    RADIAL_GROUP,
+                    vec![
+                        option(Opt::PadRadialMode, "horizon.options.radial_mode.about"),
+                        option(Opt::PadRadialStick, "horizon.options.radial_stick.about"),
+                    ],
+                ),
+                (
                     "Menus",
                     vec![
                         option(
@@ -231,6 +300,13 @@ pub fn rows() -> Vec<(Page, Vec<(&'static str, Vec<Setting>)>)> {
         (
             Page::Bindings,
             vec![
+                (
+                    RADIAL_GROUP,
+                    vec![Setting {
+                        item: Item::Radial,
+                        text: "Named pages of eight actions, held open with a button.",
+                    }],
+                ),
                 ("Actions", binds),
                 (
                     "Reset",
@@ -283,6 +359,18 @@ pub fn rows() -> Vec<(Page, Vec<(&'static str, Vec<Setting>)>)> {
                     "Feedback",
                     vec![
                         option(Opt::PadVibration, "Rumble when something happens to you."),
+                        switch(
+                            Switch::BlockVibration,
+                            "A tick when you break a block, as in Bedrock.",
+                        ),
+                        switch(
+                            Switch::SplitVibration,
+                            "A short buzz when you split a stack, as in Bedrock.",
+                        ),
+                        switch(
+                            Switch::ImpulseTriggers,
+                            "An Xbox One controller's triggers buzz with its handles.",
+                        ),
                         option(
                             Opt::PadAdaptiveTriggers,
                             "A DualSense's triggers push back on bows and tools.",
@@ -333,6 +421,9 @@ impl Item {
         match self {
             Item::Option(Opt::PadEnabled) => Some(c.enabled),
             Item::Option(Opt::PadVibration) => Some(c.vibration),
+            Item::Switch(Switch::BlockVibration) => Some(c.block_vibration),
+            Item::Switch(Switch::SplitVibration) => Some(c.split_vibration),
+            Item::Switch(Switch::ImpulseTriggers) => Some(c.impulse_triggers),
             Item::Option(Opt::PadPlayInBackground) => Some(c.play_in_background),
             Item::Option(Opt::PadAdaptiveTriggers) => Some(c.adaptive_triggers),
             Item::Option(Opt::PadInvertX) => Some(c.invert_x),
@@ -431,12 +522,19 @@ fn row(setting: Setting, s: &Settings, context: &Context) -> Row<Item> {
                 ..Row::new(item, name, value).about(about)
             }
         }
+        Item::Switch(setting) => Row::new(
+            item,
+            lang::get(setting.caption()),
+            Value::Switch(setting.on(s)),
+        )
+        .about(about),
         Item::Bind(action) => {
             let name = lang::get(gamepad::action_caption(action));
             let value = Value::Binding(binding(action, &s.controller, context.glyphs));
             Row::new(item, name, value).about(about)
         }
         Item::ResetBinds => Row::new(item, lang::get(RESET_ALL), Value::Press).about(about),
+        Item::Radial => Row::new(item, lang::get(RADIAL_PAGES), Value::Press).about(about),
         Item::Info(which) => {
             let (name, value) = context.read(which);
             Row::new(item, lang::get(name), Value::Read(value)).about(about)
@@ -479,6 +577,8 @@ impl Screen for ControllerScreen {
                         .collect(),
                 })
                 .collect(),
+            listed: true,
+            heading: None,
         };
         rows().into_iter().map(sheet).collect()
     }
@@ -490,10 +590,15 @@ impl Screen for ControllerScreen {
                 o.cycle(s, back, self.framebuffer);
                 vec![Output::Event(Event::Changed)]
             }
+            Item::Switch(setting) => {
+                setting.toggle(s);
+                vec![Output::Event(Event::Changed)]
+            }
             Item::ResetBinds => {
                 s.controller.reset_bindings();
                 vec![Output::Event(Event::Changed)]
             }
+            Item::Radial => vec![Output::Push(crate::options_ui::Page::ControllerRadial)],
             Item::Bind(_) | Item::Info(_) => Vec::new(),
         }
     }
@@ -531,14 +636,21 @@ impl Screen for ControllerScreen {
     fn undoes(&self) -> bool {
         true
     }
-    /// This player's controller settings, bindings included, as the screen found them.
-    fn undo(&mut self, s: &mut Settings, before: &Settings) {
+    /// This player's controller settings, bindings included, as the screen found them. The
+    /// radial menu's pages stay as they are: their own screen has its own Undo.
+    fn undo(&mut self, s: &mut Settings, before: &Settings) -> Vec<Output> {
+        let radial = std::mem::take(&mut s.controller.radial);
         s.controller = before.controller.clone();
+        s.controller.radial = radial;
+        Vec::new()
     }
     /// Undo is there exactly while the controller settings differ from what the screen opened
-    /// with: a binding the game made while the row waited counts, a value stepped back doesn't.
+    /// with: a binding the game made while the row waited counts, a value stepped back doesn't,
+    /// and nor do the radial menu's pages, which this Undo keeps.
     fn differs(&self, s: &Settings, before: &Settings) -> Option<bool> {
-        Some(s.controller != before.controller)
+        let mut now = s.controller.clone();
+        now.radial = before.controller.radial.clone();
+        Some(now != before.controller)
     }
 }
 
@@ -662,6 +774,34 @@ mod tests {
             Opt::PadRepeatInterval,
         ] {
             assert!(items.contains(&Item::Option(opt)), "{opt:?}");
+        }
+        for setting in [
+            Switch::BlockVibration,
+            Switch::SplitVibration,
+            Switch::ImpulseTriggers,
+        ] {
+            assert!(items.contains(&Item::Switch(setting)), "{setting:?}");
+        }
+    }
+
+    /// A switch row ticks its pad setting and asks for the screen to save.
+    #[test]
+    fn a_switch_row_ticks_its_pad_setting() {
+        let mut s = Settings::default();
+        let mut ui = ui(Page::Device);
+        draw(&mut ui, &s, None);
+        for (item, read) in [
+            (
+                Item::Switch(Switch::BlockVibration),
+                (|s: &Settings| s.controller.block_vibration) as fn(&Settings) -> bool,
+            ),
+            (Item::Switch(Switch::SplitVibration), |s: &Settings| {
+                s.controller.split_vibration
+            }),
+        ] {
+            let at = ui.point_at(&s, SIZE, item);
+            ui.click(&mut s, at, SIZE, false, false, false);
+            assert!(!read(&s) && ui.changed(), "{item:?}");
         }
     }
 
@@ -790,6 +930,48 @@ mod tests {
         assert_eq!(arts(&batch, row), 0);
     }
 
+    /// The radial menu's pages have their own screen and Undo: editing them shows no Undo here,
+    /// and another change's Undo keeps them as edited.
+    #[test]
+    fn radial_pages_edited_on_their_own_screen_leave_undo_alone() {
+        let mut s = Settings::default();
+        let mut ui = ui(Page::General);
+        draw(&mut ui, &s, None);
+        s.controller.radial.remove(1);
+        draw(&mut ui, &s, None);
+        assert!(
+            !ui.changed(),
+            "Undo here keeps the pages: it has nothing to do"
+        );
+        s.controller.invert_y = !s.controller.invert_y;
+        draw(&mut ui, &s, None);
+        assert!(ui.changed());
+        let reached = (0..100).any(|_| {
+            key(&mut ui, &mut s, K::Tab);
+            ui.focused() == Some(Target::Undo)
+        });
+        assert!(reached);
+        key(&mut ui, &mut s, K::Enter);
+        assert_eq!(s.controller.radial.len(), 1);
+        assert_eq!(s.controller.invert_y, PadSettings::default().invert_y);
+    }
+
+    /// The Bindings page's radial row opens the radial menu's pages.
+    #[test]
+    fn the_radial_row_opens_the_radial_pages() {
+        let mut s = Settings::default();
+        let mut ui = ui(Page::Bindings);
+        let at = ui.point_at(&s, SIZE, Item::Radial);
+        let outputs = ui.click(&mut s, at, SIZE, false, false, false);
+        assert_eq!(
+            outputs,
+            [
+                CLICK,
+                Output::Push(crate::options_ui::Page::ControllerRadial)
+            ]
+        );
+    }
+
     #[test]
     fn the_search_finds_rows_across_pages_and_drops_empty_pages() {
         let s = Settings::default();
@@ -813,8 +995,8 @@ mod tests {
         let mut s = Settings::default();
         s.controller.bind(JUMP, Some(Button::North));
         let mut ui = ui(Page::Bindings);
-        // Search, the three pages, then the first action.
-        for _ in 0..Page::ALL.len() + 2 {
+        // Search, the three pages, the radial menu's row, then the first action.
+        for _ in 0..Page::ALL.len() + 3 {
             key(&mut ui, &mut s, K::Tab);
         }
         assert_eq!(ui.focused(), Some(Target::Row(Item::Bind(JUMP))));
@@ -936,6 +1118,8 @@ mod tests {
             (Opt::PadNintendoButtons, 2),
             (Opt::PadKeyboard, 3),
             (Opt::PadLightbar, 3),
+            (Opt::PadRadialMode, 2),
+            (Opt::PadRadialStick, 3),
         ] {
             let setting = option(opt, "the fixed sentence");
             let mut seen = Vec::new();
@@ -969,6 +1153,8 @@ mod tests {
                 Opt::PadNintendoButtons,
                 Opt::PadKeyboard,
                 Opt::PadLightbar,
+                Opt::PadRadialMode,
+                Opt::PadRadialStick,
             ] {
                 for _ in 0..4 {
                     lang::get(choice_description(opt, &settings.controller).unwrap());
@@ -987,6 +1173,7 @@ mod tests {
             }
             ControllerScreen::default().side();
             lang::get(TITLE);
+            lang::get(RADIAL_PAGES);
             for text in [
                 "Press the button for this. %s cancels.",
                 "This button also does: %s",

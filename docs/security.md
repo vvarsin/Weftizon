@@ -83,9 +83,9 @@ and some are waiting for Ludovic:
   with this change, or at the latest 60 days after it shipped. Then drop `SHA256SUMS.sig` from nightly-build.yml's
   publish step and the `--tag nightly` check before it, and remove `NIGHTLY` from horizon-release-sign. Releases (not
   Nightlies) keep their single `SHA256SUMS.sig`, which is already signed for their tag.
-- **The release machinery needs Ludovic.** The workflows, the release and signing tools, the update-checking code
+- **The release machinery needs the council.** The workflows, the release and signing tools, the update-checking code
   and the installers are listed in `.github/CODEOWNERS`. Once main's protection requires code owners' reviews, a
-  change to any of them waits for Ludovic's approval. Everything else still merges as soon as its checks pass.
+  change to any of them waits for a review from the `horizon-rust/council` team (council poll P35). Everything else still merges as soon as its checks pass.
 - **Agents get their own, smaller identity** (prepared, switched on by Ludovic). The `horizon-agent` GitHub App
   can read and write code, pull requests and issues, and read the checks. It cannot change settings, workflows,
   secrets or members, and its tokens last an hour. Once agents use it, their pull requests are the app's, and
@@ -103,6 +103,9 @@ and some are waiting for Ludovic:
   refuse new versions until players download the launcher again.
 
 ## What this doesn't solve
+
+For version-pinned records of what a source review actually covered, see
+[Records of scoped source reviews](security-reviews.md). Hashes identify bytes; they do not certify safe code.
 
 - **Code that merges is code that ships.** Signing proves a build came from Horizon's pipeline, not that the code
   is good. Against a bad change, the safety nets are the checks and harnesses, review, the release smoke test and

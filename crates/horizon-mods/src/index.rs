@@ -324,10 +324,10 @@ impl Index {
                     return Err(at("empty or repeated version".into()));
                 }
                 let f = &v.file;
-                let extension_ok = p
-                    .kind
-                    .extension()
-                    .is_none_or(|e| f.name.ends_with(&format!(".{e}")));
+                let extension_ok = (p.kind == Kind::NativeMod && f.name.ends_with(".hmod"))
+                    || p.kind
+                        .extension()
+                        .is_none_or(|e| f.name.ends_with(&format!(".{e}")));
                 if !plain_name(&f.name) || !extension_ok {
                     return Err(at(format!(
                         "{:?} is not a plain file name for a {}",
@@ -672,19 +672,10 @@ pub fn inspect(kind: &Kind, path: &Path) -> Result<Facts, String> {
                 ));
             }
             let m = pack.manifest;
-            // Players get only what the game draws without a switch, and a line that may
-            // still change in any release would break the packs listed for it.
-            if m.api != horizon_shader_api::Api::V0_1 {
-                return Err(format!(
-                    "it is written for shader API {}, which is experimental: the registry takes \
-                     such packs once the game draws them without a switch",
-                    m.api
-                ));
-            }
             Ok(Facts {
                 id: Some(m.id),
                 version: Some(m.version),
-                api: m.api.to_string(),
+                api: horizon_shader_api::API.to_owned(),
                 ..Facts::default()
             })
         }

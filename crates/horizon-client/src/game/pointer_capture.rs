@@ -12,7 +12,7 @@ impl Game<'_> {
         LookOptions {
             sensitivity: f64::from(self.settings.sensitivity),
             smooth_camera: self.smooth_camera,
-            scoping: self.scoping(),
+            scoping: self.camera_type.first_person() && self.scoping(),
             invert_x: self.settings.invert_x,
             invert_y: self.settings.invert_y,
         }
@@ -26,7 +26,7 @@ impl Game<'_> {
         let pointer = self.captured || self.agent_pointer;
         let grabbed = pointer
             && self.screen == Screen::Playing
-            && (self.player.is_some() || self.studio_freecam.active);
+            && (self.player.is_some() || self.studio.flying());
         let active = self.focused || self.agent_pointer;
         if let Some((xo, yo)) = self
             .mouse
@@ -49,23 +49,14 @@ impl Game<'_> {
             && !self.is_published()
             && !self.has_split_players()
             && self.title.is_none()
-            && (matches!(
-                self.screen,
-                Screen::Paused
-                    | Screen::Options
-                    | Screen::Stats
-                    | Screen::Advancements
-                    | Screen::WorldOptions
-                    | Screen::Friends
-                    | Screen::Social
-                    | Screen::ServerLinks
-                    | Screen::ConfirmLink
-                    | Screen::DialogWarning
-                    | Screen::CommandBlock
-                    | Screen::DebugOptions
-                    | Screen::HudEditor
-            ) || self.book.is_some()
-                || self.win_screen_pauses())
+            && top_screen_pauses(
+                // A dialog (and its warning or waiting screen) is the
+                // screen Minecraft set, over whatever was open.
+                self.dialog_open().then(|| self.dialogs.pauses_world()),
+                self.book.as_ref().map(|book| book.pauses_world()),
+                self.screen.is_pause_screen(),
+                self.win_screen_pauses(),
+            )
     }
     /// A screen open over gameplay while `screen` stays `Playing`: a book or
     /// lectern, a sign, a server dialog, the code of conduct, a link or
@@ -91,10 +82,7 @@ impl Game<'_> {
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
             && self.control.is_none()
             && self.screen == Screen::Playing
-            && !studio_suppresses_focus_pause(
-                self.studio_replay.is_some(),
-                self.studio_freecam.active,
-            )
+            && !studio_suppresses_focus_pause(self.replay.playing(), self.studio.flying())
             && self.player.is_some()
             && !self.options.no_pause
             && self.settings.file.bool("pauseOnLostFocus")
@@ -150,7 +138,7 @@ impl Game<'_> {
         // grabs only on `setScreen(null)`: the pack prompt and server dialogs
         // are screens over the world that keep the pointer.
         if capture
-            && (!self.focused
+            && ((!self.focused && !self.unclaimed_window && !self.scripted_run())
                 || self.server_packs.prompt.is_some()
                 || self.dialog_open()
                 || self.command_prompt.is_some())
@@ -165,7 +153,7 @@ impl Game<'_> {
         self.reset_inventory_clicks();
         if !capture {
             self.stop_mining();
-            self.studio_rmb_down = false;
+            self.studio.rmb_down = false;
         }
         // The real pointer takes over from an agent's.
         self.agent_pointer = false;
@@ -195,15 +183,14 @@ impl Game<'_> {
         };
         let scale = HudBatch::new(size).scale;
         let was_grabbed = self.captured;
-        if self.options.offscreen && !self.split_window {
-            // A genuinely hidden `--offscreen` run leaves the system pointer where
-            // the person at the computer has it. Its grab is internal (an
-            // agent turns the view with `mouse-move`).
+        if self.internal_grab() {
+            // Its grab is internal (an agent turns the view with `mouse-move`). A grab the
+            // window already held when a scripted run began stays the system's until the
+            // run ends (`settle_after_run`).
             if capture {
                 self.mouse.set_ignore_first_move();
             }
             self.captured = capture;
-            self.capture_mode = None;
         } else if capture {
             self.mouse.set_ignore_first_move();
             // macOS warps by re-associating the mouse with the pointer,
@@ -264,8 +251,74 @@ impl Game<'_> {
         ) {
             self.cursor = pos;
         }
-        if !self.options.offscreen || self.split_window {
+        if !self.internal_grab() {
             window.set_cursor_visible(!self.captured);
+        }
+    }
+    /// The game's pointer grab leaves the system pointer where the person at the computer has
+    /// it: a genuinely hidden `--offscreen` run, an agent's window no one has clicked yet, or a
+    /// scripted run, which plays the game while the person may be using the computer.
+    pub(super) fn internal_grab(&self) -> bool {
+        (self.options.offscreen && !self.split_window)
+            || self.unclaimed_window
+            || self.scripted_run()
+    }
+    /// A person pressed a mouse button inside the agent's window (`at_unclaimed`): from now on
+    /// it is a window like any other, and that press takes the pointer
+    /// (`MouseHandler.onPress`) instead of attacking. The focus changes it didn't hear while
+    /// unclaimed, or an agent's `pad focus`, may have left the game's idea of the focus apart
+    /// from the window's: it catches up first, as a `Focused` would have told it. So do the
+    /// modifiers the person holds (`held_modifiers`).
+    pub(super) fn claim_window(&mut self, event_loop: &dyn EventLoopCtl) {
+        self.unclaimed_window = false;
+        self.captured = false;
+        // A regrab owed since an agent's `pad focus false` would take the pointer as the focus
+        // catches up, and the press would then attack.
+        self.regrab_on_refocus = false;
+        let Some(window) = &self.window else { return };
+        let (id, focused) = (window.id(), window.has_focus());
+        if focused != self.focused {
+            self.handle_window_event(
+                event_loop,
+                id,
+                WindowEvent::Focused(focused),
+                input_trace::InputOrigin::User,
+            );
+        }
+        if let Some(modifiers) = self.unclaimed_modifiers.take() {
+            self.handle_window_event(
+                event_loop,
+                id,
+                WindowEvent::ModifiersChanged(modifiers),
+                input_trace::InputOrigin::User,
+            );
+        }
+    }
+    /// Once a scripted run is over, the person's last click into the window or away from it
+    /// applies (`held_focus`), and the system pointer follows the grab the run left inside the
+    /// game, as if the window had taken or released it now.
+    pub(super) fn settle_after_run(&mut self, event_loop: &dyn EventLoopCtl) {
+        if self.scripted_run() {
+            return;
+        }
+        if let Some(focused) = self.focus_after_run.take() {
+            let id = self
+                .window
+                .as_ref()
+                .map_or_else(WindowId::dummy, |w| w.id());
+            self.handle_window_event(
+                event_loop,
+                id,
+                WindowEvent::Focused(focused),
+                input_trace::InputOrigin::User,
+            );
+        }
+        // Outside a run, a window whose grab is the system's holds it exactly while the game
+        // has it grabbed; only a run leaves the two apart.
+        if !self.internal_grab() && self.captured != self.capture_mode.is_some() {
+            let grab = self.captured;
+            self.captured = self.capture_mode.is_some();
+            self.capture(grab);
         }
     }
     /// A Linux window manager can release the native pointer grab while the
@@ -277,6 +330,7 @@ impl Game<'_> {
             && self.focused
             && self.captured
             && !self.options.offscreen
+            && !self.internal_grab()
             && let (Some(window), Some(mode)) = (&self.window, self.capture_mode)
         {
             let other = match mode {
@@ -315,7 +369,10 @@ impl Game<'_> {
             window.set_cursor(match effective {
                 Cursor::Arrow => winit::window::CursorIcon::Default,
                 Cursor::PointingHand => winit::window::CursorIcon::Pointer,
+                Cursor::Ibeam => winit::window::CursorIcon::Text,
                 Cursor::NotAllowed => winit::window::CursorIcon::NotAllowed,
+                Cursor::ResizeNs => winit::window::CursorIcon::NsResize,
+                Cursor::ResizeEw => winit::window::CursorIcon::EwResize,
             });
         }
         self.cursor_icon = effective;
@@ -334,9 +391,9 @@ impl Game<'_> {
     /// click. A screen that is open keeps it free, as releasing the pointer
     /// for that screen did: it is the screen, not the focus, that shows it.
     pub(super) fn regrab_on_refocus(&mut self) {
-        if self.studio_replay.is_some() || self.studio_freecam.active {
+        if self.studio_up() {
             self.regrab_on_refocus = false;
-            self.studio_rmb_down = false;
+            self.studio.rmb_down = false;
             self.capture(false);
             return;
         }
@@ -346,9 +403,17 @@ impl Game<'_> {
     }
 }
 
+/// Which of the things over gameplay decides `Minecraft.pause`: a dialog is
+/// its own `DialogScreen` (Minecraft set it over whatever was open) and
+/// comes first, then a book, else `Gui.screen`; the win screen's poem rides
+/// with its screen. `None` means that kind of screen is not open.
+fn top_screen_pauses(dialog: Option<bool>, book: Option<bool>, screen: bool, win: bool) -> bool {
+    dialog.or(book).unwrap_or(screen || win)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::studio_suppresses_focus_pause;
+    use super::{studio_suppresses_focus_pause, top_screen_pauses};
 
     #[test]
     fn studio_replay_and_freecam_never_pause_on_focus_loss() {
@@ -356,4 +421,31 @@ mod tests {
         assert!(studio_suppresses_focus_pause(false, true));
         assert!(!studio_suppresses_focus_pause(false, false));
     }
+
+    /// `Minecraft.pause` asks the screen Minecraft set, and each of a dialog,
+    /// a book and the win screen is a screen of its own that replaces what
+    /// was open: the dialog's `pause`, the book's `BookViewScreen`/
+    /// `LecternScreen`, and `WinScreen`'s `!poem` decide, not the screen
+    /// underneath.
+    #[test]
+    fn the_screen_on_top_decides_whether_the_world_pauses() {
+        // Nothing replaces the screen: its own isPauseScreen answer, with
+        // the win screen's poem rule when it is the win screen.
+        assert!(top_screen_pauses(None, None, true, false));
+        assert!(top_screen_pauses(None, None, false, true));
+        assert!(!top_screen_pauses(None, None, false, false));
+        // A dialog over a pause screen: its own pause answers.
+        assert!(!top_screen_pauses(Some(false), None, true, false));
+        assert!(top_screen_pauses(Some(true), None, false, false));
+        // A lectern's book over a pause screen does not pause; a book in
+        // hand does.
+        assert!(!top_screen_pauses(None, Some(false), true, false));
+        assert!(top_screen_pauses(None, Some(true), false, false));
+        // A dialog opens over the book.
+        assert!(!top_screen_pauses(Some(false), Some(true), false, false));
+    }
 }
+
+#[cfg(test)]
+#[path = "scoping_look_tests.rs"]
+mod scoping_look_tests;

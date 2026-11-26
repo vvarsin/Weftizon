@@ -8,7 +8,7 @@ use horizon_client::{
     items::ItemStack, save,
 };
 use horizon_world::{
-    level::{Behaviours, classes::Class},
+    level::{Behaviours, classes::Class, flags},
     nbt::{Compound, JavaString, Tag},
     registry::BlockStateId,
 };
@@ -47,8 +47,9 @@ fn clone_item<'a>(name: &str, block_item: &'a str) -> &'a str {
         "minecraft:kelp_plant" => "minecraft:kelp",
         "minecraft:twisting_vines_plant" => "minecraft:twisting_vines",
         "minecraft:weeping_vines_plant" => "minecraft:weeping_vines",
-        // CandleCakeBlock: new ItemStack(Blocks.CAKE), for every colour.
-        _ if name.ends_with("_candle_cake") => "minecraft:cake",
+        // CandleCakeBlock: new ItemStack(Blocks.CAKE), for every colour and
+        // the plain `minecraft:candle_cake`, whose own item is air.
+        _ if name == "minecraft:candle_cake" || name.ends_with("_candle_cake") => "minecraft:cake",
         _ => block_item,
     }
 }
@@ -291,7 +292,8 @@ impl Game<'_> {
         let props: Vec<(&str, &str)> = props.iter().map(|(k, v)| (&**k, &**v)).collect();
         match self.with_props(state, &props) {
             Some(new) if !props.is_empty() && new != state => {
-                self.level_set(pos, new)?;
+                // `level.setBlock(pos, modifiedState, 2)`: no neighbour pass.
+                self.level_set_with_flags(pos, new, flags::UPDATE_CLIENTS)?;
                 Ok(new)
             }
             _ => Ok(state),
@@ -424,6 +426,7 @@ mod tests {
             ("minecraft:kelp_plant", "minecraft:kelp"),
             ("minecraft:twisting_vines_plant", "minecraft:twisting_vines"),
             ("minecraft:weeping_vines_plant", "minecraft:weeping_vines"),
+            ("minecraft:candle_cake", "minecraft:cake"),
             ("minecraft:white_candle_cake", "minecraft:cake"),
             ("minecraft:light_blue_candle_cake", "minecraft:cake"),
         ] {
@@ -731,3 +734,7 @@ mod styled_name_model_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "item_block_state_tests.rs"]
+mod item_block_state_tests;

@@ -675,8 +675,13 @@ pub(super) fn humanoid(p: &mut Poses, s: &State, h: &Hum) {
         p.get("left_arm")[1] += 3.2;
         p.get("right_arm")[1] += 3.2;
     }
-    bob(p, "right_arm", s.age, 1.0);
-    bob(p, "left_arm", s.age, -1.0);
+    // AnimationUtils.bobModelPart leaves an arm holding a spyglass still.
+    if h.right != ArmPose::Spyglass {
+        bob(p, "right_arm", s.age, 1.0);
+    }
+    if h.left != ArmPose::Spyglass {
+        bob(p, "left_arm", s.age, -1.0);
+    }
     if h.swim > 0.0 {
         swim(p, s.pos, h);
     }
@@ -778,22 +783,30 @@ fn swim(p: &mut Poses, pos: f32, h: &Hum) {
         lerp(amount, x, 0.3 * (pos * 0.333_333_34).mcos()),
     );
 }
+/// A pose laid over the player model's body after its vanilla animation, and the parts it poses:
+/// the hook's own types (`horizon_hooks::players`), kept here under their old path.
+pub use horizon_hooks::players::{BODY_PARTS, BodyPose};
+
 /// Apply the mob's model animation to `p` (at rest): its template's, then a content
-/// mod entity's own keyframes over it, then the emote it plays, if any.
+/// mod entity's own keyframes over it, then the pose laid over it, if any.
 pub fn setup(
     m: &Mob,
     s: &State,
     p: &mut Poses,
     w_anims: &HashMap<String, super::keyframes::Animation>,
 ) {
+    let rest = m
+        .emote
+        .as_ref()
+        .map(|_| BODY_PARTS.map(|b| p.has(b).then(|| *p.get(b))));
     template_setup(m, s, p, w_anims);
     if let Some(c) = &m.kind.custom {
         c.animate(m, s, p);
     }
     // The emote blends over whatever the model animation posed.
-    let Some(playing) = &m.emote else { return };
-    let rest = horizon_cosmetics::BODY.map(|b| p.has(b.part()).then(|| *p.get(b.part())));
-    emote(playing, s.age, rest, p);
+    if let (Some(over), Some(rest)) = (&m.emote, rest) {
+        body_pose(&**over, s.age, rest, p);
+    }
 }
 fn template_setup(
     m: &Mob,
@@ -804,25 +817,22 @@ fn template_setup(
     vanilla_setup(m, s, p, w_anims);
 }
 
-/// Poses the bones `rest` names (those the model has; at rest) as `playing` has them at `age`.
-fn emote(
-    playing: &horizon_cosmetics::Playing,
-    age: f32,
-    rest: [Option<[f32; 9]>; 6],
-    p: &mut Poses,
-) {
-    let (Some(emote), Some((t, weight))) = (&playing.item.emote, playing.at(age)) else {
-        return;
-    };
+/// Poses the parts `rest` names (those the model has; at rest) as `over` has them at `age`.
+fn body_pose(over: &dyn BodyPose, age: f32, rest: [Option<[f32; 9]>; 6], p: &mut Poses) {
     const IDENTITY: [f32; 9] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-    let bones = horizon_cosmetics::BODY;
     let at_rest = rest.map(|r| r.unwrap_or(IDENTITY));
-    let mut poses: [[f32; 9]; 6] =
-        std::array::from_fn(|i| rest[i].map_or(IDENTITY, |_| *p.get(bones[i].part())));
-    emote.pose_body(t, weight, &at_rest, &mut poses);
+    // Read without `get`, which marks the poses changed: `over` may pose nothing.
+    let mut poses: [[f32; 9]; 6] = std::array::from_fn(|i| {
+        rest[i]
+            .and_then(|_| p.map.get(&key(BODY_PARTS[i])).copied())
+            .unwrap_or(IDENTITY)
+    });
+    if !over.pose(age, &at_rest, &mut poses) {
+        return;
+    }
     for (i, pose) in poses.into_iter().enumerate() {
         if rest[i].is_some() {
-            *p.get(bones[i].part()) = pose;
+            *p.get(BODY_PARTS[i]) = pose;
         }
     }
 }
@@ -1168,19 +1178,26 @@ fn player_model_visibility(p: &mut Poses, hidden: u8, spectator: bool) {
     }
 }
 #[cfg(test)]
-mod emote_tests {
+mod body_pose_tests {
     use super::*;
 
+    /// Lifts the right arm to a fixed angle, the left leg too, and keeps what it was given.
+    #[derive(Debug, Default)]
+    struct Raise(std::sync::Mutex<Option<([[f32; 9]; 6], [[f32; 9]; 6])>>);
+    impl BodyPose for Raise {
+        fn pose(&self, age: f32, at_rest: &[[f32; 9]; 6], poses: &mut [[f32; 9]; 6]) -> bool {
+            *self.0.lock().unwrap() = Some((*at_rest, *poses));
+            if age > 20.0 {
+                return false;
+            }
+            poses[2][5] = 1.5;
+            poses[5][5] = 1.5;
+            true
+        }
+    }
+
     #[test]
-    fn an_emote_poses_the_bones_the_model_has_after_its_animation() {
-        // The right arm up to 90° about z at tick 10, the body hopping 4 px; the model has no legs.
-        let item = horizon_cosmetics::Item::parse(
-            br#"{"format": 1, "id": "up", "slot": "emote", "parts": [],
-                "emote": {"length": 20, "blend": 0, "tracks": [
-                  {"part": "right_arm", "keys": [{"t": 10, "rotation": [0, 0, 90]}]},
-                  {"part": "root", "keys": [{"t": 0, "offset": [0, -4, 0]}]}]}}"#,
-        )
-        .unwrap();
+    fn a_body_pose_sees_the_rest_and_the_animation_and_writes_only_the_parts_the_model_has() {
         let rest = |x: f32, y: f32| [x, y, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
         let mut p = Poses {
             map: [("head", rest(0.0, 0.0)), ("right_arm", rest(-5.0, 2.0))]
@@ -1192,30 +1209,30 @@ mod emote_tests {
             hidden: Default::default(),
             version: 0,
         };
-        let at_rest = horizon_cosmetics::BODY.map(|b| p.has(b.part()).then(|| *p.get(b.part())));
+        let at_rest = BODY_PARTS.map(|b| p.has(b).then(|| *p.get(b)));
         // What the walk animation did: the head looks aside, the arm swings.
         p.get("head")[4] = 0.4;
         p.get("right_arm")[3] = 0.7;
-        let playing = horizon_cosmetics::Playing {
-            item: std::sync::Arc::new(item),
-            start: 100.0,
-            stop: None,
-        };
-        emote(&playing, 110.0, at_rest, &mut p);
+        let raise = Raise::default();
+        body_pose(&raise, 10.0, at_rest, &mut p);
+        let identity = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let (seen_rest, seen) = raise.0.lock().unwrap().unwrap();
+        assert_eq!(seen_rest[0], rest(0.0, 0.0));
+        assert_eq!(seen_rest[2], rest(-5.0, 2.0));
+        assert_eq!(seen_rest[5], identity);
+        assert_eq!(seen[0][4], 0.4);
+        assert_eq!(seen[2][3], 0.7);
+        assert_eq!(seen[5], identity);
         let arm = *p.get("right_arm");
-        assert!(
-            (arm[5] - std::f32::consts::FRAC_PI_2).abs() < 1e-5 && arm[3].abs() < 1e-5,
-            "{arm:?}"
-        );
-        assert!((arm[0] + 5.0).abs() < 1e-5 && (arm[1] - (2.0 - 4.0)).abs() < 1e-5);
-        // The head keeps looking aside, lifted with the body.
-        let head = *p.get("head");
-        assert!((head[4] - 0.4).abs() < 1e-5 && (head[1] + 4.0).abs() < 1e-5);
-        // Nothing was added for the bones the model lacks, and past its end the emote is gone.
+        assert_eq!((arm[3], arm[5]), (0.7, 1.5));
+        assert_eq!(p.get("head")[4], 0.4);
+        // Nothing was added for the parts the model lacks.
         assert_eq!(p.map.len(), 2);
-        let before = *p.get("right_arm");
-        emote(&playing, 125.0, at_rest, &mut p);
-        assert_eq!(*p.get("right_arm"), before);
+        // Posing nothing leaves the poses, their version too.
+        let version = p.version();
+        body_pose(&raise, 30.0, at_rest, &mut p);
+        assert_eq!(p.version(), version);
+        assert_eq!(p.get("right_arm")[5], 1.5);
     }
 }
 
@@ -1328,6 +1345,43 @@ mod flight_pose_tests {
             }
         }
     }
+    /// `HumanoidModel.setupAnim`: `AnimationUtils.bobModelPart` leaves the arm
+    /// holding a spyglass still, and bobs the other one.
+    #[test]
+    fn a_spyglass_arm_keeps_still_while_the_other_bobs() {
+        let mut p = Poses {
+            map: ["head", "right_arm", "left_arm"]
+                .into_iter()
+                .map(|n| (key(n), [0.0; 9]))
+                .collect(),
+            dummy: [0.0; 9],
+            skipped: Default::default(),
+            hidden: Default::default(),
+            version: 0,
+        };
+        let s = State {
+            pos: 0.0,
+            speed: 0.0,
+            age: 5.0,
+            y_rot: 0.0,
+            x_rot: 0.0,
+            swing: 0.0,
+            baby: false,
+            partial: 0.0,
+        };
+        humanoid(&mut p, &s, &Hum::new(ArmPose::Spyglass, ArmPose::Empty));
+        // The pose alone, the head looking straight: no bob on the pitch or the roll.
+        assert_eq!(p.get("right_arm")[3], -1.919_862_2);
+        assert_eq!(p.get("right_arm")[5], 0.0);
+        // The empty left arm takes the bob, a roll and a pitch.
+        assert!(
+            p.get("left_arm")[5].abs() > 0.09,
+            "{}",
+            p.get("left_arm")[5]
+        );
+        assert_ne!(p.get("left_arm")[3], 0.0);
+    }
+
     /// EndermanModel.setupAnim (#4565): humanoid_pub forwards isPassenger so the
     /// riding leg y/z survive; only xRot is halved and clamped to ±0.4 after.
     #[test]

@@ -15,7 +15,7 @@ use crate::{
     font::{Font, Glyph},
     gfx::mark_oit,
     hud::Rect,
-    mesher::{CULL_BACK, Vertex},
+    mesher::{CULL_BACK, Vertex, cull_back},
     models::load_visibility,
     signs::{self, SignData, SignText},
     text::{Style, Text},
@@ -575,14 +575,14 @@ fn classify(name: &str, prop: &dyn Fn(&str) -> Option<String>) -> Kind {
             "banner" => {
                 let segment: f32 = prop("rotation").and_then(|r| r.parse().ok()).unwrap_or(0.0);
                 return Kind::Banner {
-                    color: DYES[dye].1,
+                    color: crate::pack_palette::diffuse(dye),
                     wall: false,
                     angle: segment * 22.5,
                 };
             }
             "wall_banner" => {
                 return Kind::Banner {
-                    color: DYES[dye].1,
+                    color: crate::pack_palette::diffuse(dye),
                     wall: true,
                     angle: y_rot(facing()),
                 };
@@ -643,16 +643,11 @@ fn first_line(line: &Text, max_width: f32, advance: &dyn Fn(char, &Style) -> f32
     line.clone()
 }
 
-/// `AbstractSignRenderer.isOutlineVisible`: the camera within 16 blocks of
-/// the sign's centre.
-fn sign_text_near(pos: [i32; 3], camera: DVec3) -> bool {
-    DVec3::new(
-        f64::from(pos[0]) + 0.5,
-        f64::from(pos[1]) + 0.5,
-        f64::from(pos[2]) + 0.5,
-    )
-    .distance_squared(camera)
-        < 256.0
+/// `AbstractSignRenderer.isOutlineVisible`: a first-person camera looking through a
+/// spyglass outlines the text, else the camera is within 16 blocks of its centre.
+fn sign_text_near(scene: &Scene, pos: [i32; 3]) -> bool {
+    let centre = DVec3::new(f64::from(pos[0]), f64::from(pos[1]), f64::from(pos[2])) + 0.5;
+    scene.spyglass_outline || centre.distance_squared(scene.camera) < 256.0
 }
 
 /// `AbstractSignRenderer.submitSignText`: four centred lines, glowing text
@@ -947,6 +942,8 @@ pub struct TextCall {
 /// Inputs from the game for one frame of block-entity rendering.
 pub struct Scene<'a> {
     pub camera: DVec3,
+    /// `isScoping` in first person: glowing sign text is outlined at any distance.
+    pub spyglass_outline: bool,
     /// `Camera.rotation` (conduit eyes face the camera).
     pub orientation: Quat,
     /// Ticked block-entity state at a position.
@@ -1459,7 +1456,37 @@ impl BlockEntityRenderer {
         registry: &BlockRegistry,
         visibility: FaceVisibility,
     ) -> Result<Self> {
-        let all: Value = serde_json::from_slice(&std::fs::read(root.join("entity-models.json"))?)?;
+        Self::load_with_visibility_inner(root, registry, visibility, None, None)
+    }
+
+    /// Load from what the client startup batch already decoded: its entity-model
+    /// document (none reads `entity-models.json`) and the item defaults, avoiding a
+    /// second read and decode of either.
+    pub fn load_with_visibility_models_and_defaults(
+        root: &Path,
+        registry: &BlockRegistry,
+        visibility: FaceVisibility,
+        models: Option<&Value>,
+        defaults: &horizon_world::item_defaults::Defaults,
+    ) -> Result<Self> {
+        Self::load_with_visibility_inner(root, registry, visibility, models, Some(defaults))
+    }
+
+    fn load_with_visibility_inner(
+        root: &Path,
+        registry: &BlockRegistry,
+        visibility: FaceVisibility,
+        models: Option<&Value>,
+        defaults: Option<&horizon_world::item_defaults::Defaults>,
+    ) -> Result<Self> {
+        let owned_models = if models.is_none() {
+            Some(serde_json::from_slice(&std::fs::read(
+                root.join("entity-models.json"),
+            )?)?)
+        } else {
+            None
+        };
+        let all = models.or(owned_models.as_ref()).expect("entity models");
         let models = MODELS
             .iter()
             .filter_map(|(key, layer)| all.get(*layer).map(|v| (*key, ModelPart::parse(v))))
@@ -1469,12 +1496,17 @@ impl BlockEntityRenderer {
         // The packs' custom entity models (`.jem` files), before anything draws.
         renderer.set_shapes(renderer.shapes_for(root));
         // Sherd items: provides_pottery_pattern -> decorated_pot_pattern asset id.
-        let items = match horizon_world::item_defaults::read(root) {
-            Ok(items) => items,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
-            Err(e) => return Err(e.into()),
+        let owned_defaults = if defaults.is_none() {
+            Some(match horizon_world::item_defaults::read(root) {
+                Ok(items) => items,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+                Err(e) => return Err(e.into()),
+            })
+        } else {
+            None
         };
-        for (item, components) in &items {
+        let items = defaults.or(owned_defaults.as_ref()).unwrap();
+        for (item, components) in items {
             let Some(pattern) = components["minecraft:provides_pottery_pattern"].as_str() else {
                 continue;
             };
@@ -2434,7 +2466,7 @@ impl BlockEntityRenderer {
         let Some(data) = (scene.sign)(pos) else {
             return;
         };
-        let near = (data.front.glowing || data.back.glowing) && sign_text_near(pos, scene.camera);
+        let near = (data.front.glowing || data.back.glowing) && sign_text_near(scene, pos);
         let Ok(mut cache) = self.sign_texts.lock() else {
             return;
         };
@@ -2564,7 +2596,7 @@ impl BlockEntityRenderer {
         scene: &Scene,
         pos: [i32; 3],
         state: u32,
-        stage: [f32; 2],
+        stage: crate::breaking::CrackSprite,
         out: &mut Vec<Vertex>,
     ) {
         if !matches!(
@@ -2761,7 +2793,7 @@ impl BlockEntityRenderer {
                         m *= Mat4::from_translation(Vec3::new(0.0, 1.0 / 3.0, 0.046_666_667))
                             * Mat4::from_scale(s * 0.010_416_667);
                     }
-                    let near = sign_text_near(pos, scene.camera);
+                    let near = sign_text_near(scene, pos);
                     let calls = sign_text_calls(scene, data, text, m, packed, near);
                     match scene.texts {
                         Some(sink) => sink.borrow_mut().extend(calls),
@@ -3058,9 +3090,9 @@ impl BlockEntityRenderer {
                     }
                 }
                 // `DecoratedPotRenderer` submits every part with `entitySolid`, which culls
-                // back faces: the flat `top` and `bottom` planes show one side each.
+                // back faces: the flat `top` and `bottom` planes show one side each (#15322).
                 for vertex in &mut out[first..] {
-                    vertex.normal = CULL_BACK;
+                    vertex.normal = cull_back(vertex.normal);
                 }
             }
             Kind::EndPortal => {
@@ -3621,6 +3653,38 @@ mod tests {
     use super::*;
     use crate::assets::Assets;
     use horizon_world::nbt::Tag;
+
+    /// The scene a sign-text test renders with: no camera rotation, no ticked
+    /// state, one frame, a flat world and the test's glyph atlas.
+    macro_rules! sign_scene {
+        ($world:expr, $sprites:expr, $glyph:expr) => {
+            Scene {
+                camera: DVec3::ZERO,
+                spyglass_outline: false,
+                orientation: Quat::IDENTITY,
+                anim: &|_| BlockAnim::default(),
+                texts: None,
+                partial: 0.0,
+                game_time: 0,
+                max_y: 320,
+                world: $world,
+                sprites: $sprites,
+                emissive: &Default::default(),
+                translucent_sprites: &HashSet::new(),
+                atlas_revision: 1,
+                nether: false,
+                lid: &|_| 0.0,
+                sign: &|_| None,
+                banner: &|_| Vec::new(),
+                skull: &|_| None,
+                glyph: $glyph,
+                glyphs: 0,
+                font: None,
+                dynamic_visible: None,
+            }
+        };
+    }
+
     #[test]
     #[ignore = "requires prepared models/textures in HORIZON_TEST_RESOURCES"]
     fn entity_block_particles_and_breaking_use_exported_models() -> Result<()> {
@@ -3715,6 +3779,7 @@ mod tests {
         let cache_lid = |_| cache_open.get();
         let mut scene = Scene {
             camera: DVec3::ZERO,
+            spyglass_outline: false,
             orientation: Quat::IDENTITY,
             anim: &|_| BlockAnim::default(),
             texts: None,
@@ -3790,7 +3855,7 @@ mod tests {
             let mut base = Vec::new();
             renderer.render_block(&scene, [0; 3], state, Mat4::IDENTITY, 0xff, &mut base);
             let mut cracks = Vec::new();
-            renderer.render_breaking(&scene, [0; 3], state, [0.0; 2], &mut cracks);
+            renderer.render_breaking(&scene, [0; 3], state, Default::default(), &mut cracks);
             assert!(!cracks.is_empty());
             assert_eq!(
                 base.iter().map(|v| v.pos).collect::<Vec<_>>(),
@@ -3804,7 +3869,7 @@ mod tests {
                 scene.lid = &|_| 1.0;
             }
             let mut animated = Vec::new();
-            renderer.render_breaking(&scene, [0; 3], state, [0.0; 2], &mut animated);
+            renderer.render_breaking(&scene, [0; 3], state, Default::default(), &mut animated);
             assert!(cracks.iter().zip(&animated).any(|(a, b)| a.pos != b.pos));
             scene.game_time = 0;
             scene.lid = &|_| 0.0;
@@ -4108,29 +4173,7 @@ mod tests {
                 ..Glyph::default()
             }
         };
-        let scene = Scene {
-            camera: DVec3::ZERO,
-            orientation: Quat::IDENTITY,
-            anim: &|_| BlockAnim::default(),
-            texts: None,
-            partial: 0.0,
-            game_time: 0,
-            max_y: 320,
-            world: &world,
-            sprites: &sprites,
-            emissive: &Default::default(),
-            translucent_sprites: &HashSet::new(),
-            atlas_revision: 1,
-            nether: false,
-            lid: &|_| 0.0,
-            sign: &|_| None,
-            banner: &|_| Vec::new(),
-            skull: &|_| None,
-            glyph: &glyph,
-            glyphs: 0,
-            font: None,
-            dynamic_visible: None,
-        };
+        let scene = sign_scene!(&world, &sprites, &glyph);
         let mut call = TextCall {
             matrix: Mat4::IDENTITY,
             x: 0.0,
@@ -4184,29 +4227,7 @@ mod tests {
             advance: 5.0,
             offset: 0.5,
         };
-        let scene = Scene {
-            camera: DVec3::ZERO,
-            orientation: Quat::IDENTITY,
-            anim: &|_| BlockAnim::default(),
-            texts: None,
-            partial: 0.0,
-            game_time: 0,
-            max_y: 320,
-            world: &world,
-            sprites: &sprites,
-            emissive: &Default::default(),
-            translucent_sprites: &HashSet::new(),
-            atlas_revision: 1,
-            nether: false,
-            lid: &|_| 0.0,
-            sign: &|_| None,
-            banner: &|_| Vec::new(),
-            skull: &|_| None,
-            glyph: &glyph,
-            glyphs: 0,
-            font: None,
-            dynamic_visible: None,
-        };
+        let scene = sign_scene!(&world, &sprites, &glyph);
         let call = TextCall {
             matrix: Mat4::IDENTITY,
             x: 10.0,
@@ -4321,29 +4342,7 @@ mod tests {
             advance: 6.0,
             ..Glyph::default()
         };
-        let scene = Scene {
-            camera: DVec3::ZERO,
-            orientation: Quat::IDENTITY,
-            anim: &|_| BlockAnim::default(),
-            texts: None,
-            partial: 0.0,
-            game_time: 0,
-            max_y: 320,
-            world: &world,
-            sprites: &sprites,
-            emissive: &Default::default(),
-            translucent_sprites: &HashSet::new(),
-            atlas_revision: 1,
-            nether: false,
-            lid: &|_| 0.0,
-            sign: &|_| None,
-            banner: &|_| Vec::new(),
-            skull: &|_| None,
-            glyph: &glyph,
-            glyphs: 0,
-            font: None,
-            dynamic_visible: None,
-        };
+        let scene = sign_scene!(&world, &sprites, &glyph);
         sign_text_calls(&scene, data, &data.front, Mat4::IDENTITY, 0, near)
             .into_iter()
             .map(|c| (c.text, c.x, c.y, c.color, c.outline))
@@ -4508,6 +4507,7 @@ mod tests {
         );
         let mut scene = Scene {
             camera: DVec3::new(3.25, 70.5, -4.75),
+            spyglass_outline: false,
             orientation: Quat::IDENTITY,
             anim: &|_| BlockAnim::default(),
             texts: None,
@@ -4696,6 +4696,7 @@ mod tests {
         let world = World::new(BlockStateId(0), 1);
         let scene = Scene {
             camera: DVec3::ZERO,
+            spyglass_outline: false,
             orientation: Quat::IDENTITY,
             anim: &|_| BlockAnim::default(),
             texts: None,
@@ -4725,9 +4726,12 @@ mod tests {
             28,
             "the pot submits all of vanilla's quads"
         );
+        // A part the shader shades keeps its normal (#15322): `w` alone says cull.
         assert!(
-            verts.iter().all(|v| v.normal == CULL_BACK),
-            "entitySolid culls the pot's back faces"
+            verts
+                .iter()
+                .all(|v| v.normal[3] == crate::mesher::SHADED_CULL_W && v.normal[..3] != [0; 3]),
+            "entitySolid culls the pot's back faces and shades it by its normals"
         );
     }
 
@@ -4783,6 +4787,7 @@ mod tests {
         let world = World::new(BlockStateId(0), 1);
         let scene = Scene {
             camera: DVec3::ZERO,
+            spyglass_outline: false,
             orientation: Quat::IDENTITY,
             anim: &|_| BlockAnim::default(),
             texts: None,
