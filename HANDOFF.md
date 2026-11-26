@@ -23,11 +23,23 @@ is next in the Weft port). This page only records the state an agent picks up.
 - `hits` and `mod_machines` are declared in `crates/horizon-client/src/client_lib.rs` (upstream moved the lib root).
 - A content mod entity's declared `loot_table` is honoured by `mobs::drops::death_loot_table` (after an NBT
   `DeathLootTable`, before `<ns>:entities/<path>`).
+- Upstream added five helpers under names Weftizon already used, with other signatures; upstream's keep the names
+  and Weftizon's are now `native_mob_view` (was `native_entity`), `native_hurt_mob` (was `native_hurt_entity`),
+  `native_light_at` (was `native_light`), `native_explode_here` (was `native_explode`) and `native_world_boss_bar`
+  (was `native_boss_bar`) (docs/native-mods.md, "Explosions and hunted players"). The user's InvasionV2 native mod
+  (`~/Documents/Playground/MinecraftMod/mods-port/invasionv2/native`) was renamed to match and repinned.
 - Where upstream had already ported the same thing (content-mod recipes on the server, TNT `block_state`/power
   in saves, content entity textures in the HUD atlas, unsupported-feature logging), upstream's version was kept.
 
 Verified: `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, the mod crates' tests and
 `cargo test -p horizon-client -p horizon-client-lib --lib --bins --tests`.
+
+Native mods: the launcher's `native-build` downloads source and horizon-mixins from `horizon-rust/*`, which is no
+longer reachable. To check a bundle against this tree locally, use the horizon-mixins checkout at
+`~/.hermes/cache/scratch/horizon-mixins` (`target/debug/horizon-mixins`, commit `07dab17`): make a
+`git worktree add --detach <tmp>/ws HEAD`, delete its symlinks (`CLAUDE.md`; the tool refuses them), then
+`horizon-mixins apply --workspace <tmp>/ws --mods <bundle>/mixins --out <tmp>/out` and
+`cargo build --profile fast -p horizon-client` in `<tmp>/out`.
 
 ## Next sync
 
