@@ -149,12 +149,13 @@ pub(super) fn acts_on_player(e: &MobEvent) -> bool {
 /// A guest's `player_view`, taken with their state swapped in, as the mobs see
 /// them. Their last attacker and last victim stay: a tamed wolf defends and
 /// helps whoever owns it (`OwnerHurtByTargetGoal`, `OwnerHurtTargetGoal`), and
-/// the window's own player is a guest of its server thread.
+/// the window's own player is a guest of its server thread. Their allies
+/// (the mobs on their team, `player_allies` with them swapped in) stay too:
+/// `TargetingConditions.forCombat` never picks an ally, for every player.
 fn guest_view(mut v: PlayerView, uuid: u128, moved: [f64; 3]) -> PlayerView {
     v.hero = false;
     v.velocity = Vec3::new(moved[0], moved[1], moved[2]);
     v.uuid = horizon_client::lan::playerdata::uuid_ints(uuid);
-    v.allies = Default::default();
     v.remote = true;
     v
 }
@@ -552,11 +553,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_guests_view_keeps_who_hurt_them_and_who_they_hurt() {
+    fn a_guests_view_keeps_who_hurt_them_who_they_hurt_and_their_allies() {
         let mut v = view(0.0, false);
         v.hurt_by = Some((Who::Mob(7), 90));
         v.last_hurt = Some((Who::Mob(8), 95));
+        v.allies = std::sync::Arc::new([9].into_iter().collect());
         let seen = guest_view(v, 5, [1.0, 0.0, 0.0]);
+        assert!(
+            seen.allies.contains(&9),
+            "a mob on the guest's team stays their ally"
+        );
         assert_eq!(seen.hurt_by, Some((Who::Mob(7), 90)));
         assert_eq!(seen.last_hurt, Some((Who::Mob(8), 95)));
         assert!(seen.remote);
